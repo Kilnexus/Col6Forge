@@ -65,6 +65,7 @@ pub const TestCase = struct {
     input_path: []const u8,
     rel_path: []const u8,
     work_name: []const u8,
+    bounds_check: bool,
     range_check: bool,
     fbackslash: bool,
     allow_argument_mismatch: bool,
@@ -110,6 +111,7 @@ pub const PruneOutputPattern = struct {
 };
 
 pub const CaseExpectations = struct {
+    bounds_check: bool,
     range_check: bool,
     fbackslash: bool,
     allow_argument_mismatch: bool,
@@ -138,6 +140,7 @@ pub const ParsedDiagDirectives = struct {
 };
 
 pub const SupportedDgOptions = struct {
+    bounds_check: bool = false,
     range_check: bool = false,
     fbackslash: bool = false,
     allow_argument_mismatch: bool = false,
@@ -182,6 +185,7 @@ pub fn collectRunnableCases(
             .input_path = input_path,
             .rel_path = rel_path,
             .work_name = work_name,
+            .bounds_check = expectations.bounds_check,
             .range_check = expectations.range_check,
             .fbackslash = expectations.fbackslash,
             .allow_argument_mismatch = expectations.allow_argument_mismatch,
@@ -233,6 +237,7 @@ pub fn classifyCase(
     const supported_options = parseSupportedDgOptions(bytes);
 
     return .{ .runnable = .{
+        .bounds_check = supported_options.bounds_check,
         .range_check = supported_options.range_check,
         .fbackslash = supported_options.fbackslash,
         .allow_argument_mismatch = supported_options.allow_argument_mismatch,
@@ -378,6 +383,7 @@ fn parseSupportedDgOptions(text: []const u8) SupportedDgOptions {
     while (it.next()) |raw_line| {
         const line = trimCr(raw_line);
         if (!containsNoCase(line, "dg-options") and !containsNoCase(line, "dg-additional-options")) continue;
+        if (containsNoCase(line, "-fcheck=bounds")) result.bounds_check = true;
         if (containsNoCase(line, "-fno-range-check")) result.range_check = false;
         if (containsNoCase(line, "-frange-check")) result.range_check = true;
         if (containsNoCase(line, "-fno-backslash")) result.fbackslash = false;

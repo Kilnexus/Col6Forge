@@ -205,6 +205,15 @@ pub const DoContext = struct {
         return null;
     }
 
+    pub fn isInsideBlock(self: *const DoContext) bool {
+        var i = self.scope_stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.scope_stack.items[i].kind == .block_construct) return true;
+        }
+        return false;
+    }
+
     pub fn updateTopDoName(self: *DoContext, name: []const u8, cycle_label: []const u8, exit_label: ?[]const u8) !void {
         if (self.scope_stack.items.len == 0) return error.UnexpectedToken;
         const top = &self.scope_stack.items[self.scope_stack.items.len - 1];

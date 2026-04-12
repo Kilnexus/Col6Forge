@@ -104,6 +104,88 @@ pub fn emitCollapsedSubstringSectionValue(
     });
 }
 
+fn lowerCollapsedSectionExpr(
+    ctx: *Context,
+    expr_node: *ast.Expr,
+    owned_literals: *std.array_list.Managed(*ast.Expr),
+) EmitError!?*ast.Expr {
+    return switch (expr_node.*) {
+        .call_or_subscript => |call| blk: {
+            const sym = ctx.findSymbol(call.name) orelse break :blk null;
+            if (sym.dims.len == 0 or call.args.len != sym.dims.len) break :blk null;
+
+            var changed = false;
+            const lowered_args = try ctx.allocator.alloc(*ast.Expr, call.args.len);
+            for (call.args, 0..) |arg, idx| {
+                lowered_args[idx] = try collapseRangeArgForIo(ctx, sym.dims[idx], arg, owned_literals);
+                if (lowered_args[idx] != arg) changed = true;
+            }
+            if (!changed) break :blk null;
+
+            const lowered = try ctx.allocator.create(ast.Expr);
+            lowered.* = .{ .call_or_subscript = .{
+                .name = call.name,
+                .args = lowered_args,
+            } };
+            break :blk lowered;
+        },
+        .component => |comp| blk: {
+            const lowered_base = (try lowerCollapsedSectionExpr(ctx, comp.base, owned_literals)) orelse comp.base;
+            const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse {
+                if (lowered_base == comp.base) break :blk null;
+                const lowered = try ctx.allocator.create(ast.Expr);
+                lowered.* = .{ .component = .{
+                    .base = lowered_base,
+                    .name = comp.name,
+                    .args = comp.args,
+                    .has_parens = comp.has_parens,
+                } };
+                break :blk lowered;
+            };
+            const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse break :blk null;
+            if (component.procedure) break :blk null;
+
+            var changed = lowered_base != comp.base;
+            var lowered_args = comp.args;
+            if (comp.args.len != 0 and comp.args.len == component.dims.len) {
+                lowered_args = try ctx.allocator.alloc(*ast.Expr, comp.args.len);
+                for (comp.args, 0..) |arg, idx| {
+                    lowered_args[idx] = try collapseRangeArgForIo(ctx, component.dims[idx], arg, owned_literals);
+                    if (lowered_args[idx] != arg) changed = true;
+                }
+            }
+            if (!changed) break :blk null;
+
+            const lowered = try ctx.allocator.create(ast.Expr);
+            lowered.* = .{ .component = .{
+                .base = lowered_base,
+                .name = comp.name,
+                .args = lowered_args,
+                .has_parens = comp.has_parens,
+            } };
+            break :blk lowered;
+        },
+        else => null,
+    };
+}
+
+pub fn emitCollapsedComponentSectionValue(
+    ctx: *Context,
+    builder: anytype,
+    expr_node: *ast.Expr,
+) EmitError!?ValueRef {
+    var owned_literals = std.array_list.Managed(*ast.Expr).init(ctx.allocator);
+    defer {
+        for (owned_literals.items) |node| {
+            ctx.allocator.destroy(node);
+        }
+        owned_literals.deinit();
+    }
+
+    const lowered = (try lowerCollapsedSectionExpr(ctx, expr_node, &owned_literals)) orelse return null;
+    return try expr.emitExpr(ctx, builder, lowered);
+}
+
 pub fn emitCollapsedUnknownCountWholeArrayValue(
     ctx: *Context,
     builder: anytype,

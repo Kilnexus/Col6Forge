@@ -407,7 +407,10 @@ pub fn applyDeclarator(
             sym.applyTypeSpec(sym.type_spec.withCharacterLength(.assumed, null));
             return;
         }
-        try validateRestrictedSpecExpr(self, len_expr);
+        const runtime_char_len_ok = allowsNonConstantCharacterLengthExpr(self, sym.*);
+        if (!runtime_char_len_ok) {
+            try validateRestrictedSpecExpr(self, len_expr);
+        }
         if (try constants.evalConst(self, len_expr)) |value| {
             switch (value) {
                 .integer => |int_val| {
@@ -421,7 +424,7 @@ pub fn applyDeclarator(
         } else {
             // Explicit LEN expressions inside procedures may denote automatic
             // CHARACTER objects whose length is only known at entry.
-            if (allowsNonConstantCharacterLengthExpr(self, sym.*)) {
+            if (runtime_char_len_ok) {
                 sym.applyTypeSpec(sym.type_spec.withCharacterLength(.deferred, null));
                 return;
             }

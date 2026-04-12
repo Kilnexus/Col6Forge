@@ -44,6 +44,34 @@ test "parity and norm2 DIM arguments must stay scalar" {
     try testing.expect(std.mem.indexOf(u8, second.message, "must be a scalar") != null);
 }
 
+test "static conformance check handles 1D explicit-shape section parsed as substring compatibility node" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  implicit none\n" ++
+        "  integer :: n\n" ++
+        "  real :: a(10)\n" ++
+        "  n = 0\n" ++
+        "  if (any(a(n+1:n+5) > [1.0, 2.0, 3.0])) print *, \"x\"\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    _ = split_api.analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_bag) catch {};
+    const got = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(got);
+    try testing.expect(std.mem.indexOf(u8, got.message, "not conformable") != null);
+}
+
 test "free-form rewritten array PARAMETER keeps array shape on PARAMETER statement lane" {
     const testing = std.testing;
     const allocator = testing.allocator;

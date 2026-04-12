@@ -107,6 +107,7 @@ fn emitPipelineToFile(
     input_path: []const u8,
     emit: Col6Forge.EmitKind,
     output_path: []const u8,
+    bounds_check: bool,
     range_check: bool,
     fbackslash: bool,
     allow_argument_mismatch: bool,
@@ -119,6 +120,7 @@ fn emitPipelineToFile(
         .{
             .coarse_source_map = false,
             .capture_profile = false,
+            .bounds_check = bounds_check,
             .range_check = range_check,
             .fbackslash = fbackslash,
             .allow_argument_mismatch = allow_argument_mismatch,
@@ -379,7 +381,7 @@ pub fn processCase(
     var pipeline_diag_bag = Col6Forge.diag.Bag.init(allocator);
     defer pipeline_diag_bag.deinit();
 
-    emitPipelineToFile(allocator, abs_input_path, options.emit, ll_path, case.range_check, case.fbackslash, case.allow_argument_mismatch, &pipeline_diag_bag) catch |err| {
+    emitPipelineToFile(allocator, abs_input_path, options.emit, ll_path, case.bounds_check, case.range_check, case.fbackslash, case.allow_argument_mismatch, &pipeline_diag_bag) catch |err| {
         compile_failed = true;
         match_text = try formatPipelineFailureMatchText(allocator, &pipeline_diag_bag);
         diag_text = try formatPipelineFailureText(allocator, log_state, abs_input_path, &pipeline_diag_bag, err, !expect_failure);
@@ -539,6 +541,7 @@ test "processCase accepts repository c_ptr_tests_16 case" {
         .input_path = input_path,
         .rel_path = rel_path,
         .work_name = work_name,
+        .bounds_check = expectations.bounds_check,
         .range_check = expectations.range_check,
         .fbackslash = expectations.fbackslash,
         .allow_argument_mismatch = expectations.allow_argument_mismatch,

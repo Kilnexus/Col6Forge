@@ -26,6 +26,7 @@ const evalConstIntSem = io_utils.evalConstIntSem;
 const intLiteralValue = io_utils.intLiteralValue;
 const emitCollapsedRangeSubscriptValue = collapsed_sections.emitCollapsedRangeSubscriptValue;
 const emitCollapsedSubstringSectionValue = collapsed_sections.emitCollapsedSubstringSectionValue;
+const emitCollapsedComponentSectionValue = collapsed_sections.emitCollapsedComponentSectionValue;
 const emitCollapsedUnknownCountWholeArrayValue = collapsed_sections.emitCollapsedUnknownCountWholeArrayValue;
 const impliedLoopDim = implied_helpers.impliedLoopDim;
 const resolveArrayActual = array_actuals.resolveArrayActual;
@@ -845,6 +846,18 @@ pub fn expandWriteArgs(ctx: *Context, builder: anytype, args: []*ast.Expr) EmitE
             }
             continue;
         }
+        if (try emitCollapsedComponentSectionValue(ctx, builder, arg)) |value| {
+            if (complex.isComplexType(value.ty)) {
+                const real = try complex.extractComplex(ctx, builder, value, 0);
+                const imag = try complex.extractComplex(ctx, builder, value, 1);
+                try appendWriteValue(&expanded, real, 0, null);
+                try appendWriteValue(&expanded, imag, 0, null);
+            } else {
+                const len = if (value.ty == .ptr) charLenForExpr(ctx, arg) orelse 1 else 0;
+                try appendWriteValue(&expanded, value, len, null);
+            }
+            continue;
+        }
         const source_ptr = expr.emitLValue(ctx, builder, arg) catch null;
         const value = try expr.emitExpr(ctx, builder, arg);
         if (complex.isComplexType(value.ty)) {
@@ -914,6 +927,11 @@ pub fn expandWriteArgsList(ctx: *Context, builder: anytype, args: []*ast.Expr) E
             }
         }
         if (try emitCollapsedSubstringSectionValue(ctx, builder, arg)) |value| {
+            const len = if (value.ty == .ptr) charLenForExpr(ctx, arg) orelse 1 else 0;
+            try appendWriteValue(&expanded, value, len, null);
+            continue;
+        }
+        if (try emitCollapsedComponentSectionValue(ctx, builder, arg)) |value| {
             const len = if (value.ty == .ptr) charLenForExpr(ctx, arg) orelse 1 else 0;
             try appendWriteValue(&expanded, value, len, null);
             continue;

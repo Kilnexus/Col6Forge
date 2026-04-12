@@ -226,6 +226,30 @@ test "parseProgram clears pending host owner after bare END before external unit
     try testing.expect(program.units[2].owner_kind == null);
 }
 
+test "parseProgram accepts declarations inside BLOCK construct body" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  integer :: i\n" ++
+        "  i = 3\n" ++
+        "  block\n" ++
+        "    character(len=i), allocatable :: str1\n" ++
+        "    allocate(character(len=3) :: str1)\n" ++
+        "  end block\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parseProgram(arena.allocator(), lines);
+
+    try testing.expectEqual(@as(usize, 1), program.units.len);
+    try testing.expect(program.units[0].decls.len >= 2);
+}
+
 test "parseProgram prepends host declarations into implicit main internal procedures" {
     const testing = std.testing;
     const allocator = testing.allocator;

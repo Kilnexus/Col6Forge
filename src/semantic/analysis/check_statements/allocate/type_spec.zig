@@ -194,6 +194,7 @@ fn checkAllocateCharacterTypeSpecCompatibility(
                 return error.InvalidCharLen;
             }
             if (!declared_info.deferred and declared_info.expr != null and !targets.sameObjectSelectorExpr(declared_info.expr.?, type_spec.char_len.?)) {
+                if (target_info.allocatable or target_info.pointer) continue;
                 self.setDiagnostic(
                     if (type_spec.source.line == 0) 1 else type_spec.source.line,
                     if (type_spec.source.column == 0) 1 else type_spec.source.column,

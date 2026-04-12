@@ -147,6 +147,7 @@ fn staticShapeForExpr(self: *context.Context, expr_node: *ast.Expr) ?[]const i64
             break :blk out;
         },
         .call_or_subscript => |call| staticShapeForSubscript(self, expr_node, call),
+        .substring => |sub| staticShapeForSubstring(self, sub),
         else => null,
     };
 }
@@ -175,6 +176,48 @@ fn staticShapeForSubscript(
         out_idx += 1;
     }
     return out;
+}
+
+fn staticShapeForSubstring(
+    self: *context.Context,
+    sub: ast.SubstringExpr,
+) ?[]const i64 {
+    if (sub.args.len != 0) return null;
+    const idx = resolve_symbols.findSymbolIndex(self, sub.name) orelse return null;
+    const sym = self.symbols.items[idx];
+    if (sym.dims.len != 1) return null;
+
+    const dim_expr = sym.dims[0];
+    const extent = if (sub.start == null and sub.end == null)
+        staticDimExtent(self, dim_expr)
+    else
+        staticSubstringSectionExtent(self, dim_expr, sub);
+    const out = self.arena.alloc(i64, 1) catch return null;
+    out[0] = extent orelse return null;
+    return out;
+}
+
+fn staticSubstringSectionExtent(
+    self: *context.Context,
+    dim_expr: *ast.Expr,
+    sub: ast.SubstringExpr,
+) ?i64 {
+    switch (dim_expr.*) {
+        .dim_range => |range| {
+            var compat_range = ast.Expr{ .dim_range = .{
+                .lower = if (sub.start) |start_expr| start_expr else range.lower,
+                .upper = if (sub.end) |end_expr| end_expr else range.upper,
+            } };
+            return staticDimExtent(self, &compat_range);
+        },
+        else => {
+            var compat_range = ast.Expr{ .dim_range = .{
+                .lower = if (sub.start) |start_expr| start_expr else null,
+                .upper = if (sub.end) |end_expr| end_expr else dim_expr,
+            } };
+            return staticDimExtent(self, &compat_range);
+        },
+    }
 }
 
 fn staticShapeForDims(self: *context.Context, dims: []*ast.Expr) ?[]const i64 {

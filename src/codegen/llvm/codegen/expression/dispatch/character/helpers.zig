@@ -24,6 +24,7 @@ pub fn internalLiteralSubstringArgOmitted(expr_node: *Expr) bool {
 }
 
 pub fn validateConstantSubstringBounds(ctx: *Context, sub: ast.SubstringExpr) EmitError!void {
+    if (ctx.options.bounds_check) return;
     const sym = ctx.findSymbol(sub.name) orelse return;
     if (!sym.isCharacter()) return;
     const base_len_usize = common.constantCharacterLen(sym) orelse return;

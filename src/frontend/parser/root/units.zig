@@ -610,7 +610,7 @@ pub fn parseProgramUnitBody(
             try decl_sources.append(root_diagnostics.sourceFromLine(line));
             continue;
         }
-        if (spec_part_open and decl.isDeclarationStart(stmt_lp)) {
+        if ((spec_part_open or do_ctx.isInsideBlock()) and decl.isDeclarationStart(stmt_lp)) {
             var decl_node = decl.parseDecl(&stmt_lp, self.arena) catch |err| {
                 root_diagnostics.setParseDiagnosticFromStream(self.diag_bag, line, stmt_lp, err);
                 return err;

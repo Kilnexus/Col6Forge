@@ -544,6 +544,7 @@ fn evalDerivedComponentConst(ctx: *context.Context, expr: *ast.Expr) !?symbols.C
         .allocator = ctx.arena,
         .internStringFn = internDerivedComponentConstString,
         .arrayExtentFn = resolveDerivedComponentArrayExtent,
+        .arrayLowerBoundFn = resolveDerivedComponentArrayLowerBound,
     };
     return evaluator.evalConst(expr, resolver);
 }
@@ -582,6 +583,15 @@ fn resolveDerivedComponentArrayExtent(raw_ctx: *anyopaque, name: []const u8, dim
     return total;
 }
 
+fn resolveDerivedComponentArrayLowerBound(raw_ctx: *anyopaque, name: []const u8, dim: usize) ?i64 {
+    const ctx: *context.Context = @ptrCast(@alignCast(raw_ctx));
+    if (dim == 0) return null;
+    const idx = symbols_mod.findSymbolIndex(ctx, name) orelse return null;
+    const sym = ctx.symbols.items[idx];
+    if (sym.dims.len == 0 or dim > sym.dims.len) return null;
+    return evalDerivedComponentDimLower(ctx, sym.dims[dim - 1]);
+}
+
 fn evalDerivedComponentDimExtent(ctx: *context.Context, expr: *ast.Expr) ?i64 {
     return switch (expr.*) {
         .dim_range => |range| blk: {
@@ -593,6 +603,13 @@ fn evalDerivedComponentDimExtent(ctx: *context.Context, expr: *ast.Expr) ?i64 {
             break :blk std.math.add(i64, diff, 1) catch null;
         },
         else => evalDerivedComponentConstInt(ctx, expr),
+    };
+}
+
+fn evalDerivedComponentDimLower(ctx: *context.Context, expr: *ast.Expr) ?i64 {
+    return switch (expr.*) {
+        .dim_range => |range| if (range.lower) |lower_expr| evalDerivedComponentConstInt(ctx, lower_expr) else 1,
+        else => 1,
     };
 }
 

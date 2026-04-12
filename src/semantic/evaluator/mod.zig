@@ -18,6 +18,7 @@ pub const ConstResolver = struct {
     allocator: ?std.mem.Allocator = null,
     internStringFn: ?*const fn (ctx: *anyopaque, text: []const u8) anyerror![]const u8 = null,
     arrayExtentFn: ?*const fn (ctx: *anyopaque, name: []const u8, dim: ?usize) ?i64 = null,
+    arrayLowerBoundFn: ?*const fn (ctx: *anyopaque, name: []const u8, dim: usize) ?i64 = null,
     exprMeasureFn: ?*const fn (ctx: *anyopaque, expr: *const ast.Expr, measure: ExprMeasureKind) ?i64 = null,
     exprTypeSpecFn: ?*const fn (ctx: *anyopaque, expr: *const ast.Expr) ?symbols.TypeSpec = null,
     derivedExtendsFn: ?*const fn (ctx: *anyopaque, candidate: []const u8, base: []const u8) bool = null,
@@ -35,6 +36,11 @@ pub const ConstResolver = struct {
 
     pub fn arrayExtent(self: ConstResolver, name: []const u8, dim: ?usize) ?i64 {
         if (self.arrayExtentFn) |extent_fn| return extent_fn(self.ctx, name, dim);
+        return null;
+    }
+
+    pub fn arrayLowerBound(self: ConstResolver, name: []const u8, dim: usize) ?i64 {
+        if (self.arrayLowerBoundFn) |lower_fn| return lower_fn(self.ctx, name, dim);
         return null;
     }
 

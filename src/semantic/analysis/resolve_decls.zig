@@ -38,21 +38,45 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
             try validateExternalCharacterDeclarator(self, self.symbols.items[idx], item);
         }
         try validateKnownFunctionResultDeclaration(self, self.symbols.items[idx], true);
+        try validateCharacterArrayConstructorInitializer(self, self.symbols.items[idx], item.init);
         try validateDeclaratorInitializer(self, item.init);
     }
 }
 
 pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Expr) !void {
     const expr = init_expr orelse return;
-    const intrinsic_name = findDisallowedInitializationIntrinsic(expr) orelse return;
+    if (findDisallowedInitializationIntrinsic(expr)) |intrinsic_name| {
+        const decl_source = self.current_decl_source orelse ast.DeclSource{};
+        const line = if (decl_source.line == 0) 1 else decl_source.line;
+        const column = if (decl_source.column == 0) 1 else decl_source.column;
+        const message = std.fmt.allocPrint(
+            self.arena,
+            "Intrinsic function '{s}' is not permitted in an initialization expression",
+            .{intrinsic_name},
+        ) catch "Intrinsic function is not permitted in an initialization expression";
+        self.setDiagnostic(
+            line,
+            column,
+            catalog.semantic.parameter_not_constant.code,
+            message,
+            decl_source.text,
+        );
+        return error.ParameterNotConstant;
+    }
+    try validateRestrictedInitializationInquiry(self, expr);
+}
+
+fn validateRestrictedInitializationInquiry(self: *context.Context, init_expr: ?*ast.Expr) !void {
+    const expr = init_expr orelse return;
+    const intrinsic_name = findNonReducingInitializationInquiry(self, expr) orelse return;
     const decl_source = self.current_decl_source orelse ast.DeclSource{};
     const line = if (decl_source.line == 0) 1 else decl_source.line;
     const column = if (decl_source.column == 0) 1 else decl_source.column;
     const message = std.fmt.allocPrint(
         self.arena,
-        "Intrinsic function '{s}' is not permitted in an initialization expression",
+        "Intrinsic inquiry '{s}' does not reduce to a constant expression in this initialization expression",
         .{intrinsic_name},
-    ) catch "Intrinsic function is not permitted in an initialization expression";
+    ) catch "Initialization expression does not reduce to a constant expression";
     self.setDiagnostic(
         line,
         column,
@@ -61,6 +85,84 @@ pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Ex
         decl_source.text,
     );
     return error.ParameterNotConstant;
+}
+
+fn findNonReducingInitializationInquiry(self: *context.Context, expr: *ast.Expr) ?[]const u8 {
+    return switch (expr.*) {
+        .call_or_subscript => |call| {
+            if (isRestrictedInitializationInquiry(call.name) and call.args.len >= 1 and
+                inquirySubjectNeedsRuntimeBounds(self, call.args[0]))
+            {
+                return call.name;
+            }
+            for (call.args) |arg| {
+                if (findNonReducingInitializationInquiry(self, arg)) |name| return name;
+            }
+            return null;
+        },
+        .unary => |un| findNonReducingInitializationInquiry(self, un.expr),
+        .binary => |bin| findNonReducingInitializationInquiry(self, bin.left) orelse findNonReducingInitializationInquiry(self, bin.right),
+        .component => |comp| findNonReducingInitializationInquiry(self, comp.base),
+        .substring => |sub| blk: {
+            for (sub.args) |arg| {
+                if (findNonReducingInitializationInquiry(self, arg)) |name| break :blk name;
+            }
+            if (sub.start) |start| {
+                if (findNonReducingInitializationInquiry(self, start)) |name| break :blk name;
+            }
+            if (sub.end) |end| {
+                if (findNonReducingInitializationInquiry(self, end)) |name| break :blk name;
+            }
+            break :blk null;
+        },
+        .dim_range => |range| blk: {
+            if (range.lower) |lower| {
+                if (findNonReducingInitializationInquiry(self, lower)) |name| break :blk name;
+            }
+            if (findNonReducingInitializationInquiry(self, range.upper)) |name| break :blk name;
+            if (range.stride) |stride| {
+                if (findNonReducingInitializationInquiry(self, stride)) |name| break :blk name;
+            }
+            break :blk null;
+        },
+        .array_constructor => |ctor| blk: {
+            for (ctor.items) |item| {
+                if (findNonReducingInitializationInquiry(self, item)) |name| break :blk name;
+            }
+            break :blk null;
+        },
+        .complex_literal => |lit| findNonReducingInitializationInquiry(self, lit.real) orelse findNonReducingInitializationInquiry(self, lit.imag),
+        .implied_do => |ido| blk: {
+            for (ido.items) |item| {
+                if (findNonReducingInitializationInquiry(self, item)) |name| break :blk name;
+            }
+            if (findNonReducingInitializationInquiry(self, ido.start)) |name| break :blk name;
+            if (findNonReducingInitializationInquiry(self, ido.end)) |name| break :blk name;
+            if (ido.step) |step| {
+                if (findNonReducingInitializationInquiry(self, step)) |name| break :blk name;
+            }
+            break :blk null;
+        },
+        else => null,
+    };
+}
+
+fn isRestrictedInitializationInquiry(name: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(name, "lbound") or
+        std.ascii.eqlIgnoreCase(name, "ubound") or
+        std.ascii.eqlIgnoreCase(name, "shape") or
+        std.ascii.eqlIgnoreCase(name, "size");
+}
+
+fn inquirySubjectNeedsRuntimeBounds(self: *context.Context, expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .identifier => |name| blk: {
+            const idx = symbols_mod.findSymbolIndex(self, name) orelse break :blk false;
+            const sym = self.symbols.items[idx];
+            break :blk sym.is_allocatable or sym.is_pointer;
+        },
+        else => false,
+    };
 }
 
 fn isoCBindingCharacterKindShorthandType(
@@ -136,6 +238,56 @@ fn findDisallowedInitializationIntrinsic(expr: *ast.Expr) ?[]const u8 {
     };
 }
 
+fn validateCharacterArrayConstructorInitializer(
+    self: *context.Context,
+    sym: symbols.Symbol,
+    init_expr: ?*ast.Expr,
+) !void {
+    const expr = init_expr orelse return;
+    if (!sym.isCharacter() or sym.dims.len == 0) return;
+    const ctor = switch (expr.*) {
+        .array_constructor => |ctor| ctor,
+        else => return,
+    };
+    var expected_len: ?usize = null;
+    for (ctor.items) |item| {
+        const item_len = characterExprLogicalLen(self, item) orelse return;
+        if (expected_len == null) {
+            expected_len = item_len;
+            continue;
+        }
+        if (expected_len.? != item_len) {
+            const decl_source = self.current_decl_source orelse ast.DeclSource{};
+            self.setDiagnostic(
+                if (decl_source.line == 0) 1 else decl_source.line,
+                if (decl_source.column == 0) 1 else decl_source.column,
+                catalog.semantic.invalid_argument_count.code,
+                "Different CHARACTER lengths in array constructor",
+                decl_source.text,
+            );
+            return error.InvalidArgumentCount;
+        }
+    }
+}
+
+fn characterExprLogicalLen(self: *context.Context, expr: *ast.Expr) ?usize {
+    return switch (expr.*) {
+        .literal => |lit| switch (lit.kind) {
+            .string, .hollerith => @import("../evaluator/literals.zig").literalByteLen(lit),
+            else => null,
+        },
+        else => blk: {
+            const spec = resolve_expr.exprTypeSpec(self, expr) catch break :blk null;
+            if (spec.lowered_kind != .character) break :blk null;
+            break :blk switch (spec.char_len_kind) {
+                .constant => spec.char_len,
+                .none => spec.char_len orelse 1,
+                .assumed, .deferred => null,
+            };
+        },
+    };
+}
+
 pub fn applyProcedureDecl(self: *context.Context, decl: ast.ProcedureDecl) !void {
     for (decl.items) |item| {
         const resolved = try resolveProcedureDeclarator(self, decl.interface, item.name);
@@ -195,9 +347,17 @@ pub fn applyDeclarator(
     }
     if (allocatable) {
         sym.is_allocatable = true;
+        if (sym.dims.len != 0 and !hasDeferredShapeDeclarator(sym.dims)) {
+            emitDescriptorArrayShapeDiagnostic(self, "ALLOCATABLE");
+            return error.DuplicateDeclaration;
+        }
     }
     if (pointer) {
         sym.is_pointer = true;
+        if (sym.dims.len != 0 and !hasDeferredShapeDeclarator(sym.dims)) {
+            emitDescriptorArrayShapeDiagnostic(self, "POINTER");
+            return error.DuplicateDeclaration;
+        }
     }
     if (contiguous) {
         if (item.dims.len == 0) {
@@ -274,6 +434,42 @@ pub fn applyDeclarator(
         }
     }
     sym.applyTypeSpec(sym.type_spec.withCharacterLength(.constant, length));
+}
+
+fn hasDeferredShapeDeclarator(dims: []*ast.Expr) bool {
+    for (dims) |dim| {
+        switch (dim.*) {
+            .dim_range => |range| {
+                if (range.assumed_shape and range.lower == null) continue;
+                return false;
+            },
+            else => return false,
+        }
+    }
+    return dims.len != 0;
+}
+
+fn emitDescriptorArrayShapeDiagnostic(self: *context.Context, attr_name: []const u8) void {
+    const decl_source = self.current_decl_source orelse ast.DeclSource{};
+    const message = std.fmt.allocPrint(
+        self.arena,
+        "{s} array must have a deferred shape or assumed rank",
+        .{attr_name},
+    ) catch "array must have a deferred shape or assumed rank";
+    const help = std.fmt.allocPrint(
+        self.arena,
+        "Use ':' or assumed-rank form for each {s} array dimension.",
+        .{attr_name},
+    ) catch "Use ':' or assumed-rank form for each descriptor array dimension.";
+    self.setDiagnosticDetailed(
+        if (decl_source.line == 0) 1 else decl_source.line,
+        if (decl_source.column == 0) 1 else decl_source.column,
+        catalog.semantic.duplicate_declaration.code,
+        message,
+        decl_source.text,
+        &.{.{ .text = "A POINTER or ALLOCATABLE array declaration may not use explicit shape bounds." }},
+        &.{.{ .text = help }},
+    );
 }
 
 pub fn findPriorDeclaratorSource(

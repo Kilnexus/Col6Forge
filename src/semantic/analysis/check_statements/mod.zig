@@ -45,6 +45,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 return error.AssignmentTypeMismatch;
             }
             try rejectCharacterLiteralAssignmentConversion(self, assign.value, target_spec, value_spec);
+            try rejectMixedCharacterArrayConstructorLengths(self, assign.value, target_spec);
             if ((!intrinsicAssignmentTypeCompatible(self, target_ty, value_ty, target_spec, value_spec)) and
                 !expr_semantics.isDefinedAssignmentCompatible(self, assign.target, assign.value, .{
                     .dummyArgTypeCompatible = dummyArgTypeCompatible,
@@ -53,6 +54,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 self.setCurrentSource(self.sourceForExpr(assign.value) orelse self.sourceForExpr(assign.target));
                 return error.AssignmentTypeMismatch;
             }
+            try rejectStaticShapeMismatch(self, assign.target, assign.value);
         },
         .pointer_assignment => |assign| {
             _ = try expr_semantics.checkExprType(self, assign.target, .{
@@ -421,6 +423,117 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
     }
 }
 
+fn rejectStaticShapeMismatch(
+    self: *context.Context,
+    target: *ast.Expr,
+    value: *ast.Expr,
+) CheckError!void {
+    const target_shape = staticShapeForExpr(self, target) orelse return;
+    const value_shape = staticShapeForExpr(self, value) orelse return;
+    if (target_shape.len != value_shape.len) {
+        return emitExprConstraint(self, value, "Different shape");
+    }
+    for (target_shape, value_shape) |expected, actual| {
+        if (expected != actual) return emitExprConstraint(self, value, "Different shape");
+    }
+}
+
+fn staticShapeForExpr(self: *context.Context, expr_node: *ast.Expr) ?[]const i64 {
+    return switch (expr_node.*) {
+        .identifier => |name| blk: {
+            const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk null;
+            break :blk staticShapeForDims(self, self.symbols.items[idx].dims);
+        },
+        .call_or_subscript => |call| staticShapeForCall(self, call),
+        else => null,
+    };
+}
+
+fn staticShapeForCall(self: *context.Context, call: ast.CallOrSubscript) ?[]const i64 {
+    if (std.ascii.eqlIgnoreCase(call.name, "sum") or std.ascii.eqlIgnoreCase(call.name, "product")) {
+        if (call.args.len < 2) return null;
+        const base_shape = staticShapeForExpr(self, call.args[0]) orelse return null;
+        const dim = staticIntValue(self, call.args[1]) orelse return null;
+        if (dim <= 0) return null;
+        const dim_index: usize = @intCast(dim - 1);
+        if (dim_index >= base_shape.len) return null;
+        if (base_shape.len == 1) {
+            const out = self.arena.alloc(i64, 0) catch return null;
+            return out;
+        }
+        const out = self.arena.alloc(i64, base_shape.len - 1) catch return null;
+        var out_idx: usize = 0;
+        for (base_shape, 0..) |extent, idx| {
+            if (idx == dim_index) continue;
+            out[out_idx] = extent;
+            out_idx += 1;
+        }
+        return out;
+    }
+
+    if (std.ascii.eqlIgnoreCase(call.name, "matmul")) {
+        if (call.args.len != 2) return null;
+        const lhs_shape = staticShapeForExpr(self, call.args[0]) orelse return null;
+        const rhs_shape = staticShapeForExpr(self, call.args[1]) orelse return null;
+        const lhs_rank = resolve_expr.exprRank(self, call.args[0]);
+        const rhs_rank = resolve_expr.exprRank(self, call.args[1]);
+        if (!((lhs_rank == 1 or lhs_rank == 2) and (rhs_rank == 1 or rhs_rank == 2))) return null;
+        const lhs_inner = if (lhs_rank == 1) lhs_shape[0] else lhs_shape[1];
+        const rhs_inner = rhs_shape[0];
+        if (lhs_inner != rhs_inner) return null;
+
+        if (lhs_rank == 2 and rhs_rank == 2) {
+            const out = self.arena.alloc(i64, 2) catch return null;
+            out[0] = lhs_shape[0];
+            out[1] = rhs_shape[1];
+            return out;
+        }
+        if (lhs_rank == 2 and rhs_rank == 1) {
+            const out = self.arena.alloc(i64, 1) catch return null;
+            out[0] = lhs_shape[0];
+            return out;
+        }
+        if (lhs_rank == 1 and rhs_rank == 2) {
+            const out = self.arena.alloc(i64, 1) catch return null;
+            out[0] = rhs_shape[1];
+            return out;
+        }
+        return self.arena.alloc(i64, 0) catch null;
+    }
+
+    return null;
+}
+
+fn staticShapeForDims(self: *context.Context, dims: []*ast.Expr) ?[]const i64 {
+    if (dims.len == 0) return null;
+    const out = self.arena.alloc(i64, dims.len) catch return null;
+    for (dims, 0..) |dim_expr, idx| {
+        out[idx] = staticDimExtent(self, dim_expr) orelse return null;
+    }
+    return out;
+}
+
+fn staticDimExtent(self: *context.Context, expr_node: *ast.Expr) ?i64 {
+    return switch (expr_node.*) {
+        .dim_range => |range| blk: {
+            if (range.stride != null) break :blk null;
+            const upper = staticIntValue(self, range.upper) orelse break :blk null;
+            const lower = if (range.lower) |lower_expr| staticIntValue(self, lower_expr) orelse break :blk null else 1;
+            if (upper < lower) break :blk 0;
+            break :blk upper - lower + 1;
+        },
+        else => staticIntValue(self, expr_node),
+    };
+}
+
+fn staticIntValue(self: *context.Context, expr_node: *ast.Expr) ?i64 {
+    const value = resolve_const.evalConst(self, expr_node) catch return null;
+    return switch (value orelse return null) {
+        .integer => |v| v,
+        else => null,
+    };
+}
+
 fn dummyArgTypeCompatible(
     self: *context.Context,
     expected: symbols.TypeSpec,
@@ -506,6 +619,48 @@ fn rejectCharacterLiteralAssignmentConversion(
         source.text,
     );
     return error.AssignmentTypeMismatch;
+}
+
+fn rejectMixedCharacterArrayConstructorLengths(
+    self: *context.Context,
+    value: *ast.Expr,
+    target_spec: symbols.TypeSpec,
+) CheckError!void {
+    if (target_spec.lowered_kind != .character) return;
+    if (resolve_expr.exprRank(self, value) == 0) return;
+    const ctor = switch (value.*) {
+        .array_constructor => |ctor| ctor,
+        else => return,
+    };
+    var expected_len: ?usize = null;
+    for (ctor.items) |item| {
+        const item_len = characterExprLogicalLen(self, item) orelse return;
+        if (expected_len == null) {
+            expected_len = item_len;
+            continue;
+        }
+        if (expected_len.? != item_len) {
+            return emitExprConstraint(self, value, "Different CHARACTER lengths");
+        }
+    }
+}
+
+fn characterExprLogicalLen(self: *context.Context, expr_node: *ast.Expr) ?usize {
+    return switch (expr_node.*) {
+        .literal => |lit| switch (lit.kind) {
+            .string, .hollerith => literal_utils.literalByteLen(lit),
+            else => null,
+        },
+        else => blk: {
+            const spec = resolve_expr.exprTypeSpec(self, expr_node) catch break :blk null;
+            if (spec.lowered_kind != .character) break :blk null;
+            break :blk switch (spec.char_len_kind) {
+                .constant => spec.char_len,
+                .none => spec.char_len orelse 1,
+                .assumed, .deferred => null,
+            };
+        },
+    };
 }
 
 fn isLegacyDialectDoControlKind(kind: ast.TypeKind) bool {

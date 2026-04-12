@@ -39,6 +39,8 @@ const ConstCallKind = enum {
     ceiling,
     int,
     size,
+    lbound,
+    ubound,
     index,
     extends_type_of,
 };
@@ -80,6 +82,8 @@ const ConstCallMap = std.StaticStringMap(ConstCallKind).initComptime(.{
     .{ "CEILING", .ceiling },
     .{ "INT", .int },
     .{ "SIZE", .size },
+    .{ "LBOUND", .lbound },
+    .{ "UBOUND", .ubound },
     .{ "INDEX", .index },
     .{ "EXTENDS_TYPE_OF", .extends_type_of },
 });
@@ -334,6 +338,25 @@ pub fn evalConstCall(
                 else => null,
             } orelse return null;
             return .{ .integer = extent };
+        },
+        .lbound, .ubound => {
+            if (call.args.len == 0 or call.args.len > 2) return null;
+            if (call.args.len != 2) return null;
+            const res = resolver orelse return null;
+            const dim_value = (try eval_const_fn(call.args[1], resolver)) orelse return null;
+            const dim = switch (dim_value) {
+                .integer => |v| std.math.cast(usize, v) orelse return null,
+                else => return null,
+            };
+            if (dim == 0) return null;
+            const ident = switch (call.args[0].*) {
+                .identifier => |name| name,
+                else => return null,
+            };
+            const lower = res.arrayLowerBound(ident, dim) orelse return null;
+            if (kind == .lbound) return .{ .integer = lower };
+            const extent = res.arrayExtent(ident, dim) orelse return null;
+            return .{ .integer = lower + extent - 1 };
         },
         .index => {
             if (call.args.len < 2 or call.args.len > 3) return null;

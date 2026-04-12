@@ -35,6 +35,7 @@ fn evalConstUncached(self: *context.Context, expr: *ast.Expr) anyerror!?ConstVal
         .allocator = self.arena,
         .internStringFn = internConstString,
         .arrayExtentFn = resolveArrayExtent,
+        .arrayLowerBoundFn = resolveArrayLowerBound,
         .exprMeasureFn = resolveConstExprMeasure,
         .exprTypeSpecFn = resolveConstExprTypeSpec,
         .derivedExtendsFn = resolveDerivedTypeExtends,
@@ -84,6 +85,15 @@ fn resolveArrayExtent(ctx: *anyopaque, name: []const u8, dim: ?usize) ?i64 {
         total = std.math.mul(i64, total, extent) catch return null;
     }
     return total;
+}
+
+fn resolveArrayLowerBound(ctx: *anyopaque, name: []const u8, dim: usize) ?i64 {
+    const self: *context.Context = @ptrCast(@alignCast(ctx));
+    if (dim == 0) return null;
+    const idx = symbols_mod.findSymbolIndex(self, name) orelse return null;
+    const sym = self.symbols.items[idx];
+    if (sym.dims.len == 0 or dim > sym.dims.len) return null;
+    return evalDimLower(self, sym.dims[dim - 1]);
 }
 
 fn resolveConstExprMeasure(
@@ -438,6 +448,13 @@ fn evalDimExtent(self: *context.Context, expr: *ast.Expr) ?i64 {
             break :blk std.math.add(i64, diff, 1) catch null;
         },
         else => evalConstInt(self, expr),
+    };
+}
+
+fn evalDimLower(self: *context.Context, expr: *ast.Expr) ?i64 {
+    return switch (expr.*) {
+        .dim_range => |range| if (range.lower) |lower_expr| evalConstInt(self, lower_expr) else 1,
+        else => 1,
     };
 }
 

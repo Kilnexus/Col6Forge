@@ -532,3 +532,49 @@ test "semantic rejects external character declarator with non-constant length" {
     try testing.expect(std.mem.indexOf(u8, diag.message, "constant character length") != null);
 }
 
+test "semantic rejects allocatable array with explicit shape" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  integer, allocatable :: a(1:1)\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_capture = DiagCapture.init(allocator);
+    defer diag_capture.deinit();
+    try testing.expectError(error.DuplicateDeclaration, analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_capture.bag));
+    const diag = try diag_capture.take();
+    defer diag_capture.release(diag);
+    try testing.expect(std.mem.indexOf(u8, diag.message, "deferred shape or assumed rank") != null);
+}
+
+test "semantic rejects allocatable bounds inquiry in initialization expression" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  integer, allocatable :: a(:)\n" ++
+        "  integer :: b(1) = lbound(a)\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_capture = DiagCapture.init(allocator);
+    defer diag_capture.deinit();
+    try testing.expectError(error.ParameterNotConstant, analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_capture.bag));
+    const diag = try diag_capture.take();
+    defer diag_capture.release(diag);
+    try testing.expect(std.mem.indexOf(u8, diag.message, "does not reduce to a constant expression") != null);
+}

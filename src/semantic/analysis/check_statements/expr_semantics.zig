@@ -3,6 +3,7 @@ const ast = @import("../../../ast/nodes.zig");
 const catalog = @import("../../../common/error_catalog.zig");
 const symbols = @import("../../symbol/mod.zig");
 const context = @import("../context.zig");
+const resolve_const = @import("../resolve_const.zig");
 const constants = @import("../resolve_const.zig");
 const resolve_expr = @import("../resolve_expr.zig");
 const resolve_calls = @import("../resolve_expr/calls.zig");
@@ -48,6 +49,7 @@ pub fn checkSpecialExprCallConstraints(
     name: []const u8,
     args: []*ast.Expr,
 ) CheckError!void {
+    try checkStaticMatmulConformance(self, call_expr, name, args);
     try checkLegacyWidecharExprCallConstraints(self, name, args);
     if (intrinsicRequiresDoublePrecisionArgs(name)) {
         for (args) |arg| {
@@ -110,6 +112,180 @@ pub fn checkSpecialExprCallConstraints(
     }
 }
 
+fn checkStaticMatmulConformance(
+    self: *context.Context,
+    call_expr: *ast.Expr,
+    name: []const u8,
+    args: []*ast.Expr,
+) CheckError!void {
+    if (!std.ascii.eqlIgnoreCase(name, "matmul")) return;
+    if (args.len != 2) return;
+
+    const lhs_rank = resolve_expr.exprRank(self, args[0]);
+    const rhs_rank = resolve_expr.exprRank(self, args[1]);
+    if (!((lhs_rank == 1 or lhs_rank == 2) and (rhs_rank == 1 or rhs_rank == 2))) return;
+
+    const lhs_shape = staticShapeForExpr(self, args[0]) orelse return;
+    const rhs_shape = staticShapeForExpr(self, args[1]) orelse return;
+
+    const lhs_inner = if (lhs_rank == 1) lhs_shape[0] else lhs_shape[1];
+    const rhs_inner = rhs_shape[0];
+    if (lhs_inner != rhs_inner) {
+        return emitExprConstraintDiagnostic(self, call_expr, "Different shape");
+    }
+}
+
+fn staticShapeForExpr(self: *context.Context, expr_node: *ast.Expr) ?[]const i64 {
+    return switch (expr_node.*) {
+        .identifier => |name| blk: {
+            const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk null;
+            break :blk staticShapeForDims(self, self.symbols.items[idx].dims);
+        },
+        .array_constructor => |ctor| blk: {
+            const out = self.arena.alloc(i64, 1) catch return null;
+            out[0] = @intCast(ctor.items.len);
+            break :blk out;
+        },
+        .call_or_subscript => |call| staticShapeForSubscript(self, expr_node, call),
+        else => null,
+    };
+}
+
+fn staticShapeForSubscript(
+    self: *context.Context,
+    expr_node: *ast.Expr,
+    call: ast.CallOrSubscript,
+) ?[]const i64 {
+    _ = expr_node;
+    const idx = resolve_symbols.findSymbolIndex(self, call.name) orelse return null;
+    const sym = self.symbols.items[idx];
+    if (sym.dims.len == 0 or call.args.len != sym.dims.len) return null;
+
+    var rank: usize = 0;
+    for (call.args) |arg| {
+        if (arg.* == .dim_range) rank += 1;
+    }
+    if (rank == 0) return null;
+
+    const out = self.arena.alloc(i64, rank) catch return null;
+    var out_idx: usize = 0;
+    for (call.args) |arg| {
+        if (arg.* != .dim_range) continue;
+        out[out_idx] = staticDimExtent(self, arg) orelse return null;
+        out_idx += 1;
+    }
+    return out;
+}
+
+fn staticShapeForDims(self: *context.Context, dims: []*ast.Expr) ?[]const i64 {
+    if (dims.len == 0) return null;
+    const out = self.arena.alloc(i64, dims.len) catch return null;
+    for (dims, 0..) |dim_expr, idx| {
+        out[idx] = staticDimExtent(self, dim_expr) orelse return null;
+    }
+    return out;
+}
+
+fn staticDimExtent(self: *context.Context, expr_node: *ast.Expr) ?i64 {
+    return switch (expr_node.*) {
+        .dim_range => |range| blk: {
+            if (range.stride != null) break :blk null;
+            const maybe_upper = staticIntValue(self, range.upper);
+            const maybe_lower = if (range.lower) |lower_expr| staticIntValue(self, lower_expr) else 1;
+            if (maybe_upper != null and maybe_lower != null) {
+                const upper = maybe_upper.?;
+                const lower = maybe_lower.?;
+                if (upper < lower) break :blk 0;
+                break :blk upper - lower + 1;
+            }
+
+            const upper_affine = affineIntExpr(self, range.upper) orelse break :blk null;
+            const lower_affine = if (range.lower) |lower_expr|
+                affineIntExpr(self, lower_expr) orelse break :blk null
+            else
+                AffineIntExpr{ .base_name = null, .offset = 1 };
+            if (!sameAffineBase(upper_affine.base_name, lower_affine.base_name)) break :blk null;
+            break :blk upper_affine.offset - lower_affine.offset + 1;
+        },
+        else => staticIntValue(self, expr_node),
+    };
+}
+
+fn staticIntValue(self: *context.Context, expr_node: *ast.Expr) ?i64 {
+    const value = resolve_const.evalConst(self, expr_node) catch return null;
+    return switch (value orelse return null) {
+        .integer => |v| v,
+        else => null,
+    };
+}
+
+const AffineIntExpr = struct {
+    base_name: ?[]const u8,
+    offset: i64,
+};
+
+fn affineIntExpr(self: *context.Context, expr_node: *ast.Expr) ?AffineIntExpr {
+    return switch (expr_node.*) {
+        .identifier => |name| .{ .base_name = name, .offset = 0 },
+        .literal => |lit| blk: {
+            if (lit.kind != .integer) break :blk null;
+            break :blk .{ .base_name = null, .offset = std.fmt.parseInt(i64, lit.text, 10) catch return null };
+        },
+        .unary => |un| blk: {
+            const inner = affineIntExpr(self, un.expr) orelse break :blk null;
+            break :blk switch (un.op) {
+                .plus => inner,
+                .minus => if (inner.base_name == null) .{ .base_name = null, .offset = -inner.offset } else null,
+                else => null,
+            };
+        },
+        .binary => |bin| blk: {
+            const left = affineIntExpr(self, bin.left) orelse break :blk null;
+            const right = affineIntExpr(self, bin.right) orelse break :blk null;
+            switch (bin.op) {
+                .add => {
+                    if (left.base_name != null and right.base_name != null) break :blk null;
+                    if (left.base_name) |name| break :blk .{ .base_name = name, .offset = left.offset + right.offset };
+                    if (right.base_name) |name| break :blk .{ .base_name = name, .offset = left.offset + right.offset };
+                    break :blk .{ .base_name = null, .offset = left.offset + right.offset };
+                },
+                .sub => {
+                    if (left.base_name != null and right.base_name != null) break :blk null;
+                    if (left.base_name) |name| {
+                        if (right.base_name != null) break :blk null;
+                        break :blk .{ .base_name = name, .offset = left.offset - right.offset };
+                    }
+                    if (right.base_name != null) break :blk null;
+                    break :blk .{ .base_name = null, .offset = left.offset - right.offset };
+                },
+                else => break :blk null,
+            }
+        },
+        else => null,
+    };
+}
+
+fn sameAffineBase(lhs: ?[]const u8, rhs: ?[]const u8) bool {
+    if (lhs == null and rhs == null) return true;
+    if (lhs == null or rhs == null) return false;
+    return std.ascii.eqlIgnoreCase(lhs.?, rhs.?);
+}
+
+fn checkStaticElementalBinaryConformance(
+    self: *context.Context,
+    expr_node: *ast.Expr,
+    bin: ast.BinaryExpr,
+) CheckError!void {
+    const left_shape = staticShapeForExpr(self, bin.left) orelse return;
+    const right_shape = staticShapeForExpr(self, bin.right) orelse return;
+    if (left_shape.len != right_shape.len) {
+        return emitExprConstraintDiagnostic(self, expr_node, "not conformable");
+    }
+    for (left_shape, right_shape) |lhs, rhs| {
+        if (lhs != rhs) return emitExprConstraintDiagnostic(self, expr_node, "not conformable");
+    }
+}
+
 fn inferFirstKeywordFromCallSource(self: *context.Context, call_expr: *ast.Expr, callee_name: []const u8) ?[]const u8 {
     const source = self.sourceForExpr(call_expr) orelse return null;
     const line = source.text;
@@ -141,20 +317,20 @@ fn checkLegacyWidecharExprCallConstraints(
         std.ascii.eqlIgnoreCase(name, "getcwd") or
         std.ascii.eqlIgnoreCase(name, "system");
     const char_positions: ?[]const usize = blk: {
-        if (std.ascii.eqlIgnoreCase(name, "access")) break :blk &.{0, 1};
+        if (std.ascii.eqlIgnoreCase(name, "access")) break :blk &.{ 0, 1 };
         if (std.ascii.eqlIgnoreCase(name, "chdir")) break :blk &.{0};
-        if (std.ascii.eqlIgnoreCase(name, "chmod")) break :blk &.{0, 1};
+        if (std.ascii.eqlIgnoreCase(name, "chmod")) break :blk &.{ 0, 1 };
         if (std.ascii.eqlIgnoreCase(name, "fget")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "fgetc")) break :blk &.{1};
         if (std.ascii.eqlIgnoreCase(name, "fput")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "fputc")) break :blk &.{1};
         if (std.ascii.eqlIgnoreCase(name, "getcwd")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "hostnm")) break :blk &.{0};
-        if (std.ascii.eqlIgnoreCase(name, "link")) break :blk &.{0, 1};
+        if (std.ascii.eqlIgnoreCase(name, "link")) break :blk &.{ 0, 1 };
         if (std.ascii.eqlIgnoreCase(name, "lstat")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "stat")) break :blk &.{0};
-        if (std.ascii.eqlIgnoreCase(name, "rename")) break :blk &.{0, 1};
-        if (std.ascii.eqlIgnoreCase(name, "symlnk")) break :blk &.{0, 1};
+        if (std.ascii.eqlIgnoreCase(name, "rename")) break :blk &.{ 0, 1 };
+        if (std.ascii.eqlIgnoreCase(name, "symlnk")) break :blk &.{ 0, 1 };
         if (std.ascii.eqlIgnoreCase(name, "system")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "unlink")) break :blk &.{0};
         break :blk null;
@@ -285,6 +461,7 @@ pub fn checkExprType(self: *context.Context, expr: *ast.Expr, comptime deps: any
         .binary => |bin| {
             _ = try checkExprType(self, bin.left, deps);
             _ = try checkExprType(self, bin.right, deps);
+            try checkStaticElementalBinaryConformance(self, expr, bin);
             return try resolve_expr.exprType(self, expr);
         },
         .complex_literal => |lit| {

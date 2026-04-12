@@ -289,6 +289,34 @@ fn arrayBoundsSubject(ctx: *Context, expr: *Expr) ?BoundsSubject {
     };
 }
 
+fn emitComponentDimLowerValue(
+    ctx: *Context,
+    builder: anytype,
+    comp: ast.ComponentExpr,
+    dim_index: usize,
+) !ValueRef {
+    const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
+    const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse return error.UnknownSymbol;
+    if (component.pointer or component.allocatable) {
+        return memory.emitComponentDimLower(ctx, builder, comp, dim_index);
+    }
+    return memory.emitDimLower(ctx, builder, component.dims[dim_index]);
+}
+
+fn emitComponentDimExtentValue(
+    ctx: *Context,
+    builder: anytype,
+    comp: ast.ComponentExpr,
+    dim_index: usize,
+) !ValueRef {
+    const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
+    const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse return error.UnknownSymbol;
+    if (component.pointer or component.allocatable) {
+        return memory.emitComponentDimExtent(ctx, builder, comp, dim_index);
+    }
+    return memory.emitDimValue(ctx, builder, component.dims[dim_index]);
+}
+
 fn reshapeResultExtents(
     ctx: *Context,
     builder: anytype,
@@ -368,9 +396,9 @@ fn emitBoundsVectorLoop(
                 break :blk try support.emitAddI64(ctx, builder, lower, try support.emitSubI64(ctx, builder, extent, support.i64Const(ctx, 1)));
             },
             .component => |comp| blk: {
-                if (use_lower) break :blk try memory.emitComponentDimLower(ctx, builder, comp, dim_idx);
-                const lower = try memory.emitComponentDimLower(ctx, builder, comp, dim_idx);
-                const extent = try memory.emitComponentDimExtent(ctx, builder, comp, dim_idx);
+                if (use_lower) break :blk try emitComponentDimLowerValue(ctx, builder, comp, dim_idx);
+                const lower = try emitComponentDimLowerValue(ctx, builder, comp, dim_idx);
+                const extent = try emitComponentDimExtentValue(ctx, builder, comp, dim_idx);
                 break :blk try support.emitAddI64(ctx, builder, lower, try support.emitSubI64(ctx, builder, extent, support.i64Const(ctx, 1)));
             },
         };

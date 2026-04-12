@@ -504,6 +504,15 @@ fn emitComponentDimExtentValue(ctx: *Context, builder: anytype, comp: ast.Compon
     return emitArrayDimExtentExpr(ctx, builder, component.dims[dim_index]);
 }
 
+fn emitComponentDimLowerValue(ctx: *Context, builder: anytype, comp: ast.ComponentExpr, dim_index: usize) EmitError!ValueRef {
+    const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
+    const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse return error.UnknownSymbol;
+    if (component.pointer or component.allocatable) {
+        return memory.emitComponentDimLower(ctx, builder, comp, dim_index);
+    }
+    return memory.emitDimLower(ctx, builder, component.dims[dim_index]);
+}
+
 const SizeArraySubject = union(enum) {
     symbol: ast.sema.Symbol,
     component: ast.ComponentExpr,
@@ -809,9 +818,9 @@ fn emitIntrinsicBoundsScalar(ctx: *Context, builder: anytype, args: []*Expr, com
             break :blk try binary.emitAdd(ctx, builder, lower, try binary.emitSub(ctx, builder, extent, try oneIndexValue(ctx)));
         },
         .component => |comp| if (use_lower)
-            try memory.emitComponentDimLower(ctx, builder, comp, dim_index)
+            try emitComponentDimLowerValue(ctx, builder, comp, dim_index)
         else blk: {
-            const lower = try memory.emitComponentDimLower(ctx, builder, comp, dim_index);
+            const lower = try emitComponentDimLowerValue(ctx, builder, comp, dim_index);
             const extent = try emitComponentDimExtentValue(ctx, builder, comp, dim_index);
             break :blk try binary.emitAdd(ctx, builder, lower, try binary.emitSub(ctx, builder, extent, try oneIndexValue(ctx)));
         },
@@ -936,9 +945,9 @@ fn emitIntrinsicBoundsDynamicDim(
                 break :blk try binary.emitAdd(ctx, builder, lower, try binary.emitSub(ctx, builder, extent, try oneIndexValue(ctx)));
             },
             .component => |comp| if (use_lower)
-                try memory.emitComponentDimLower(ctx, builder, comp, dim_index)
+                try emitComponentDimLowerValue(ctx, builder, comp, dim_index)
             else blk: {
-                const lower = try memory.emitComponentDimLower(ctx, builder, comp, dim_index);
+                const lower = try emitComponentDimLowerValue(ctx, builder, comp, dim_index);
                 const extent = try emitComponentDimExtentValue(ctx, builder, comp, dim_index);
                 break :blk try binary.emitAdd(ctx, builder, lower, try binary.emitSub(ctx, builder, extent, try oneIndexValue(ctx)));
             },

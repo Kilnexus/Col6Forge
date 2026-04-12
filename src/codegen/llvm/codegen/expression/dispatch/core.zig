@@ -154,6 +154,21 @@ fn emitExprImpl(ctx: *Context, builder: anytype, expr: *Expr, subst_depth: usize
                 const ptr = try memory.emitComponentPtr(ctx, builder, comp);
                 const ty = try ctx.componentIRType(comp);
                 if (component.pointer) {
+                    if (component.dims.len == 0 and component.type_spec.lowered_kind != .character and component.type_spec.lowered_kind != .derived) {
+                        const data_ptr = try memory.emitLoadedComponentDataPtr(ctx, builder, comp);
+                        const pointee_ty = ctx.typeFromKind(component.type_spec.lowered_kind);
+                        const load_ty = if (component.type_spec.lowered_kind == .logical)
+                            llvm_types.defaultIntegerType(ctx.options.target_layout)
+                        else
+                            llvm_types.typeFromKindWithLayout(component.type_spec.lowered_kind, ctx.options.target_layout);
+                        const tmp = try ctx.nextTemp();
+                        try builder.load(tmp, load_ty, data_ptr);
+                        var value = ValueRef{ .name = tmp, .ty = load_ty, .is_ptr = false };
+                        if (component.type_spec.lowered_kind == .logical) {
+                            value = try casting.coerce(ctx, builder, value, pointee_ty);
+                        }
+                        return value;
+                    }
                     const tmp = try ctx.nextTemp();
                     try builder.load(tmp, .ptr, ptr);
                     return .{ .name = tmp, .ty = .ptr, .is_ptr = false };

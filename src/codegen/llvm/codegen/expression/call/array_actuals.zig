@@ -791,6 +791,19 @@ fn analyzeKnownArrayProcedureComponentActual(
 }
 
 pub fn resolveArrayActual(ctx: *Context, builder: anytype, expr: *Expr) anyerror!?ArrayActualPlan {
+    if (expr.* == .call_or_subscript and
+        (std.ascii.eqlIgnoreCase(expr.call_or_subscript.name, "lbound") or std.ascii.eqlIgnoreCase(expr.call_or_subscript.name, "ubound")))
+    {
+        if (try shape_intrinsics.analyzeIntrinsicBoundsActual(ctx, builder, expr.call_or_subscript, .{
+            .resolveArrayActual = resolveArrayActual,
+            .evalConstIntArg = evalConstIntArg,
+            .analyzeAddressableArrayActual = analyzeAddressableArrayActual,
+            .analyzeKnownArrayProcedureComponentActual = analyzeKnownArrayProcedureComponentActual,
+            .staticIntExprValue = constructors.staticIntExprValue,
+        })) |actual| {
+            return try validatedArrayActual(actual);
+        }
+    }
     if (try analyzeAddressableArrayActual(ctx, builder, expr)) |actual| return try validatedArrayActual(actual);
     if (expr.* == .array_constructor) {
         if (try analysis_dispatch.analyzeSingleItemArrayConstructorActual(ctx, builder, expr.array_constructor, .{
@@ -828,19 +841,6 @@ pub fn resolveArrayActual(ctx: *Context, builder: anytype, expr: *Expr) anyerror
         if (try reductions_intrinsics.analyzeIntrinsicCountDimActual(ctx, builder, expr.call_or_subscript, .{
             .resolveArrayActual = resolveArrayActual,
             .evalConstIntArg = evalConstIntArg,
-        })) |actual| {
-            return try validatedArrayActual(actual);
-        }
-    }
-    if (expr.* == .call_or_subscript and
-        (std.ascii.eqlIgnoreCase(expr.call_or_subscript.name, "lbound") or std.ascii.eqlIgnoreCase(expr.call_or_subscript.name, "ubound")))
-    {
-        if (try shape_intrinsics.analyzeIntrinsicBoundsActual(ctx, builder, expr.call_or_subscript, .{
-            .resolveArrayActual = resolveArrayActual,
-            .evalConstIntArg = evalConstIntArg,
-            .analyzeAddressableArrayActual = analyzeAddressableArrayActual,
-            .analyzeKnownArrayProcedureComponentActual = analyzeKnownArrayProcedureComponentActual,
-            .staticIntExprValue = constructors.staticIntExprValue,
         })) |actual| {
             return try validatedArrayActual(actual);
         }

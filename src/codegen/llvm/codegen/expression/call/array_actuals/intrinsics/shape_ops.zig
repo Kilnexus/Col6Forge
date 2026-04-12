@@ -40,8 +40,14 @@ pub fn analyzeIntrinsicBoundsActual(
         return null;
     if (call.args.len == 0 or call.args.len > 2) return null;
 
-    const subject = arrayBoundsSubject(ctx, call.args[0]) orelse return null;
-    const rank: usize = switch (subject) {
+    const resolved_extents = if (shouldUseExtentBounds(ctx, call.args[0]))
+        try shapeSubjectExtents(ctx, builder, call.args[0], hooks)
+    else
+        null;
+    const subject = if (resolved_extents == null) arrayBoundsSubject(ctx, call.args[0]) else null;
+    const rank: usize = if (resolved_extents) |extents|
+        extents.len
+    else switch (subject orelse return null) {
         .symbol => |sym| sym.dims.len,
         .component => |comp| blk: {
             const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
@@ -64,10 +70,22 @@ pub fn analyzeIntrinsicBoundsActual(
     multipliers[0] = support.i64Const(ctx, 1);
     const dst_ptr = try support.emitHeapArrayTempPointer(ctx, builder, result_ty, extents[0]);
     switch (mode) {
-        .lbound => try emitBoundsVectorLoop(ctx, builder, subject, true, rank, dst_ptr, result_ty),
-        .ubound => try emitBoundsVectorLoop(ctx, builder, subject, false, rank, dst_ptr, result_ty),
+        .lbound => {
+            if (resolved_extents) |subject_extents| {
+                try emitExtentBoundsVectorLoop(ctx, builder, subject_extents, true, dst_ptr, result_ty);
+            } else {
+                try emitBoundsVectorLoop(ctx, builder, subject.?, true, rank, dst_ptr, result_ty);
+            }
+        },
+        .ubound => {
+            if (resolved_extents) |subject_extents| {
+                try emitExtentBoundsVectorLoop(ctx, builder, subject_extents, false, dst_ptr, result_ty);
+            } else {
+                try emitBoundsVectorLoop(ctx, builder, subject.?, false, rank, dst_ptr, result_ty);
+            }
+        },
         .shape => {
-            const subject_extents = try shapeSubjectExtents(ctx, builder, call.args[0], hooks) orelse return null;
+            const subject_extents = resolved_extents orelse try shapeSubjectExtents(ctx, builder, call.args[0], hooks) orelse return null;
             for (subject_extents, 0..) |extent, idx| {
                 const coerced = if (extent.ty == result_ty) extent else try casting.coerce(ctx, builder, extent, result_ty);
                 const elem_ptr_name = try ctx.nextTemp();
@@ -86,6 +104,18 @@ pub fn analyzeIntrinsicBoundsActual(
         .storage = .materialized_temp,
         .owned_heap_ptr = dst_ptr,
         .contiguous = true,
+    };
+}
+
+fn shouldUseExtentBounds(ctx: *Context, expr_node: *Expr) bool {
+    return switch (expr_node.*) {
+        .call_or_subscript => |call| call.args.len != 0,
+        .component => |comp| comp.args.len != 0,
+        .substring => |sub| blk: {
+            const sym = ctx.findSymbol(sub.name) orelse break :blk false;
+            break :blk sym.dims.len != 0;
+        },
+        else => false,
     };
 }
 
@@ -355,4 +385,24 @@ fn emitBoundsVectorLoop(
     try builder.br(loop_preheader);
 
     try builder.label(loop_exit);
+}
+
+fn emitExtentBoundsVectorLoop(
+    ctx: *Context,
+    builder: anytype,
+    extents: []const ValueRef,
+    use_lower: bool,
+    dst_ptr: ValueRef,
+    result_ty: IRType,
+) !void {
+    for (extents, 0..) |extent, idx| {
+        var bound = if (use_lower)
+            support.i64Const(ctx, 1)
+        else
+            extent;
+        if (bound.ty != result_ty) bound = try casting.coerce(ctx, builder, bound, result_ty);
+        const elem_ptr_name = try ctx.nextTemp();
+        try builder.gep(elem_ptr_name, result_ty, dst_ptr, support.i64Const(ctx, @intCast(idx)));
+        try builder.store(bound, .{ .name = elem_ptr_name, .ty = .ptr, .is_ptr = true });
+    }
 }

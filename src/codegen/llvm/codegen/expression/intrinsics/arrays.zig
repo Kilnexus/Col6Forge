@@ -758,6 +758,11 @@ fn integerKindToIRType(kind_value: i64) ?IRType {
 
 fn emitIntrinsicBoundsScalar(ctx: *Context, builder: anytype, args: []*Expr, comptime use_lower: bool) EmitError!ValueRef {
     if (args.len < 1 or args.len > 3) return error.InvalidIntrinsicCall;
+    if (shouldUseExtentBounds(ctx, args[0])) {
+        if (try shapeSubjectExtents(ctx, builder, args[0])) |extents| {
+            return emitIntrinsicBoundsScalarForExtents(ctx, builder, extents, args, use_lower);
+        }
+    }
     const subject = lookupArraySubjectForSize(ctx, args[0]) orelse return error.UnsupportedIntrinsicType;
     const rank: usize = switch (subject) {
         .symbol => |sym| sym.dims.len,
@@ -786,6 +791,10 @@ fn emitIntrinsicBoundsScalar(ctx: *Context, builder: anytype, args: []*Expr, com
         result_ty = integerKindToIRType(kind_value) orelse return error.UnsupportedIntrinsicType;
     }
 
+    if (requested_dim == null and args.len == 1 and rank == 1) {
+        requested_dim = 0;
+    }
+
     if (requested_dim == null and args.len >= 2) {
         return emitIntrinsicBoundsDynamicDim(ctx, builder, subject, args[1], rank, result_ty, use_lower);
     }
@@ -809,6 +818,94 @@ fn emitIntrinsicBoundsScalar(ctx: *Context, builder: anytype, args: []*Expr, com
     };
     if (value.ty != result_ty) value = try casting.coerce(ctx, builder, value, result_ty);
     return value;
+}
+
+fn shouldUseExtentBounds(ctx: *Context, expr_node: *Expr) bool {
+    return switch (expr_node.*) {
+        .call_or_subscript => |call| call.args.len != 0,
+        .component => |comp| comp.args.len != 0,
+        .substring => |sub| blk: {
+            const sym = ctx.findSymbol(sub.name) orelse break :blk false;
+            break :blk sym.dims.len != 0;
+        },
+        else => false,
+    };
+}
+
+fn emitIntrinsicBoundsScalarForExtents(
+    ctx: *Context,
+    builder: anytype,
+    extents: []const ValueRef,
+    args: []*Expr,
+    comptime use_lower: bool,
+) EmitError!ValueRef {
+    const rank = extents.len;
+    var requested_dim: ?usize = null;
+    var result_ty = ctx.defaultIntegerIRType();
+
+    if (args.len == 2) {
+        if (evalConstIntArg(ctx, args[1])) |second| {
+            if (second >= 1 and second <= rank) {
+                requested_dim = @intCast(second - 1);
+            } else {
+                result_ty = integerKindToIRType(second) orelse return error.UnsupportedIntrinsicType;
+            }
+        }
+    } else if (args.len == 3) {
+        const dim_value = evalConstIntArg(ctx, args[1]) orelse return error.UnsupportedIntrinsicType;
+        if (dim_value < 1 or dim_value > rank) return error.InvalidIntrinsicCall;
+        requested_dim = @intCast(dim_value - 1);
+        const kind_value = evalConstIntArg(ctx, args[2]) orelse return error.UnsupportedIntrinsicType;
+        result_ty = integerKindToIRType(kind_value) orelse return error.UnsupportedIntrinsicType;
+    }
+
+    if (requested_dim == null and args.len == 1 and rank == 1) {
+        requested_dim = 0;
+    }
+
+    if (requested_dim == null and args.len >= 2) {
+        return emitIntrinsicBoundsDynamicDimForExtents(ctx, builder, extents, args[1], result_ty, use_lower);
+    }
+
+    const dim_index = requested_dim orelse return error.InvalidIntrinsicCall;
+    var value = if (use_lower)
+        try oneIndexValue(ctx)
+    else
+        extents[dim_index];
+    if (value.ty != result_ty) value = try casting.coerce(ctx, builder, value, result_ty);
+    return value;
+}
+
+fn emitIntrinsicBoundsDynamicDimForExtents(
+    ctx: *Context,
+    builder: anytype,
+    extents: []const ValueRef,
+    dim_expr: *Expr,
+    result_ty: IRType,
+    comptime use_lower: bool,
+) EmitError!ValueRef {
+    var dim_value = try dispatch.emitExpr(ctx, builder, dim_expr);
+    if (dim_value.ty != .i64) dim_value = try casting.coerce(ctx, builder, dim_value, .i64);
+
+    var result = if (use_lower)
+        try casting.coerce(ctx, builder, try oneIndexValue(ctx), result_ty)
+    else
+        utils.zeroValue(result_ty);
+
+    for (extents, 0..) |extent, dim_index| {
+        var candidate = if (use_lower)
+            try oneIndexValue(ctx)
+        else
+            extent;
+        if (candidate.ty != result_ty) candidate = try casting.coerce(ctx, builder, candidate, result_ty);
+
+        const cond_name = try ctx.nextTemp();
+        try builder.compare(cond_name, "icmp", "eq", .i64, dim_value, try ctx.constI64(@intCast(dim_index + 1)));
+        const next_name = try ctx.nextTemp();
+        try builder.select(next_name, result_ty, .{ .name = cond_name, .ty = .i1, .is_ptr = false }, candidate, result);
+        result = .{ .name = next_name, .ty = result_ty, .is_ptr = false };
+    }
+    return result;
 }
 
 fn emitIntrinsicBoundsDynamicDim(

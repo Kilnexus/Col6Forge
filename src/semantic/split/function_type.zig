@@ -15,7 +15,9 @@ pub fn inferFunctionResultRank(unit: ast.ProgramUnit) usize {
         if (!std.ascii.eqlIgnoreCase(name, unit.name)) name else null
     else
         null;
-    for (unit.decls) |decl| {
+    var decl_idx = unit.decls.len;
+    while (decl_idx > 0) : (decl_idx -= 1) {
+        const decl = unit.decls[decl_idx - 1];
         switch (decl) {
             .type_decl => |type_decl| {
                 for (type_decl.items) |item| {
@@ -42,7 +44,9 @@ pub fn inferFunctionResultRank(unit: ast.ProgramUnit) usize {
 pub fn inferProcedureIsPointer(unit: ast.ProgramUnit) bool {
     if (unit.kind != .function) return false;
     const explicit_result_name = explicitResultName(unit);
-    for (unit.decls) |decl| {
+    var decl_idx = unit.decls.len;
+    while (decl_idx > 0) : (decl_idx -= 1) {
+        const decl = unit.decls[decl_idx - 1];
         switch (decl) {
             .type_decl => |type_decl| {
                 for (type_decl.items) |item| {
@@ -69,7 +73,9 @@ pub fn inferProcedureIsPointer(unit: ast.ProgramUnit) bool {
 pub fn inferFunctionResultAllocatable(unit: ast.ProgramUnit) bool {
     if (unit.kind != .function) return false;
     const explicit_result_name = explicitResultName(unit);
-    for (unit.decls) |decl| {
+    var decl_idx = unit.decls.len;
+    while (decl_idx > 0) : (decl_idx -= 1) {
+        const decl = unit.decls[decl_idx - 1];
         switch (decl) {
             .type_decl => |type_decl| {
                 for (type_decl.items) |item| {
@@ -90,7 +96,9 @@ pub fn inferFunctionResultAllocatable(unit: ast.ProgramUnit) bool {
 pub fn inferFunctionResultContiguous(unit: ast.ProgramUnit) bool {
     if (unit.kind != .function) return false;
     const explicit_result_name = explicitResultName(unit);
-    for (unit.decls) |decl| {
+    var decl_idx = unit.decls.len;
+    while (decl_idx > 0) : (decl_idx -= 1) {
+        const decl = unit.decls[decl_idx - 1];
         switch (decl) {
             .type_decl => |type_decl| {
                 for (type_decl.items) |item| {
@@ -106,7 +114,9 @@ pub fn inferFunctionResultContiguous(unit: ast.ProgramUnit) bool {
 pub fn inferFunctionResultIsProcedurePointer(unit: ast.ProgramUnit) bool {
     if (unit.kind != .function) return false;
     const explicit_result_name = explicitResultName(unit);
-    for (unit.decls) |decl| {
+    var decl_idx = unit.decls.len;
+    while (decl_idx > 0) : (decl_idx -= 1) {
+        const decl = unit.decls[decl_idx - 1];
         switch (decl) {
             .procedure => |procedure_decl| {
                 for (procedure_decl.items) |item| {
@@ -122,7 +132,9 @@ pub fn inferFunctionResultIsProcedurePointer(unit: ast.ProgramUnit) bool {
 pub fn inferFunctionResultShapeSignature(arena: std.mem.Allocator, unit: ast.ProgramUnit) ![]const []const u8 {
     if (unit.kind != .function) return &.{};
     const explicit_result_name = explicitResultName(unit);
-    for (unit.decls) |decl| {
+    var decl_idx = unit.decls.len;
+    while (decl_idx > 0) : (decl_idx -= 1) {
+        const decl = unit.decls[decl_idx - 1];
         switch (decl) {
             .type_decl => |type_decl| {
                 for (type_decl.items) |item| {
@@ -165,7 +177,9 @@ pub fn inferFunctionResultShapeSignature(arena: std.mem.Allocator, unit: ast.Pro
 
 pub fn inferFunctionTypeSpec(unit: ast.ProgramUnit) symbols.TypeSpec {
     const explicit_result_name = explicitResultName(unit);
-    for (unit.decls) |decl| {
+    var decl_idx = unit.decls.len;
+    while (decl_idx > 0) : (decl_idx -= 1) {
+        const decl = unit.decls[decl_idx - 1];
         switch (decl) {
             .type_decl => |type_decl| {
                 for (type_decl.items) |item| {
@@ -317,4 +331,41 @@ test "inferFunctionTypeSpec preserves polymorphic derived function results" {
     try testing.expect(spec.polymorphic);
     try testing.expect(spec.derived_type_name != null);
     try testing.expectEqualStrings("t", spec.derived_type_name.?);
+}
+
+test "inferFunctionResultRank prefers contained function result declarator over prepended host decls" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  integer :: b(2)\n" ++
+        "contains\n" ++
+        "  integer function func(n) result(b)\n" ++
+        "    integer :: n, b\n" ++
+        "    b = n\n" ++
+        "  end function\n" ++
+        "end program p\n";
+
+    const lines = try fixed_form.normalizeFixedForm(allocator, source);
+    defer fixed_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    try testing.expectEqual(@as(usize, 2), program.units.len);
+
+    const owner = program.units[0];
+    const inner = program.units[1];
+    var combined_decls = std.array_list.Managed(ast.Decl).init(arena.allocator());
+    defer combined_decls.deinit();
+    try combined_decls.appendSlice(owner.decls);
+    try combined_decls.appendSlice(inner.decls);
+
+    var prepared = inner;
+    prepared.decls = try combined_decls.toOwnedSlice();
+
+    try testing.expectEqual(@as(usize, 0), inferFunctionResultRank(prepared));
+    try testing.expectEqual(ast.TypeKind.integer, inferFunctionTypeSpec(prepared).lowered_kind);
 }

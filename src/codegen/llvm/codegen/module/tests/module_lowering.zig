@@ -182,6 +182,59 @@ test "emitModuleToWriter supports allocatable unlimited polymorphic components" 
     try testing.expect(std.mem.indexOf(u8, output, "call void @free") != null);
 }
 
+test "emitModuleToWriter prefers local RESULT symbol over host-associated duplicate name" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program main\n" ++
+        "  type, abstract :: foo_t\n" ++
+        "  end type foo_t\n" ++
+        "  type, extends(foo_t) :: foo_a_t\n" ++
+        "    real(8), allocatable :: a(:)\n" ++
+        "  end type foo_a_t\n" ++
+        "  type, extends(foo_t) :: bar_t\n" ++
+        "    class(foo_t), allocatable :: f\n" ++
+        "  end type bar_t\n" ++
+        "  type(bar_t) :: b(2)\n" ++
+        "  integer :: i\n" ++
+        "  do i = 1, 2\n" ++
+        "    b(i) = func_bar(3)\n" ++
+        "  end do\n" ++
+        "contains\n" ++
+        "  function func_bar(n) result(b)\n" ++
+        "    integer :: n\n" ++
+        "    type(bar_t) :: b\n" ++
+        "    allocate(b%f, source=func_foo(n))\n" ++
+        "  end function func_bar\n" ++
+        "  function func_foo(n) result(f)\n" ++
+        "    integer :: n\n" ++
+        "    class(foo_t), allocatable :: f\n" ++
+        "    allocate(f, source=func_foo_a(n))\n" ++
+        "  end function func_foo\n" ++
+        "  function func_foo_a(n) result(f)\n" ++
+        "    integer :: n\n" ++
+        "    type(foo_a_t) :: f\n" ++
+        "    allocate(f%a(n))\n" ++
+        "  end function func_foo_a\n" ++
+        "end program main\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem_prog = try split_api.analyzeProgram(arena.allocator(), program);
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try emitModuleToWriter(&writer, allocator, program, sem_prog, "result_shadow_host.f90", .{});
+
+    const output = buffer.items;
+    try testing.expect(std.mem.indexOf(u8, output, "define ptr @proc_main__func_bar_") != null);
+}
+
 test "emitModuleToWriter supports deferred-length allocatable character components in assignment and substring" {
     const testing = std.testing;
     const allocator = testing.allocator;

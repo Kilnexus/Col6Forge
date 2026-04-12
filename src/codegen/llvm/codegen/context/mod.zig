@@ -173,10 +173,18 @@ pub const Context = struct {
         errdefer ctx.static_array_values.deinit();
 
         for (sem.symbols, 0..) |sym, idx| {
-            if (!ctx.symbol_index_exact.contains(sym.name)) {
+            if (ctx.symbol_index_exact.get(sym.name)) |existing_idx| {
+                if (prefersSymbolForLookup(sym, sem.symbols[existing_idx])) {
+                    try ctx.symbol_index_exact.put(sym.name, idx);
+                }
+            } else {
                 try ctx.symbol_index_exact.put(sym.name, idx);
             }
-            if (!ctx.symbol_index.contains(sym.name)) {
+            if (ctx.symbol_index.get(sym.name)) |existing_idx| {
+                if (prefersSymbolForLookup(sym, sem.symbols[existing_idx])) {
+                    try ctx.symbol_index.put(sym.name, idx);
+                }
+            } else {
                 try ctx.symbol_index.put(sym.name, idx);
             }
         }
@@ -712,6 +720,21 @@ pub const Context = struct {
     fn symbolIndexForName(self: *const Context, name: []const u8) ?usize {
         if (self.symbol_index_exact.get(name)) |idx| return idx;
         return self.symbol_index.get(name);
+    }
+
+    fn prefersSymbolForLookup(candidate: input.sema.Symbol, existing: input.sema.Symbol) bool {
+        return symbolLookupPriority(candidate) > symbolLookupPriority(existing);
+    }
+
+    fn symbolLookupPriority(sym: input.sema.Symbol) u8 {
+        if (!sym.is_host_associated) {
+            return switch (sym.storage) {
+                .local => 4,
+                .dummy => 3,
+                else => 2,
+            };
+        }
+        return 1;
     }
 
     fn buildDerivedTypeLayouts(self: *Context) !void {

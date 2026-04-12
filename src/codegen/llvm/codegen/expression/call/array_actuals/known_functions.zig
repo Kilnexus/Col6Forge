@@ -27,16 +27,11 @@ pub fn analyzeKnownArrayFunctionActual(
     const sig = ctx.lookupKnownProcedureSig(call.name) orelse return null;
     if (sig.result_rank == 0) return null;
     const result_spec = sig.result_type_spec orelse return null;
-    if (result_spec.lowered_kind == .derived) return null;
 
     const extents = try materializeKnownArrayResultExtents(ctx, builder, sig, call.args, hooks) orelse return null;
-    const result_char_len = if (result_spec.lowered_kind == .character) result_spec.char_len orelse 1 else null;
-    const elem_ty: IRType = if (result_char_len != null) .i8 else storageIRTypeForProcedureResult(ctx, result_spec);
+    const result_storage = try knownArrayResultStorageInfo(ctx, result_spec, hooks);
     const elem_count = try hooks.emitExtentProductI64(ctx, builder, extents);
-    const result_ptr = if (result_char_len) |char_len|
-        try hooks.emitHeapArrayTempPointer(ctx, builder, elem_ty, try hooks.emitMulI64(ctx, builder, elem_count, hooks.i64Const(ctx, @intCast(char_len))))
-    else
-        try hooks.emitHeapArrayTempPointer(ctx, builder, elem_ty, elem_count);
+    const result_ptr = try hooks.emitHeapArrayTempPointerScaled(ctx, builder, result_storage.elem_ty, elem_count, result_storage.address_scale);
 
     var abi_args = std.array_list.Managed(ValueRef).init(ctx.allocator);
     defer abi_args.deinit();
@@ -50,20 +45,20 @@ pub fn analyzeKnownArrayFunctionActual(
         &owned_heap_args,
         call.args,
         sig,
-        if (result_char_len) |char_len| try ctx.abiCharacterLenConst(@intCast(char_len)) else null,
+        result_storage.abi_char_len,
         hooks,
     );
 
-    const fn_name = try resolution.ensureExternalDeclForCall(ctx, call.name, .void, call.args, result_char_len != null);
+    const fn_name = try resolution.ensureExternalDeclForCall(ctx, call.name, .void, call.args, result_storage.abi_char_len != null);
     try builder.callTyped(null, .void, fn_name, abi_args.items);
     try hooks.emitOwnedHeapArgFrees(ctx, builder, owned_heap_args.items);
 
     return try validatedArrayActual(.{
         .base_ptr = result_ptr,
-        .elem_ty = elem_ty,
+        .elem_ty = result_storage.elem_ty,
         .extents = extents,
         .multipliers = try hooks.emitContiguousMultipliers(ctx, builder, extents),
-        .address_scale = if (result_char_len) |char_len| hooks.i64Const(ctx, @intCast(char_len)) else hooks.i64Const(ctx, 1),
+        .address_scale = result_storage.address_scale,
         .storage = .materialized_temp,
         .owned_heap_ptr = result_ptr,
         .contiguous = true,
@@ -209,18 +204,13 @@ pub fn analyzeKnownArrayProcedureComponentActual(
     const proc_sig = component.procedure_sig orelse return null;
     if (proc_sig.result_rank == 0) return null;
     const result_spec = proc_sig.result_type_spec orelse return null;
-    if (result_spec.lowered_kind == .derived) return null;
 
     const actuals = try buildProcedureComponentArrayActuals(ctx, comp, component, proc_sig);
     defer ctx.allocator.free(actuals);
     const extents = try materializeKnownArrayResultExtents(ctx, builder, proc_sig, actuals, hooks) orelse return null;
-    const result_char_len = if (result_spec.lowered_kind == .character) result_spec.char_len orelse 1 else null;
-    const elem_ty: IRType = if (result_char_len != null) .i8 else storageIRTypeForProcedureResult(ctx, result_spec);
+    const result_storage = try knownArrayResultStorageInfo(ctx, result_spec, hooks);
     const elem_count = try hooks.emitExtentProductI64(ctx, builder, extents);
-    const result_ptr = if (result_char_len) |char_len|
-        try hooks.emitHeapArrayTempPointer(ctx, builder, elem_ty, try hooks.emitMulI64(ctx, builder, elem_count, hooks.i64Const(ctx, @intCast(char_len))))
-    else
-        try hooks.emitHeapArrayTempPointer(ctx, builder, elem_ty, elem_count);
+    const result_ptr = try hooks.emitHeapArrayTempPointerScaled(ctx, builder, result_storage.elem_ty, elem_count, result_storage.address_scale);
 
     var abi_args = std.array_list.Managed(ValueRef).init(ctx.allocator);
     defer abi_args.deinit();
@@ -234,7 +224,7 @@ pub fn analyzeKnownArrayProcedureComponentActual(
         &owned_heap_args,
         actuals,
         proc_sig,
-        if (result_char_len) |char_len| try ctx.abiCharacterLenConst(@intCast(char_len)) else null,
+        result_storage.abi_char_len,
         hooks,
     );
 
@@ -251,14 +241,47 @@ pub fn analyzeKnownArrayProcedureComponentActual(
 
     return try validatedArrayActual(.{
         .base_ptr = result_ptr,
-        .elem_ty = elem_ty,
+        .elem_ty = result_storage.elem_ty,
         .extents = extents,
         .multipliers = try hooks.emitContiguousMultipliers(ctx, builder, extents),
-        .address_scale = if (result_char_len) |char_len| hooks.i64Const(ctx, @intCast(char_len)) else hooks.i64Const(ctx, 1),
+        .address_scale = result_storage.address_scale,
         .storage = .materialized_temp,
         .owned_heap_ptr = result_ptr,
         .contiguous = true,
     });
+}
+
+const ArrayResultStorageInfo = struct {
+    elem_ty: IRType,
+    address_scale: ValueRef,
+    abi_char_len: ?ValueRef = null,
+};
+
+fn knownArrayResultStorageInfo(
+    ctx: *Context,
+    result_spec: ast.TypeSpec,
+    comptime hooks: anytype,
+) !ArrayResultStorageInfo {
+    if (result_spec.lowered_kind == .character) {
+        const char_len = result_spec.char_len orelse 1;
+        return .{
+            .elem_ty = .i8,
+            .address_scale = hooks.i64Const(ctx, @intCast(char_len)),
+            .abi_char_len = try ctx.abiCharacterLenConst(@intCast(char_len)),
+        };
+    }
+    if (result_spec.lowered_kind == .derived) {
+        const derived_name = result_spec.derived_type_name orelse return error.UnknownSymbol;
+        const layout = ctx.findDerivedTypeLayout(derived_name) orelse return error.UnknownSymbol;
+        return .{
+            .elem_ty = .i8,
+            .address_scale = hooks.i64Const(ctx, @intCast(layout.size)),
+        };
+    }
+    return .{
+        .elem_ty = storageIRTypeForProcedureResult(ctx, result_spec),
+        .address_scale = hooks.i64Const(ctx, 1),
+    };
 }
 
 fn appendKnownArrayProcedureCallArgs(

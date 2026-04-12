@@ -27,6 +27,8 @@ const ProcessResult = struct {
     }
 };
 
+var work_run_counter = std.atomic.Value(u64).init(0);
+
 fn runProcessCapture(
     allocator: std.mem.Allocator,
     argv: []const []const u8,
@@ -361,9 +363,12 @@ pub fn processCase(
     const abs_input_path = try std.fs.path.join(allocator, &.{ root_path, case.input_path });
     defer allocator.free(abs_input_path);
 
-    const work_dir_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "gcc-dg", case.work_name });
+    const work_run_id = work_run_counter.fetchAdd(1, .seq_cst) + 1;
+    const work_run_component = try std.fmt.allocPrint(allocator, "{x}", .{work_run_id});
+    defer allocator.free(work_run_component);
+
+    const work_dir_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "gcc-dg", case.work_name, work_run_component });
     defer allocator.free(work_dir_rel);
-    cleanupWorkDir(work_dir_rel);
     try std.fs.cwd().makePath(work_dir_rel);
 
     const work_dir = try std.fs.path.join(allocator, &.{ root_path, work_dir_rel });

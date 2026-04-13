@@ -18,29 +18,41 @@ const CombinedSymbolIndex = struct {
         self.* = undefined;
     }
 
-    fn findFunctionCall(self: CombinedSymbolIndex, symbol_name: []const u8) ?usize {
-        if (self.ast_source != null) return self.findAstFunctionCall(symbol_name);
-        return self.lexical.findFunctionCall(symbol_name);
+    fn findFunctionCall(self: CombinedSymbolIndex, symbol_name: []const u8, backend: model.RuleBackend) ?usize {
+        return switch (backend) {
+            .lexical_only => self.lexical.findFunctionCall(symbol_name),
+            .ast_only => self.findAstFunctionCall(symbol_name),
+            .kind_default => unreachable,
+        };
     }
 
-    fn findFunctionCallOutsidePath(self: CombinedSymbolIndex, symbol_name: []const u8, required_path: []const u8) ?usize {
-        if (self.ast_source != null) return self.findAstFunctionCallOutsidePath(symbol_name, required_path);
-        return self.lexical.findFunctionCallOutsidePath(symbol_name, required_path);
+    fn findFunctionCallOutsidePath(self: CombinedSymbolIndex, symbol_name: []const u8, required_path: []const u8, backend: model.RuleBackend) ?usize {
+        return switch (backend) {
+            .lexical_only => self.lexical.findFunctionCallOutsidePath(symbol_name, required_path),
+            .ast_only => self.findAstFunctionCallOutsidePath(symbol_name, required_path),
+            .kind_default => unreachable,
+        };
     }
 
-    fn findAliasOutsidePath(self: CombinedSymbolIndex, symbol_name: []const u8, required_path: []const u8) ?usize {
-        if (self.ast_source != null) return self.findAstAliasOutsidePath(symbol_name, required_path);
-        return self.lexical.findAliasOutsidePath(symbol_name, required_path);
+    fn findAliasOutsidePath(self: CombinedSymbolIndex, symbol_name: []const u8, required_path: []const u8, backend: model.RuleBackend) ?usize {
+        return switch (backend) {
+            .lexical_only => self.lexical.findAliasOutsidePath(symbol_name, required_path),
+            .ast_only => self.findAstAliasOutsidePath(symbol_name, required_path),
+            .kind_default => unreachable,
+        };
     }
 
-    fn findAnyAlias(self: CombinedSymbolIndex, symbol_name: []const u8) ?usize {
-        if (self.ast_source != null) return self.findAstAnyAlias(symbol_name);
-        return self.lexical.findAnyAlias(symbol_name);
+    fn findAnyAlias(self: CombinedSymbolIndex, symbol_name: []const u8, backend: model.RuleBackend) ?usize {
+        return switch (backend) {
+            .lexical_only => self.lexical.findAnyAlias(symbol_name),
+            .ast_only => self.findAstAnyAlias(symbol_name),
+            .kind_default => unreachable,
+        };
     }
 
-    fn findFirstSymbolUse(self: CombinedSymbolIndex, symbol_name: []const u8) ?usize {
-        const call_idx = self.findFunctionCall(symbol_name);
-        const alias_idx = self.findAnyAlias(symbol_name);
+    fn findFirstSymbolUse(self: CombinedSymbolIndex, symbol_name: []const u8, backend: model.RuleBackend) ?usize {
+        const call_idx = self.findFunctionCall(symbol_name, backend);
+        const alias_idx = self.findAnyAlias(symbol_name, backend);
         return switch (call_idx != null) {
             true => switch (alias_idx != null) {
                 true => @min(call_idx.?, alias_idx.?),
@@ -50,19 +62,28 @@ const CombinedSymbolIndex = struct {
         };
     }
 
-    fn findMemberAccessPath(self: CombinedSymbolIndex, needle: []const u8) ?usize {
-        if (self.ast_source != null) return self.findAstMemberAccessPath(needle);
-        return self.lexical.findMemberAccessPath(needle);
+    fn findMemberAccessPath(self: CombinedSymbolIndex, needle: []const u8, backend: model.RuleBackend) ?usize {
+        return switch (backend) {
+            .lexical_only => self.lexical.findMemberAccessPath(needle),
+            .ast_only => self.findAstMemberAccessPath(needle),
+            .kind_default => unreachable,
+        };
     }
 
-    fn findImportLiteralContaining(self: CombinedSymbolIndex, text: []const u8, fragment: []const u8) ?usize {
-        if (self.ast_source != null) return self.findAstImportLiteralContaining(fragment);
-        return findLexicalImportLiteralContaining(text, fragment);
+    fn findImportLiteralContaining(self: CombinedSymbolIndex, text: []const u8, fragment: []const u8, backend: model.RuleBackend) ?usize {
+        return switch (backend) {
+            .lexical_only => findLexicalImportLiteralContaining(text, fragment),
+            .ast_only => self.findAstImportLiteralContaining(fragment),
+            .kind_default => unreachable,
+        };
     }
 
-    fn findOwnedSymbolDefinition(self: CombinedSymbolIndex, text: []const u8, symbol_name: []const u8, definition_kind: model.DefinitionKind) ?usize {
-        if (self.ast_source != null) return self.findAstOwnedSymbolDefinition(symbol_name, definition_kind);
-        return declarations.findOwnedSymbolDefinition(text, symbol_name, definition_kind);
+    fn findOwnedSymbolDefinition(self: CombinedSymbolIndex, text: []const u8, symbol_name: []const u8, definition_kind: model.DefinitionKind, backend: model.RuleBackend) ?usize {
+        return switch (backend) {
+            .lexical_only => declarations.findOwnedSymbolDefinition(text, symbol_name, definition_kind),
+            .ast_only => self.findAstOwnedSymbolDefinition(symbol_name, definition_kind),
+            .kind_default => unreachable,
+        };
     }
 
     fn findAstFunctionCall(self: CombinedSymbolIndex, symbol_name: []const u8) ?usize {
@@ -179,6 +200,7 @@ fn applyFileRule(
     failures: *usize,
 ) !void {
     _ = domain;
+    const backend = model.effectiveBackend(rule);
     switch (rule.kind) {
         .forbidden_text => {
             const needle = rule.needle orelse return error.AuditRuleMissingNeedle;
@@ -189,14 +211,14 @@ fn applyFileRule(
         },
         .forbidden_import_path_fragment => {
             const fragment = rule.needle orelse return error.AuditRuleMissingNeedle;
-            if (symbol_index.findImportLiteralContaining(text, fragment)) |idx| {
+            if (symbol_index.findImportLiteralContaining(text, fragment, backend)) |idx| {
                 reportViolation(rel_path, idx, text, rule.id, rule.title, fragment);
                 failures.* += 1;
             }
         },
         .forbidden_function_call => {
             const symbol_name = rule.symbol_name orelse return error.AuditRuleMissingSymbolName;
-            if (symbol_index.findFunctionCall(symbol_name)) |idx| {
+            if (symbol_index.findFunctionCall(symbol_name, backend)) |idx| {
                 reportViolation(rel_path, idx, text, rule.id, rule.title, symbol_name);
                 failures.* += 1;
             }
@@ -204,7 +226,7 @@ fn applyFileRule(
         .owned_symbol_usage => try applyOwnedSymbolUsage(rule, rel_path, text, symbol_index, failures),
         .forbidden_member_access_path => {
             const needle = rule.needle orelse return error.AuditRuleMissingNeedle;
-            if (symbol_index.findMemberAccessPath(needle)) |idx| {
+            if (symbol_index.findMemberAccessPath(needle, backend)) |idx| {
                 reportViolation(rel_path, idx, text, rule.id, rule.title, needle);
                 failures.* += 1;
             }
@@ -214,7 +236,7 @@ fn applyFileRule(
             const owner_path = rule.owner_exact_path orelse return error.AuditRuleMissingOwnerPath;
             const definition_kind = rule.definition_kind orelse return error.AuditRuleMissingDefinitionKind;
             if (std.mem.eql(u8, rel_path, owner_path)) return;
-            if (symbol_index.findOwnedSymbolDefinition(text, symbol_name, definition_kind)) |idx| {
+            if (symbol_index.findOwnedSymbolDefinition(text, symbol_name, definition_kind, backend)) |idx| {
                 reportViolation(rel_path, idx, text, rule.id, rule.title, symbol_name);
                 failures.* += 1;
             }
@@ -232,10 +254,11 @@ fn applyOwnedSymbolUsage(
     failures: *usize,
 ) !void {
     const symbol_name = rule.symbol_name orelse return error.AuditRuleMissingSymbolName;
-    const first_use_idx = symbol_index.findFirstSymbolUse(symbol_name) orelse return;
+    const backend = model.effectiveBackend(rule);
+    const first_use_idx = symbol_index.findFirstSymbolUse(symbol_name, backend) orelse return;
 
     if (rule.needle) |fragment| {
-        if (symbol_index.findImportLiteralContaining(text, fragment) == null) {
+        if (symbol_index.findImportLiteralContaining(text, fragment, backend) == null) {
             reportViolation(rel_path, first_use_idx, text, rule.id, rule.title, fragment);
             failures.* += 1;
             return;
@@ -243,7 +266,7 @@ fn applyOwnedSymbolUsage(
     }
 
     if (rule.call_path) |required_call_path| {
-        if (symbol_index.findFunctionCallOutsidePath(symbol_name, required_call_path)) |idx| {
+        if (symbol_index.findFunctionCallOutsidePath(symbol_name, required_call_path, backend)) |idx| {
             reportViolation(rel_path, idx, text, rule.id, rule.title, required_call_path);
             failures.* += 1;
             return;
@@ -251,7 +274,7 @@ fn applyOwnedSymbolUsage(
     }
 
     if (rule.alias_path) |required_alias_path| {
-        if (symbol_index.findAliasOutsidePath(symbol_name, required_alias_path)) |idx| {
+        if (symbol_index.findAliasOutsidePath(symbol_name, required_alias_path, backend)) |idx| {
             reportViolation(rel_path, idx, text, rule.id, rule.title, required_alias_path);
             failures.* += 1;
         }

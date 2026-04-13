@@ -30,6 +30,12 @@ pub const DefinitionKind = enum {
     type_enum,
 };
 
+pub const RuleBackend = enum {
+    kind_default,
+    lexical_only,
+    ast_only,
+};
+
 pub const Scope = union(enum) {
     any,
     prefix: []const u8,
@@ -47,7 +53,24 @@ pub const AuditRule = struct {
     alias_path: ?[]const u8 = null,
     owner_exact_path: ?[]const u8 = null,
     definition_kind: ?DefinitionKind = null,
+    backend: RuleBackend = .kind_default,
     excluded_exact_paths: []const []const u8 = &.{},
     excluded_path_prefixes: []const []const u8 = &.{},
     exclude_tests: bool = false,
 };
+
+pub fn defaultBackend(kind: RuleKind) RuleBackend {
+    return switch (kind) {
+        .forbidden_text, .bare_error_code_literal, .error_catalog_consistency => .lexical_only,
+        .forbidden_import_path_fragment,
+        .forbidden_function_call,
+        .owned_symbol_usage,
+        .forbidden_member_access_path,
+        .owned_symbol_definition,
+        => .ast_only,
+    };
+}
+
+pub fn effectiveBackend(rule: AuditRule) RuleBackend {
+    return if (rule.backend == .kind_default) defaultBackend(rule.kind) else rule.backend;
+}

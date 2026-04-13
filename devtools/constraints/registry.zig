@@ -33,6 +33,7 @@ pub fn validateRules() !void {
 
 fn validateRule(rule: model.AuditRule) !void {
     if (rule.id.len == 0 or rule.title.len == 0) return error.IncompleteAuditRule;
+    const backend = model.effectiveBackend(rule);
     switch (rule.kind) {
         .forbidden_text, .forbidden_import_path_fragment, .forbidden_member_access_path => if (rule.needle == null or rule.needle.?.len == 0) return error.AuditRuleMissingNeedle,
         .forbidden_function_call => {
@@ -61,6 +62,12 @@ fn validateRule(rule: model.AuditRule) !void {
             if (rule.call_path != null) return error.AuditRuleUnexpectedCallPath;
             if (rule.alias_path != null) return error.AuditRuleUnexpectedAliasPath;
         },
+    }
+    switch (rule.kind) {
+        .forbidden_text, .bare_error_code_literal, .error_catalog_consistency => {
+            if (backend == .ast_only) return error.AuditRuleInvalidBackend;
+        },
+        else => {},
     }
 }
 

@@ -208,6 +208,34 @@ const semantic_specs = [_]OwnerSpec{
         .definition_kind = .function,
         .owner_exact_path = "src/semantic/split/api/procedure_inference/shape_signatures.zig",
     },
+    .{
+        .id = "AR-OWN-057",
+        .title = "known procedure seed helper owner",
+        .symbol_name = "seedKnownProcedures",
+        .definition_kind = .function,
+        .owner_exact_path = "src/semantic/split/api/analyze.zig",
+    },
+    .{
+        .id = "AR-OWN-058",
+        .title = "program procedure inference helper owner",
+        .symbol_name = "inferProgramProcedures",
+        .definition_kind = .function,
+        .owner_exact_path = "src/semantic/split/api/analyze.zig",
+    },
+    .{
+        .id = "AR-OWN-059",
+        .title = "explicit interface installation helper owner",
+        .symbol_name = "installExplicitInterfaceProcedures",
+        .definition_kind = .function,
+        .owner_exact_path = "src/semantic/split/api/interfaces.zig",
+    },
+    .{
+        .id = "AR-OWN-060",
+        .title = "single-target generic interface installation helper owner",
+        .symbol_name = "installSingleTargetGenericInterfaces",
+        .definition_kind = .function,
+        .owner_exact_path = "src/semantic/split/api/interfaces.zig",
+    },
 };
 
 const storage_model_specs = [_]OwnerSpec{

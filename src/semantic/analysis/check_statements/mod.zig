@@ -482,7 +482,10 @@ fn intrinsicAssignmentTypeCompatible(
     target_spec: symbols.TypeSpec,
     value_spec: symbols.TypeSpec,
 ) bool {
-    if (!expr_semantics.isAssignmentCompatible(target_ty, value_ty)) return false;
+    const logical_integer_extension =
+        (target_ty == .logical and value_ty == .integer) or
+        (target_ty == .integer and value_ty == .logical);
+    if (!logical_integer_extension and !expr_semantics.isAssignmentCompatible(target_ty, value_ty)) return false;
 
     if (target_spec.polymorphic or value_spec.polymorphic) {
         return dummyArgTypeCompatible(self, target_spec, value_spec);

@@ -283,7 +283,7 @@ pub fn exprIsVariableDefinitionActual(self: *context.Context, expr: *ast.Expr) b
     };
 }
 
-fn diagnosticSpanFromSource(source: ast.DeclSource, label: []const u8) common_diag.DiagnosticSpan {
+pub fn diagnosticSpanFromSource(source: ast.DeclSource, label: []const u8) common_diag.DiagnosticSpan {
     const line = if (source.line == 0) 1 else source.line;
     const column = if (source.column == 0) 1 else source.column;
     return .{

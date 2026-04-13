@@ -15,6 +15,7 @@ const function_type = @import("../function_type.zig");
 const common_validation = @import("../common_validation.zig");
 const symbol_lookup = @import("../symbol_lookup.zig");
 const host_context = @import("host_context.zig");
+const global_identifier_validation = @import("global_identifier_validation.zig");
 const interfaces = @import("interfaces.zig");
 const procedure_inference = @import("procedure_inference.zig");
 const types = @import("types.zig");
@@ -84,6 +85,7 @@ pub fn analyzeProgramWithKnownAndOptionsAndDiagnostics(
     try inferProgramProcedures(arena, mutable_program, &known_function_type_specs, &known_procedure_sigs);
     try interfaces.installExplicitInterfaceProcedures(arena, mutable_program, &known_function_type_specs, &known_procedure_sigs);
     try interfaces.installSingleTargetGenericInterfaces(arena, mutable_program, &known_function_type_specs, &known_procedure_sigs);
+    try global_identifier_validation.validateProgram(arena, mutable_program, diag_bag);
 
     var units = std.array_list.Managed(types.SemanticUnit).init(arena);
     var first_error: ?anyerror = null;

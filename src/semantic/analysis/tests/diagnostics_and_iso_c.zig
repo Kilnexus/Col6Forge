@@ -472,3 +472,78 @@ test "recursive function name without RESULT is rejected as recursive call targe
     try testing.expect(std.mem.indexOf(u8, got.message, "name of a recursive function") != null);
 }
 
+test "program-level duplicate global binding names are diagnosed before codegen" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "subroutine foo() bind(C, name=\"bar\")\n" ++
+        "end subroutine foo\n" ++
+        "subroutine sub() bind(C, name=\"bar\")\n" ++
+        "end subroutine sub\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    _ = split_api.analyzeProgramWithKnownAndOptionsAndDiagnostics(
+        arena.allocator(),
+        program,
+        &.{},
+        &.{},
+        .{},
+        &diag_bag,
+    ) catch {};
+
+    try testing.expect(diag_bag.count() >= 2);
+    const first = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(first);
+    const second = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(second);
+    try testing.expectEqual(@as(usize, 1), first.line);
+    try testing.expectEqual(@as(usize, 3), second.line);
+    try testing.expect(std.mem.indexOf(u8, first.message, "Global binding name 'bar'") != null);
+    try testing.expect(std.mem.indexOf(u8, second.message, "Global binding name 'bar'") != null);
+}
+
+test "ENTRY unit inherits entry source for duplicate global name diagnostics" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "subroutine foo()\n" ++
+        "entry foo()\n" ++
+        "end subroutine foo\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    _ = split_api.analyzeProgramWithKnownAndOptionsAndDiagnostics(
+        arena.allocator(),
+        program,
+        &.{},
+        &.{},
+        .{},
+        &diag_bag,
+    ) catch {};
+
+    try testing.expect(diag_bag.count() >= 2);
+    const first = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(first);
+    const second = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(second);
+    try testing.expect(std.mem.indexOf(u8, first.message, "Global name 'foo'") != null);
+    try testing.expect(std.mem.indexOf(u8, second.message, "Global name 'foo'") != null);
+    try testing.expect(first.line == 1 or first.line == 2);
+    try testing.expect(second.line == 1 or second.line == 2);
+}
+

@@ -39,6 +39,7 @@ const noteInvalidModuleProcedureInterfaceBodyLines = submodule_validation.noteIn
 const noteInvalidModuleProcedureInterfaceBodyDecls = submodule_validation.noteInvalidModuleProcedureInterfaceBodyDecls;
 
 pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(ProgramUnit)) !void {
+    const module_header_source = root_diagnostics.sourceFromLine(self.lines[self.index]);
     const module_name = try self.moduleHeaderName(self.index);
     self.index += 1;
     var module_decls = std.array_list.Managed(Decl).init(self.arena);
@@ -67,6 +68,7 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
             try units.append(.{
                 .kind = .module,
                 .name = module_name,
+                .source = module_header_source,
                 .args = &.{},
                 .decls = @constCast(stored_decls),
                 .decl_sources = @constCast(stored_decl_sources),
@@ -93,6 +95,7 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
             try units.append(.{
                 .kind = .module,
                 .name = module_name,
+                .source = module_header_source,
                 .args = &.{},
                 .decls = @constCast(stored_decls),
                 .decl_sources = @constCast(stored_decl_sources),
@@ -175,6 +178,7 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
     try units.append(.{
         .kind = .module,
         .name = module_name,
+        .source = module_header_source,
         .args = &.{},
         .decls = @constCast(stored_decls),
         .decl_sources = @constCast(stored_decl_sources),
@@ -304,6 +308,7 @@ pub fn parseSubmoduleContainer(self: anytype, units: *std.array_list.Managed(Pro
         const merged = try root_prelude.prependDecls(self.arena, .{
             .kind = .module,
             .name = submodule_header.name,
+            .source = root_diagnostics.sourceFromLine(header_line),
             .owner_name = submodule_header.parent_name,
             .owner_kind = .module,
             .args = &.{},
@@ -324,6 +329,7 @@ pub fn parseSubmoduleContainer(self: anytype, units: *std.array_list.Managed(Pro
     try units.append(.{
         .kind = .module,
         .name = submodule_header.name,
+        .source = root_diagnostics.sourceFromLine(header_line),
         .owner_name = submodule_header.parent_name,
         .owner_kind = .module,
         .args = &.{},
@@ -715,6 +721,7 @@ pub fn parseProgramUnitBody(
     var unit = ProgramUnit{
         .kind = header.kind,
         .name = header.name,
+        .source = root_diagnostics.sourceFromLine(header_line),
         .is_module_procedure = header.is_module_procedure,
         .pure = header.pure,
         .elemental = header.elemental,

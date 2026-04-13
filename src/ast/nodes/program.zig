@@ -22,6 +22,7 @@ pub const LexicalOwnerKind = enum {
 pub const ProgramUnit = struct {
     kind: ProgramUnitKind,
     name: []const u8,
+    source: DeclSource = .{},
     owner_name: ?[]const u8 = null,
     owner_kind: ?LexicalOwnerKind = null,
     is_module_procedure: bool = false,

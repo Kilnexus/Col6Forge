@@ -33,6 +33,7 @@ pub fn expandEntries(arena: std.mem.Allocator, program: Program) !Program {
             try units.append(.{
                 .kind = unit.kind,
                 .name = unit.name,
+                .source = unit.source,
                 .owner_name = unit.owner_name,
                 .owner_kind = unit.owner_kind,
                 .is_module_procedure = unit.is_module_procedure,
@@ -69,6 +70,11 @@ pub fn expandEntries(arena: std.mem.Allocator, program: Program) !Program {
             try units.append(.{
                 .kind = unit.kind,
                 .name = entry.name,
+                .source = .{
+                    .line = stmt_item.source_line,
+                    .column = stmt_item.source_column,
+                    .text = stmt_item.source_text,
+                },
                 .owner_name = unit.owner_name,
                 .owner_kind = unit.owner_kind,
                 .is_module_procedure = unit.is_module_procedure,

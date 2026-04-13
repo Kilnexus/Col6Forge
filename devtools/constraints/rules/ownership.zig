@@ -62,6 +62,30 @@ const common_specs = [_]OwnerSpec{
     },
 };
 
+const semantic_model_specs = [_]OwnerSpec{
+    .{
+        .id = "AR-OWN-051",
+        .title = "TypeSpec type owner",
+        .symbol_name = "TypeSpec",
+        .definition_kind = .type_struct,
+        .owner_exact_path = "src/semantic/type_spec.zig",
+    },
+    .{
+        .id = "AR-OWN-052",
+        .title = "KnownFunctionType type owner",
+        .symbol_name = "KnownFunctionType",
+        .definition_kind = .type_struct,
+        .owner_exact_path = "src/semantic/split/api/types.zig",
+    },
+    .{
+        .id = "AR-OWN-053",
+        .title = "KnownProcedureSig type owner",
+        .symbol_name = "KnownProcedureSig",
+        .definition_kind = .type_struct,
+        .owner_exact_path = "src/semantic/split/api/types.zig",
+    },
+};
+
 const frontend_specs = [_]OwnerSpec{
     .{
         .id = "AR-OWN-029",
@@ -114,6 +138,27 @@ const codegen_type_specs = [_]OwnerSpec{
         .symbol_name = "prepareExecutionFormatPlan",
         .definition_kind = .function,
         .owner_exact_path = "src/codegen/llvm/stmts/io/formatted/context.zig",
+    },
+    .{
+        .id = "AR-OWN-054",
+        .title = "codegen prelude collection helper owner",
+        .symbol_name = "collectPreludeState",
+        .definition_kind = .function,
+        .owner_exact_path = "src/codegen/llvm/codegen/module/unit_prep.zig",
+    },
+    .{
+        .id = "AR-OWN-055",
+        .title = "codegen owner-decl prelude merge helper owner",
+        .symbol_name = "prepareCodegenUnitWithOwnerDecls",
+        .definition_kind = .function,
+        .owner_exact_path = "src/codegen/llvm/codegen/module/unit_prep.zig",
+    },
+    .{
+        .id = "AR-OWN-056",
+        .title = "codegen explicit interface prelude signature installer owner",
+        .symbol_name = "installExplicitInterfaceProcedureSigs",
+        .definition_kind = .function,
+        .owner_exact_path = "src/codegen/llvm/codegen/module/unit_prep.zig",
     },
 };
 
@@ -408,6 +453,7 @@ const runtime_text_specs = [_]OwnerSpec{
 };
 
 const common_rules = buildOwnerRules(.{ .domain = .common }, common_specs[0..]);
+const semantic_model_rules = buildOwnerRules(.any, semantic_model_specs[0..]);
 const frontend_rules = buildOwnerRules(.{ .domain = .frontend }, frontend_specs[0..]);
 const codegen_type_rules = buildOwnerRules(.{ .domain = .codegen }, codegen_type_specs[0..]);
 const pipeline_rules = buildOwnerRules(.any, pipeline_specs[0..]);
@@ -421,6 +467,7 @@ const runtime_text_rules = buildOwnerRules(.{ .domain = .runtime }, runtime_text
 
 pub const file_rules =
     common_rules ++
+    semantic_model_rules ++
     frontend_rules ++
     codegen_type_rules ++
     pipeline_rules ++

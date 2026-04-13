@@ -71,6 +71,14 @@ This document is a public English reference for the currently registered constra
 - Secondary Enforcers: golden, architecture-audit
 - Rationale: Shape, rank, extent, and multiplier logic must be centralized before lowering. Recomputing them inside local codegen branches recreates drift and duplication.
 
+### DC-B-010: Cross-unit known procedure metadata must flow through KnownFunctionType and KnownProcedureSig.
+
+- Class: B: Unified Model Entry
+- Blocking: blocking
+- Primary Enforcers: semantic tests, codegen tests
+- Secondary Enforcers: verify, architecture-audit
+- Rationale: Known function return types and known procedure signatures must stay in one shared cross-unit model so semantic and codegen lanes do not drift on purity, elemental state, and result metadata.
+
 ### DC-B-005: Character-valued paths must flow through CharacterValuePlan.
 
 - Class: B: Unified Model Entry
@@ -126,4 +134,12 @@ This document is a public English reference for the currently registered constra
 - Primary Enforcers: ABI regression
 - Secondary Enforcers: verify, architecture-audit
 - Rationale: Cross-compilation behavior must not depend on the developer machine. ABI and path decisions must follow explicit target data.
+
+### DC-D-002: Codegen prelude metadata must be collected through the shared unit_prep path.
+
+- Class: D: Behavior Boundary
+- Blocking: blocking
+- Primary Enforcers: codegen tests
+- Secondary Enforcers: golden, architecture-audit
+- Rationale: Procedure prelude metadata such as purity, elemental state, and explicit-interface signatures must be seeded through one codegen prelude lane instead of ad hoc local reconstruction in later lowering stages.
 

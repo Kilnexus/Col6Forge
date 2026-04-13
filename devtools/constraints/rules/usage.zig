@@ -76,6 +76,7 @@ const gcc_dg_runner_entry = "src/tools/gcc_dg_runner.zig";
 const verify_runner_title = "verify runner root entry must stay wired through dedicated submodules";
 const blas_runner_title = "blas runner root entry must stay wired through dedicated submodules";
 const gcc_dg_runner_title = "gcc dg runner root entry must stay wired through dedicated submodules";
+const codegen_prelude_title = "codegen module pipeline must consume shared prelude metadata entrypoints";
 
 const io_binary_v_specs = [_]UsageSpec{
     .{ .id = "AR-CALL-001", .symbol_name = "runtimeArgCount", .import_fragment = "shared.zig", .call_path = "shared.runtimeArgCount" },
@@ -154,6 +155,11 @@ const gcc_dg_runner_specs = [_]UsageSpec{
     .{ .id = "AR-CALL-078", .symbol_name = "processCase", .import_fragment = "gcc_dg_runner/process.zig", .alias_path = "process_mod.processCase" },
 };
 
+const codegen_prelude_specs = [_]UsageSpec{
+    .{ .id = "AR-CALL-085", .symbol_name = "collectPreludeState", .import_fragment = "unit_prep.zig", .call_path = "unit_prep.collectPreludeState" },
+    .{ .id = "AR-CALL-086", .symbol_name = "prepareCodegenUnitWithOwnerDecls", .import_fragment = "unit_prep.zig", .call_path = "unit_prep.prepareCodegenUnitWithOwnerDecls" },
+};
+
 const array_actual_validation_specs = [_]UsageSpec{
     .{ .id = "AR-CALL-079", .symbol_name = "validatedArrayActual", .import_fragment = "shared.zig", .alias_path = "shared.validatedArrayActual" },
 };
@@ -199,6 +205,7 @@ const io_list_read_rules = buildUsageRules(io_list_read_title, .{ .prefix = io_l
 const verify_runner_rules = buildUsageRules(verify_runner_title, .{ .prefix = verify_runner_entry }, verify_runner_specs[0..], &.{}, &.{});
 const blas_runner_rules = buildUsageRules(blas_runner_title, .{ .prefix = blas_runner_entry }, blas_runner_specs[0..], &.{}, &.{});
 const gcc_dg_runner_rules = buildUsageRules(gcc_dg_runner_title, .{ .prefix = gcc_dg_runner_entry }, gcc_dg_runner_specs[0..], &.{}, &.{});
+const codegen_prelude_rules = buildUsageRules(codegen_prelude_title, .{ .prefix = "src/codegen/llvm/codegen/module/pipeline.zig" }, codegen_prelude_specs[0..], &.{}, &.{});
 const array_actual_validation_rules = buildUsageRules(array_actual_validation_title, .{ .prefix = array_actual_validation_prefix }, array_actual_validation_specs[0..], &.{array_actual_validation_owner}, &.{});
 const character_plan_validation_rules = buildUsageRules(character_plan_validation_title, .{ .prefix = character_plan_validation_prefix }, character_plan_validation_specs[0..], &.{character_plan_validation_owner}, &.{});
 const storage_model_common_rules = buildUsageRules(storage_model_usage_title, .any, storage_model_common_specs[0..], &.{"src/semantic/split/storage_model.zig"}, &.{});
@@ -220,6 +227,7 @@ pub const file_rules =
     verify_runner_rules ++
     blas_runner_rules ++
     gcc_dg_runner_rules ++
+    codegen_prelude_rules ++
     array_actual_validation_rules ++
     character_plan_validation_rules ++
     storage_model_common_rules ++

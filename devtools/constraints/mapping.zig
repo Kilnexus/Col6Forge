@@ -113,6 +113,15 @@ pub const entries = [_]Entry{
         .blocking = .blocking,
     },
     .{
+        .id = "DC-B-010",
+        .summary = "Cross-unit known procedure metadata must flow through KnownFunctionType and KnownProcedureSig.",
+        .rationale = "Known function return types and known procedure signatures must stay in one shared cross-unit model so semantic and codegen lanes do not drift on purity, elemental state, and result metadata.",
+        .class = .b_unified_model,
+        .primary = &.{ .semantic_tests, .codegen_tests },
+        .secondary = &.{ .verify, .architecture_audit },
+        .blocking = .blocking,
+    },
+    .{
         .id = "DC-B-005",
         .summary = "Character-valued paths must flow through CharacterValuePlan.",
         .rationale = "Character data, logical length, storage length, and hidden ABI length handling must stay aligned through one shared value plan.",
@@ -173,6 +182,15 @@ pub const entries = [_]Entry{
         .class = .d_behavior_boundary,
         .primary = &.{.abi_regression},
         .secondary = &.{ .verify, .architecture_audit },
+        .blocking = .blocking,
+    },
+    .{
+        .id = "DC-D-002",
+        .summary = "Codegen prelude metadata must be collected through the shared unit_prep path.",
+        .rationale = "Procedure prelude metadata such as purity, elemental state, and explicit-interface signatures must be seeded through one codegen prelude lane instead of ad hoc local reconstruction in later lowering stages.",
+        .class = .d_behavior_boundary,
+        .primary = &.{.codegen_tests},
+        .secondary = &.{ .golden, .architecture_audit },
         .blocking = .blocking,
     },
 };

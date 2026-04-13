@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const common = @import("common.zig");
 const std = common.std;
 const Col6Forge = common.Col6Forge;
@@ -345,6 +346,7 @@ fn joinDiagnosticStreams(allocator: std.mem.Allocator, stderr_text: []const u8, 
 }
 
 fn cleanupWorkDir(path: []const u8) void {
+    if (builtin.os.tag == .windows) return;
     std.fs.cwd().deleteTree(path) catch {};
 }
 

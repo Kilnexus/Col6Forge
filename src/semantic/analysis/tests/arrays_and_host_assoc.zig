@@ -44,6 +44,36 @@ test "parity and norm2 DIM arguments must stay scalar" {
     try testing.expect(std.mem.indexOf(u8, second.message, "must be a scalar") != null);
 }
 
+test "selected_real_kind arguments must stay scalar" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  integer :: ip(1), ir(1), i, j\n" ++
+        "  i = selected_real_kind(ip, i)\n" ++
+        "  j = selected_real_kind(i, ir)\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    _ = split_api.analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_bag) catch {};
+    const first = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(first);
+    const second = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(second);
+
+    try testing.expect(std.mem.indexOf(u8, first.message, "must be a scalar") != null);
+    try testing.expect(std.mem.indexOf(u8, second.message, "must be a scalar") != null);
+}
+
 test "static conformance check handles 1D explicit-shape section parsed as substring compatibility node" {
     const testing = std.testing;
     const allocator = testing.allocator;

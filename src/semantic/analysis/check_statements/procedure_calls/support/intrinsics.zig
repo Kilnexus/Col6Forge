@@ -85,6 +85,14 @@ pub fn checkIntrinsicCallConstraintsForExprArgs(
         try checkSelectedCharKindExprArgs(self, args);
         return;
     }
+    if (std.ascii.eqlIgnoreCase(name, "selected_real_kind")) {
+        try checkSelectedRealKindExprArgs(self, args);
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "selected_int_kind")) {
+        try checkSelectedIntKindExprArgs(self, args);
+        return;
+    }
     if (std.ascii.eqlIgnoreCase(name, "transfer")) {
         try checkTransferExprArgs(self, args);
     }
@@ -158,6 +166,30 @@ fn checkSelectedCharKindExprArgs(self: *context.Context, args: []*ast.Expr) Chec
     const selector_spec = try resolve_expr.exprTypeSpec(self, selector);
     if (selector_spec.lowered_kind != .character) {
         return emitIntrinsicArgDiagnostic(self, selector, "must be CHARACTER");
+    }
+}
+
+fn checkSelectedRealKindExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
+    for (args) |arg| {
+        if (resolve_expr.exprRank(self, arg) != 0) {
+            return emitIntrinsicArgDiagnostic(self, arg, "must be a scalar");
+        }
+        const arg_spec = try resolve_expr.exprTypeSpec(self, arg);
+        if (arg_spec.lowered_kind != .integer) {
+            return emitIntrinsicArgDiagnostic(self, arg, "must be INTEGER");
+        }
+    }
+}
+
+fn checkSelectedIntKindExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
+    if (args.len != 1) return;
+    const arg = args[0];
+    if (resolve_expr.exprRank(self, arg) != 0) {
+        return emitIntrinsicArgDiagnostic(self, arg, "must be a scalar");
+    }
+    const arg_spec = try resolve_expr.exprTypeSpec(self, arg);
+    if (arg_spec.lowered_kind != .integer) {
+        return emitIntrinsicArgDiagnostic(self, arg, "must be INTEGER");
     }
 }
 

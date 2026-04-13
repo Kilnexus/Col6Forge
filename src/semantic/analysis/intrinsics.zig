@@ -115,6 +115,8 @@ const IntrinsicArityMap = std.StaticStringMap(Arity).initComptime(.{
     .{ "RESHAPE", Arity{ .min = 2, .max = 4 } },
     .{ "SCAN", Arity{ .min = 2, .max = 4 } },
     .{ "SELECTED_CHAR_KIND", Arity{ .min = 1, .max = 1 } },
+    .{ "SELECTED_INT_KIND", Arity{ .min = 1, .max = 1 } },
+    .{ "SELECTED_REAL_KIND", Arity{ .min = 1, .max = 2 } },
     .{ "SHAPE", Arity{ .min = 1, .max = 1 } },
     .{ "SIZE", Arity{ .min = 1, .max = 3 } },
     .{ "SIZEOF", Arity{ .min = 1, .max = 1 } },

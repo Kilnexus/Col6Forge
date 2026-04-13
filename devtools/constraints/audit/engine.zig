@@ -19,25 +19,23 @@ const CombinedSymbolIndex = struct {
     }
 
     fn findFunctionCall(self: CombinedSymbolIndex, symbol_name: []const u8) ?usize {
-        return firstNonNull(self.findAstFunctionCall(symbol_name), self.lexical.findFunctionCall(symbol_name));
+        if (self.ast_source != null) return self.findAstFunctionCall(symbol_name);
+        return self.lexical.findFunctionCall(symbol_name);
     }
 
     fn findFunctionCallOutsidePath(self: CombinedSymbolIndex, symbol_name: []const u8, required_path: []const u8) ?usize {
-        return firstNonNull(
-            self.findAstFunctionCallOutsidePath(symbol_name, required_path),
-            self.lexical.findFunctionCallOutsidePath(symbol_name, required_path),
-        );
+        if (self.ast_source != null) return self.findAstFunctionCallOutsidePath(symbol_name, required_path);
+        return self.lexical.findFunctionCallOutsidePath(symbol_name, required_path);
     }
 
     fn findAliasOutsidePath(self: CombinedSymbolIndex, symbol_name: []const u8, required_path: []const u8) ?usize {
-        return firstNonNull(
-            self.findAstAliasOutsidePath(symbol_name, required_path),
-            self.lexical.findAliasOutsidePath(symbol_name, required_path),
-        );
+        if (self.ast_source != null) return self.findAstAliasOutsidePath(symbol_name, required_path);
+        return self.lexical.findAliasOutsidePath(symbol_name, required_path);
     }
 
     fn findAnyAlias(self: CombinedSymbolIndex, symbol_name: []const u8) ?usize {
-        return firstNonNull(self.findAstAnyAlias(symbol_name), self.lexical.findAnyAlias(symbol_name));
+        if (self.ast_source != null) return self.findAstAnyAlias(symbol_name);
+        return self.lexical.findAnyAlias(symbol_name);
     }
 
     fn findFirstSymbolUse(self: CombinedSymbolIndex, symbol_name: []const u8) ?usize {
@@ -53,15 +51,18 @@ const CombinedSymbolIndex = struct {
     }
 
     fn findMemberAccessPath(self: CombinedSymbolIndex, needle: []const u8) ?usize {
-        return firstNonNull(self.findAstMemberAccessPath(needle), self.lexical.findMemberAccessPath(needle));
+        if (self.ast_source != null) return self.findAstMemberAccessPath(needle);
+        return self.lexical.findMemberAccessPath(needle);
     }
 
     fn findImportLiteralContaining(self: CombinedSymbolIndex, text: []const u8, fragment: []const u8) ?usize {
-        return firstNonNull(self.findAstImportLiteralContaining(fragment), findLexicalImportLiteralContaining(text, fragment));
+        if (self.ast_source != null) return self.findAstImportLiteralContaining(fragment);
+        return findLexicalImportLiteralContaining(text, fragment);
     }
 
     fn findOwnedSymbolDefinition(self: CombinedSymbolIndex, text: []const u8, symbol_name: []const u8, definition_kind: model.DefinitionKind) ?usize {
-        return firstNonNull(self.findAstOwnedSymbolDefinition(symbol_name, definition_kind), declarations.findOwnedSymbolDefinition(text, symbol_name, definition_kind));
+        if (self.ast_source != null) return self.findAstOwnedSymbolDefinition(symbol_name, definition_kind);
+        return declarations.findOwnedSymbolDefinition(text, symbol_name, definition_kind);
     }
 
     fn findAstFunctionCall(self: CombinedSymbolIndex, symbol_name: []const u8) ?usize {
@@ -255,10 +256,6 @@ fn applyOwnedSymbolUsage(
             failures.* += 1;
         }
     }
-}
-
-fn firstNonNull(primary: ?usize, fallback: ?usize) ?usize {
-    return primary orelse fallback;
 }
 
 fn findLexicalImportLiteralContaining(text: []const u8, fragment: []const u8) ?usize {

@@ -6,6 +6,7 @@ const symbols = @import("../symbol/mod.zig");
 const context = @import("context.zig");
 const constants = @import("resolve_const.zig");
 const decls = @import("resolve_decls.zig");
+const select_type_char_clause = @import("select_type_char_clause.zig");
 const expressions = @import("resolve_expr.zig");
 const symbols_mod = @import("resolve_symbols.zig");
 
@@ -366,26 +367,7 @@ fn selectTypeClauseResolvedSpec(
         false,
     );
     if (kind != .character) return spec;
-    return try applySelectTypeCharacterClauseLength(self, spec, clause);
-}
-
-fn applySelectTypeCharacterClauseLength(
-    self: *context.Context,
-    base_spec: symbols.TypeSpec,
-    clause: ast.SelectTypeClause,
-) ResolveError!symbols.TypeSpec {
-    if (clause.char_len_deferred) return base_spec.withCharacterLength(.deferred, null);
-    const len_expr = clause.char_len orelse return base_spec.withCharacterLength(.constant, 1);
-    if (len_expr.* == .literal and len_expr.literal.kind == .assumed_size) {
-        return base_spec.withCharacterLength(.assumed, null);
-    }
-    if (try constants.evalConst(self, len_expr)) |value| {
-        return switch (value) {
-            .integer => |int_val| base_spec.withCharacterLength(.constant, if (int_val < 0) 0 else @as(usize, @intCast(int_val))),
-            else => error.InvalidCharLen,
-        };
-    }
-    return error.InvalidCharLen;
+    return try select_type_char_clause.applySelectTypeCharacterClauseLength(self, spec, clause);
 }
 
 fn installUseImports(self: *context.Context, use_stmt: ast.UseStmt) ResolveError!void {

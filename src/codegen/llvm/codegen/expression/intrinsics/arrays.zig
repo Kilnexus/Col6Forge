@@ -10,6 +10,7 @@ const call_shared = @import("../call/shared.zig");
 const dispatch = @import("../dispatch/mod.zig");
 const memory = @import("../memory.zig");
 const shared = @import("shared.zig");
+const bounds_support = @import("../array_bounds_support.zig");
 const reductions = @import("arrays/reductions.zig");
 const Expr = shared.Expr;
 const IRType = shared.IRType;
@@ -499,18 +500,9 @@ fn emitComponentDimExtentValue(ctx: *Context, builder: anytype, comp: ast.Compon
     const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
     const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse return error.UnknownSymbol;
     if (component.pointer or component.allocatable) {
-        return memory.emitComponentDimExtent(ctx, builder, comp, dim_index);
+        return bounds_support.emitComponentDimExtentValue(ctx, builder, comp, dim_index);
     }
     return emitArrayDimExtentExpr(ctx, builder, component.dims[dim_index]);
-}
-
-fn emitComponentDimLowerValue(ctx: *Context, builder: anytype, comp: ast.ComponentExpr, dim_index: usize) EmitError!ValueRef {
-    const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
-    const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse return error.UnknownSymbol;
-    if (component.pointer or component.allocatable) {
-        return memory.emitComponentDimLower(ctx, builder, comp, dim_index);
-    }
-    return memory.emitDimLower(ctx, builder, component.dims[dim_index]);
 }
 
 const SizeArraySubject = union(enum) {
@@ -767,7 +759,7 @@ fn integerKindToIRType(kind_value: i64) ?IRType {
 
 fn emitIntrinsicBoundsScalar(ctx: *Context, builder: anytype, args: []*Expr, comptime use_lower: bool) EmitError!ValueRef {
     if (args.len < 1 or args.len > 3) return error.InvalidIntrinsicCall;
-    if (shouldUseExtentBounds(ctx, args[0])) {
+    if (bounds_support.shouldUseExtentBounds(ctx, args[0])) {
         if (try shapeSubjectExtents(ctx, builder, args[0])) |extents| {
             return emitIntrinsicBoundsScalarForExtents(ctx, builder, extents, args, use_lower);
         }
@@ -818,27 +810,15 @@ fn emitIntrinsicBoundsScalar(ctx: *Context, builder: anytype, args: []*Expr, com
             break :blk try binary.emitAdd(ctx, builder, lower, try binary.emitSub(ctx, builder, extent, try oneIndexValue(ctx)));
         },
         .component => |comp| if (use_lower)
-            try emitComponentDimLowerValue(ctx, builder, comp, dim_index)
+            try bounds_support.emitComponentDimLowerValue(ctx, builder, comp, dim_index)
         else blk: {
-            const lower = try emitComponentDimLowerValue(ctx, builder, comp, dim_index);
+            const lower = try bounds_support.emitComponentDimLowerValue(ctx, builder, comp, dim_index);
             const extent = try emitComponentDimExtentValue(ctx, builder, comp, dim_index);
             break :blk try binary.emitAdd(ctx, builder, lower, try binary.emitSub(ctx, builder, extent, try oneIndexValue(ctx)));
         },
     };
     if (value.ty != result_ty) value = try casting.coerce(ctx, builder, value, result_ty);
     return value;
-}
-
-fn shouldUseExtentBounds(ctx: *Context, expr_node: *Expr) bool {
-    return switch (expr_node.*) {
-        .call_or_subscript => |call| call.args.len != 0,
-        .component => |comp| comp.args.len != 0,
-        .substring => |sub| blk: {
-            const sym = ctx.findSymbol(sub.name) orelse break :blk false;
-            break :blk sym.dims.len != 0;
-        },
-        else => false,
-    };
 }
 
 fn emitIntrinsicBoundsScalarForExtents(
@@ -945,9 +925,9 @@ fn emitIntrinsicBoundsDynamicDim(
                 break :blk try binary.emitAdd(ctx, builder, lower, try binary.emitSub(ctx, builder, extent, try oneIndexValue(ctx)));
             },
             .component => |comp| if (use_lower)
-                try emitComponentDimLowerValue(ctx, builder, comp, dim_index)
+                try bounds_support.emitComponentDimLowerValue(ctx, builder, comp, dim_index)
             else blk: {
-                const lower = try emitComponentDimLowerValue(ctx, builder, comp, dim_index);
+                const lower = try bounds_support.emitComponentDimLowerValue(ctx, builder, comp, dim_index);
                 const extent = try emitComponentDimExtentValue(ctx, builder, comp, dim_index);
                 break :blk try binary.emitAdd(ctx, builder, lower, try binary.emitSub(ctx, builder, extent, try oneIndexValue(ctx)));
             },

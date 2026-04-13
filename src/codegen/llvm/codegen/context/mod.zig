@@ -15,6 +15,7 @@ const abi = @import("abi.zig");
 const derived_layouts = @import("support/derived_layouts.zig");
 const derived_queries = @import("support/derived_queries.zig");
 const pure_helpers = @import("support/pure_helpers.zig");
+const const_eval = @import("support/const_eval.zig");
 
 const ProgramUnit = input.ProgramUnit;
 const TypeKind = input.TypeKind;
@@ -60,6 +61,9 @@ const shapeProductForExpr = pure_helpers.shapeProductForExpr;
 const sizeAlignForIRType = pure_helpers.sizeAlignForIRType;
 const stmtCanFallthroughInBlock = pure_helpers.stmtCanFallthroughInBlock;
 const writeUnsignedDecimal = pure_helpers.writeUnsignedDecimal;
+const inferConstantCharLen = const_eval.inferConstantCharLen;
+const resolveCodegenConstValue = const_eval.resolveCodegenConstValue;
+const resolveCodegenArrayExtent = const_eval.resolveCodegenArrayExtent;
 
 pub const Context = struct {
     allocator: std.mem.Allocator,
@@ -717,7 +721,7 @@ pub const Context = struct {
         return out;
     }
 
-    fn symbolIndexForName(self: *const Context, name: []const u8) ?usize {
+    pub fn symbolIndexForName(self: *const Context, name: []const u8) ?usize {
         if (self.symbol_index_exact.get(name)) |idx| return idx;
         return self.symbol_index.get(name);
     }
@@ -959,55 +963,6 @@ pub const Context = struct {
         };
     }
 };
-
-fn inferConstantCharLen(ctx: *const Context, expr: ?*input.Expr) ?usize {
-    const node = expr orelse return 1;
-    const value = evaluator.evalConst(node, .{
-        .ctx = @constCast(ctx),
-        .resolveFn = resolveCodegenConstValue,
-        .arrayExtentFn = resolveCodegenArrayExtent,
-    }) catch return null;
-    return switch (value orelse return null) {
-        .integer => |int_val| if (int_val < 0) null else std.math.cast(usize, int_val),
-        else => null,
-    };
-}
-
-fn resolveCodegenConstValue(raw_ctx: *anyopaque, name: []const u8) ?input.sema.ConstValue {
-    const ctx: *Context = @ptrCast(@alignCast(raw_ctx));
-    if (ctx.symbolIndexForName(name)) |idx| {
-        const sym = ctx.sem.symbols[idx];
-        if (sym.kind == .parameter and sym.const_value != null) {
-            return sym.const_value;
-        }
-    }
-    return resolveMirroredPreludeParameterConstValue(ctx, name);
-}
-
-fn resolveCodegenArrayExtent(raw_ctx: *anyopaque, name: []const u8, dim: ?usize) ?i64 {
-    const ctx: *Context = @ptrCast(@alignCast(raw_ctx));
-    const idx = ctx.symbolIndexForName(name) orelse return null;
-    const sym = ctx.sem.symbols[idx];
-    if (sym.dims.len == 0) return null;
-    const extent = common.arrayElementCount(ctx.sem, if (dim) |dim_idx| sym.dims[dim_idx .. dim_idx + 1] else sym.dims) catch return null;
-    return @intCast(extent);
-}
-
-fn resolveMirroredPreludeParameterConstValue(ctx: *Context, name: []const u8) ?input.sema.ConstValue {
-    for (ctx.unit.decls) |decl| {
-        if (decl != .parameter) continue;
-        for (decl.parameter.assigns) |assign| {
-            if (!std.ascii.eqlIgnoreCase(assign.name, name)) continue;
-            const resolver = evaluator.ConstResolver{
-                .ctx = ctx,
-                .resolveFn = resolveCodegenConstValue,
-                .arrayExtentFn = resolveCodegenArrayExtent,
-            };
-            return evaluator.evalConst(assign.value, resolver) catch null;
-        }
-    }
-    return null;
-}
 
 test {
     _ = @import("abi.zig");

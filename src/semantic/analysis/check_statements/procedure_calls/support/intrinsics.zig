@@ -158,15 +158,7 @@ fn checkTransferExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!v
 }
 
 fn checkSelectedCharKindExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
-    if (args.len != 1) return;
-    const selector = args[0];
-    if (resolve_expr.exprRank(self, selector) != 0) {
-        return emitIntrinsicArgDiagnostic(self, selector, "must be a scalar");
-    }
-    const selector_spec = try resolve_expr.exprTypeSpec(self, selector);
-    if (selector_spec.lowered_kind != .character) {
-        return emitIntrinsicArgDiagnostic(self, selector, "must be CHARACTER");
-    }
+    try checkSelectedKindScalarArg(self, args, true, "must be CHARACTER");
 }
 
 fn checkSelectedRealKindExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
@@ -182,14 +174,27 @@ fn checkSelectedRealKindExprArgs(self: *context.Context, args: []*ast.Expr) Chec
 }
 
 fn checkSelectedIntKindExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
+    try checkSelectedKindScalarArg(self, args, false, "must be INTEGER");
+}
+
+fn checkSelectedKindScalarArg(
+    self: *context.Context,
+    args: []*ast.Expr,
+    expect_character: bool,
+    expected_message: []const u8,
+) CheckError!void {
     if (args.len != 1) return;
     const arg = args[0];
     if (resolve_expr.exprRank(self, arg) != 0) {
         return emitIntrinsicArgDiagnostic(self, arg, "must be a scalar");
     }
     const arg_spec = try resolve_expr.exprTypeSpec(self, arg);
-    if (arg_spec.lowered_kind != .integer) {
-        return emitIntrinsicArgDiagnostic(self, arg, "must be INTEGER");
+    const is_match = if (expect_character)
+        arg_spec.lowered_kind == .character
+    else
+        arg_spec.lowered_kind == .integer;
+    if (!is_match) {
+        return emitIntrinsicArgDiagnostic(self, arg, expected_message);
     }
 }
 

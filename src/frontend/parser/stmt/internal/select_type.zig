@@ -9,8 +9,10 @@ const type_specs = @import("../../decl/type_specs.zig");
 const expr = @import("../../expr.zig");
 const parse_diag = @import("../../diagnostic.zig");
 const array_info = @import("../../array_info.zig");
+const stmt_queries = @import("../../../../common/stmt_queries.zig");
 const helpers = @import("../helpers.zig");
 const select_case = @import("select_case.zig");
+const block_body = @import("block_body.zig");
 const stmt_shared = @import("shared.zig");
 
 const LineParser = context.LineParser;
@@ -20,17 +22,7 @@ const defaultSourceColumn = stmt_shared.defaultSourceColumn;
 const setStmtSourceIfMissing = stmt_shared.setStmtSourceIfMissing;
 const lexLine = stmt_shared.lexLine;
 
-pub const ParseStatementFn = *const fn (
-    arena: std.mem.Allocator,
-    lines: []logical_line.LogicalLine,
-    index: *usize,
-    do_ctx: *DoContext,
-    param_ints: *const std.StringHashMap(i64),
-    param_strings: *const std.StringHashMap(ast.Literal),
-    array_names: *const std.StringHashMap(array_info.ArrayInfo),
-    diag_bag: *parse_diag.Bag,
-    lex_diag_bag: *lexer.Bag,
-) anyerror!Stmt;
+pub const ParseStatementFn = block_body.ParseStatementFn;
 
 const ParsedSelector = struct {
     selector: *ast.Expr,
@@ -234,31 +226,6 @@ fn selectRankClauseErrorMessage(
     return null;
 }
 
-fn stmtUsesWholeSelectorArray(stmt: ast.Stmt, selector_name: []const u8) bool {
-    return switch (stmt.node) {
-        .write => |write| blk: {
-            for (write.args) |arg| {
-                if (exprIsBareIdentifier(arg, selector_name)) break :blk true;
-            }
-            break :blk false;
-        },
-        .read => |read| blk: {
-            for (read.args) |arg| {
-                if (exprIsBareIdentifier(arg, selector_name)) break :blk true;
-            }
-            break :blk false;
-        },
-        else => false,
-    };
-}
-
-fn exprIsBareIdentifier(expr_node: *ast.Expr, name: []const u8) bool {
-    return switch (expr_node.*) {
-        .identifier => |ident| std.ascii.eqlIgnoreCase(ident, name),
-        else => false,
-    };
-}
-
 fn parseSelectTypeSelector(lp: *LineParser, arena: std.mem.Allocator) anyerror!ParsedSelector {
     if (lp.peek()) |tok| {
         if (tok.kind == .identifier and lp.index + 2 < lp.tokens.len and lp.tokens[lp.index + 1].kind == .equals and lp.tokens[lp.index + 2].kind == .greater) {
@@ -378,19 +345,23 @@ fn parseSelectTypeClauseBody(
     lex_diag_bag: *lexer.Bag,
     parse_statement_fn: ParseStatementFn,
 ) anyerror![]Stmt {
-    var stmts = std.array_list.Managed(Stmt).init(arena);
-    while (index.* < lines.len) {
-        const line = lines[index.*];
-        const tokens = try lexLine(arena, line, diag_bag, lex_diag_bag);
-        defer arena.free(tokens);
-        const lp = LineParser.init(line, tokens);
-        if (isSelectTypeClauseLine(lp) or isEndSelectLine(lp)) break;
-        if (decl.isDeclarationStart(lp)) return error.DeclarationInIfBlock;
-        var stmt = try parse_statement_fn(arena, lines, index, do_ctx, param_ints, param_strings, array_names, diag_bag, lex_diag_bag);
-        setStmtSourceIfMissing(&stmt, line);
-        try stmts.append(stmt);
-    }
-    return stmts.toOwnedSlice();
+    return block_body.parseNestedStmtBlock(
+        arena,
+        lines,
+        index,
+        do_ctx,
+        param_ints,
+        param_strings,
+        array_names,
+        diag_bag,
+        lex_diag_bag,
+        parse_statement_fn,
+        struct {
+            fn stop(lp: LineParser) bool {
+                return isSelectTypeClauseLine(lp) or isEndSelectLine(lp);
+            }
+        }.stop,
+    );
 }
 
 fn parseSelectRankClauseBody(
@@ -405,19 +376,23 @@ fn parseSelectRankClauseBody(
     lex_diag_bag: *lexer.Bag,
     parse_statement_fn: ParseStatementFn,
 ) anyerror![]Stmt {
-    var stmts = std.array_list.Managed(Stmt).init(arena);
-    while (index.* < lines.len) {
-        const line = lines[index.*];
-        const tokens = try lexLine(arena, line, diag_bag, lex_diag_bag);
-        defer arena.free(tokens);
-        const lp = LineParser.init(line, tokens);
-        if (isRankClauseLine(lp) or isEndSelectLine(lp)) break;
-        if (decl.isDeclarationStart(lp)) return error.DeclarationInIfBlock;
-        var stmt = try parse_statement_fn(arena, lines, index, do_ctx, param_ints, param_strings, array_names, diag_bag, lex_diag_bag);
-        setStmtSourceIfMissing(&stmt, line);
-        try stmts.append(stmt);
-    }
-    return stmts.toOwnedSlice();
+    return block_body.parseNestedStmtBlock(
+        arena,
+        lines,
+        index,
+        do_ctx,
+        param_ints,
+        param_strings,
+        array_names,
+        diag_bag,
+        lex_diag_bag,
+        parse_statement_fn,
+        struct {
+            fn stop(lp: LineParser) bool {
+                return isRankClauseLine(lp) or isEndSelectLine(lp);
+            }
+        }.stop,
+    );
 }
 
 pub fn parseSelectTypeStatement(
@@ -682,7 +657,7 @@ pub fn parseSelectRankStatement(
             clause.stmts = clause_stmts;
             if (selector_state == .ok and clause.kind == .rank_star and selector_name != null) {
                 for (clause_stmts) |stmt| {
-                    if (stmtUsesWholeSelectorArray(stmt, selector_name.?)) {
+                    if (stmt_queries.stmtUsesWholeSelectorArray(stmt, selector_name.?)) {
                         diag_bag.set(
                             if (stmt.source_line == 0) line.span.start_line else stmt.source_line,
                             if (stmt.source_column == 0) defaultSourceColumn(line) else stmt.source_column,
@@ -708,7 +683,7 @@ pub fn parseSelectRankStatement(
         if (decl.isDeclarationStart(scan)) return error.DeclarationInIfBlock;
         var stmt = try parse_statement_fn(arena, lines, index, do_ctx, param_ints, param_strings, array_names, diag_bag, lex_diag_bag);
         setStmtSourceIfMissing(&stmt, line);
-        if (selector_state == .non_assumed_rank and wrapped_assumed_rank_name != null and stmtUsesWholeSelectorArray(stmt, wrapped_assumed_rank_name.?)) {
+        if (selector_state == .non_assumed_rank and wrapped_assumed_rank_name != null and stmt_queries.stmtUsesWholeSelectorArray(stmt, wrapped_assumed_rank_name.?)) {
             diag_bag.set(
                 if (stmt.source_line == 0) line.span.start_line else stmt.source_line,
                 if (stmt.source_column == 0) defaultSourceColumn(line) else stmt.source_column,

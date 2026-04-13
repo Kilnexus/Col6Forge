@@ -7,6 +7,8 @@ const constants = @import("../resolve_const.zig");
 const decls = @import("../resolve_decls.zig");
 const resolve_expr = @import("../resolve_expr.zig");
 const resolve_symbols = @import("../resolve_symbols.zig");
+const stmt_queries = @import("../../../common/stmt_queries.zig");
+const select_type_char_clause = @import("../select_type_char_clause.zig");
 const expr_semantics = @import("expr_semantics.zig");
 
 pub const CheckError = anyerror;
@@ -136,7 +138,7 @@ fn checkSelectRankAssociateBlock(
                 if (associate.bindings.len != 0) {
                     const selector_name = associate.bindings[0].name;
                     for (clause.stmts) |stmt| {
-                        if (selectRankStmtUsesWholeSelectorArray(stmt, selector_name)) {
+                        if (stmt_queries.stmtUsesWholeSelectorArray(stmt, selector_name)) {
                             emitSelectRankStmtDiagnostic(self, stmt, "assumed-size array");
                         }
                     }
@@ -221,31 +223,6 @@ fn emitSelectRankStmtDiagnostic(self: *context.Context, stmt: ast.Stmt, message:
         message,
         stmt.source_text,
     );
-}
-
-fn selectRankStmtUsesWholeSelectorArray(stmt: ast.Stmt, selector_name: []const u8) bool {
-    return switch (stmt.node) {
-        .write => |write| blk: {
-            for (write.args) |arg| {
-                if (exprIsBareIdentifier(arg, selector_name)) break :blk true;
-            }
-            break :blk false;
-        },
-        .read => |read| blk: {
-            for (read.args) |arg| {
-                if (exprIsBareIdentifier(arg, selector_name)) break :blk true;
-            }
-            break :blk false;
-        },
-        else => false,
-    };
-}
-
-fn exprIsBareIdentifier(expr_node: *ast.Expr, name: []const u8) bool {
-    return switch (expr_node.*) {
-        .identifier => |ident| std.ascii.eqlIgnoreCase(ident, name),
-        else => false,
-    };
 }
 
 pub fn checkSelectTypeBlock(self: *context.Context, select_type: ast.SelectTypeBlock, comptime deps: anytype) CheckError!void {
@@ -782,26 +759,7 @@ fn selectTypeClauseResolvedSpec(
         false,
     );
     if (kind != .character) return spec;
-    return try applySelectTypeCharacterClauseLength(self, spec, clause);
-}
-
-fn applySelectTypeCharacterClauseLength(
-    self: *context.Context,
-    base_spec: symbols.TypeSpec,
-    clause: ast.SelectTypeClause,
-) CheckError!symbols.TypeSpec {
-    if (clause.char_len_deferred) return base_spec.withCharacterLength(.deferred, null);
-    const len_expr = clause.char_len orelse return base_spec.withCharacterLength(.constant, 1);
-    if (len_expr.* == .literal and len_expr.literal.kind == .assumed_size) {
-        return base_spec.withCharacterLength(.assumed, null);
-    }
-    if (try constants.evalConst(self, len_expr)) |value| {
-        return switch (value) {
-            .integer => |int_val| base_spec.withCharacterLength(.constant, if (int_val < 0) 0 else @as(usize, @intCast(int_val))),
-            else => error.InvalidCharLen,
-        };
-    }
-    return error.InvalidCharLen;
+    return try select_type_char_clause.applySelectTypeCharacterClauseLength(self, spec, clause);
 }
 
 fn clauseHeaderRequiresDiagnostic(

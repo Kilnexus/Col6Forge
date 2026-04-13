@@ -6,6 +6,7 @@ const context = @import("context.zig");
 const resolve_expr = @import("resolve_expr/mod.zig");
 const symbols_mod = @import("resolve_symbols.zig");
 const literals = @import("../evaluator/literals.zig");
+const array_dim_queries = @import("array_dim_queries.zig");
 
 const ConstValue = symbols.ConstValue;
 
@@ -89,11 +90,7 @@ fn resolveArrayExtent(ctx: *anyopaque, name: []const u8, dim: ?usize) ?i64 {
 
 fn resolveArrayLowerBound(ctx: *anyopaque, name: []const u8, dim: usize) ?i64 {
     const self: *context.Context = @ptrCast(@alignCast(ctx));
-    if (dim == 0) return null;
-    const idx = symbols_mod.findSymbolIndex(self, name) orelse return null;
-    const sym = self.symbols.items[idx];
-    if (sym.dims.len == 0 or dim > sym.dims.len) return null;
-    return evalDimLower(self, sym.dims[dim - 1]);
+    return array_dim_queries.resolveArrayLowerBound(self, name, dim, evalDimLower);
 }
 
 fn resolveConstExprMeasure(

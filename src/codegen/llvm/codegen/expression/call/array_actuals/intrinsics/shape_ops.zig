@@ -7,6 +7,7 @@ const flatten_core = @import("../../../../../stmts/execution/assignment/flatten/
 const flatten_metadata = @import("../../../../../stmts/execution/assignment/flatten/metadata.zig");
 const shared = @import("../../shared.zig");
 const support = @import("../../array_actuals_support.zig");
+const bounds_support = @import("../../../array_bounds_support.zig");
 
 const Context = shared.Context;
 const Expr = shared.Expr;
@@ -40,7 +41,7 @@ pub fn analyzeIntrinsicBoundsActual(
         return null;
     if (call.args.len == 0 or call.args.len > 2) return null;
 
-    const resolved_extents = if (shouldUseExtentBounds(ctx, call.args[0]))
+    const resolved_extents = if (bounds_support.shouldUseExtentBounds(ctx, call.args[0]))
         try shapeSubjectExtents(ctx, builder, call.args[0], hooks)
     else
         null;
@@ -104,18 +105,6 @@ pub fn analyzeIntrinsicBoundsActual(
         .storage = .materialized_temp,
         .owned_heap_ptr = dst_ptr,
         .contiguous = true,
-    };
-}
-
-fn shouldUseExtentBounds(ctx: *Context, expr_node: *Expr) bool {
-    return switch (expr_node.*) {
-        .call_or_subscript => |call| call.args.len != 0,
-        .component => |comp| comp.args.len != 0,
-        .substring => |sub| blk: {
-            const sym = ctx.findSymbol(sub.name) orelse break :blk false;
-            break :blk sym.dims.len != 0;
-        },
-        else => false,
     };
 }
 
@@ -289,34 +278,6 @@ fn arrayBoundsSubject(ctx: *Context, expr: *Expr) ?BoundsSubject {
     };
 }
 
-fn emitComponentDimLowerValue(
-    ctx: *Context,
-    builder: anytype,
-    comp: ast.ComponentExpr,
-    dim_index: usize,
-) !ValueRef {
-    const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
-    const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse return error.UnknownSymbol;
-    if (component.pointer or component.allocatable) {
-        return memory.emitComponentDimLower(ctx, builder, comp, dim_index);
-    }
-    return memory.emitDimLower(ctx, builder, component.dims[dim_index]);
-}
-
-fn emitComponentDimExtentValue(
-    ctx: *Context,
-    builder: anytype,
-    comp: ast.ComponentExpr,
-    dim_index: usize,
-) !ValueRef {
-    const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
-    const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse return error.UnknownSymbol;
-    if (component.pointer or component.allocatable) {
-        return memory.emitComponentDimExtent(ctx, builder, comp, dim_index);
-    }
-    return memory.emitDimValue(ctx, builder, component.dims[dim_index]);
-}
-
 fn reshapeResultExtents(
     ctx: *Context,
     builder: anytype,
@@ -396,9 +357,9 @@ fn emitBoundsVectorLoop(
                 break :blk try support.emitAddI64(ctx, builder, lower, try support.emitSubI64(ctx, builder, extent, support.i64Const(ctx, 1)));
             },
             .component => |comp| blk: {
-                if (use_lower) break :blk try emitComponentDimLowerValue(ctx, builder, comp, dim_idx);
-                const lower = try emitComponentDimLowerValue(ctx, builder, comp, dim_idx);
-                const extent = try emitComponentDimExtentValue(ctx, builder, comp, dim_idx);
+                if (use_lower) break :blk try bounds_support.emitComponentDimLowerValue(ctx, builder, comp, dim_idx);
+                const lower = try bounds_support.emitComponentDimLowerValue(ctx, builder, comp, dim_idx);
+                const extent = try bounds_support.emitComponentDimExtentValue(ctx, builder, comp, dim_idx);
                 break :blk try support.emitAddI64(ctx, builder, lower, try support.emitSubI64(ctx, builder, extent, support.i64Const(ctx, 1)));
             },
         };

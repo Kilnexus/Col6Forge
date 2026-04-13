@@ -94,39 +94,11 @@ pub fn inferFunctionResultAllocatable(unit: ast.ProgramUnit) bool {
 }
 
 pub fn inferFunctionResultContiguous(unit: ast.ProgramUnit) bool {
-    if (unit.kind != .function) return false;
-    const explicit_result_name = explicitResultName(unit);
-    var decl_idx = unit.decls.len;
-    while (decl_idx > 0) : (decl_idx -= 1) {
-        const decl = unit.decls[decl_idx - 1];
-        switch (decl) {
-            .type_decl => |type_decl| {
-                for (type_decl.items) |item| {
-                    if (matchesResultName(explicit_result_name, unit.name, item.name)) return type_decl.contiguous;
-                }
-            },
-            else => {},
-        }
-    }
-    return false;
+    return inferFunctionResultDeclFlag(unit, .type_decl_contiguous);
 }
 
 pub fn inferFunctionResultIsProcedurePointer(unit: ast.ProgramUnit) bool {
-    if (unit.kind != .function) return false;
-    const explicit_result_name = explicitResultName(unit);
-    var decl_idx = unit.decls.len;
-    while (decl_idx > 0) : (decl_idx -= 1) {
-        const decl = unit.decls[decl_idx - 1];
-        switch (decl) {
-            .procedure => |procedure_decl| {
-                for (procedure_decl.items) |item| {
-                    if (matchesResultName(explicit_result_name, unit.name, item.name)) return procedure_decl.pointer;
-                }
-            },
-            else => {},
-        }
-    }
-    return false;
+    return inferFunctionResultDeclFlag(unit, .procedure_pointer);
 }
 
 pub fn inferFunctionResultShapeSignature(arena: std.mem.Allocator, unit: ast.ProgramUnit) ![]const []const u8 {
@@ -226,6 +198,41 @@ fn matchesResultName(explicit_result_name: ?[]const u8, unit_name: []const u8, c
         std.ascii.eqlIgnoreCase(candidate_name, result_name)
     else
         std.ascii.eqlIgnoreCase(candidate_name, unit_name);
+}
+
+const ResultDeclFlag = enum {
+    type_decl_contiguous,
+    procedure_pointer,
+};
+
+fn inferFunctionResultDeclFlag(unit: ast.ProgramUnit, comptime flag: ResultDeclFlag) bool {
+    if (unit.kind != .function) return false;
+    const explicit_result_name = explicitResultName(unit);
+    var decl_idx = unit.decls.len;
+    while (decl_idx > 0) : (decl_idx -= 1) {
+        const decl = unit.decls[decl_idx - 1];
+        switch (flag) {
+            .type_decl_contiguous => switch (decl) {
+                .type_decl => |type_decl| {
+                    for (type_decl.items) |item| {
+                        if (!matchesResultName(explicit_result_name, unit.name, item.name)) continue;
+                        return type_decl.contiguous;
+                    }
+                },
+                else => {},
+            },
+            .procedure_pointer => switch (decl) {
+                .procedure => |procedure_decl| {
+                    for (procedure_decl.items) |item| {
+                        if (!matchesResultName(explicit_result_name, unit.name, item.name)) continue;
+                        return procedure_decl.pointer;
+                    }
+                },
+                else => {},
+            },
+        }
+    }
+    return false;
 }
 
 fn allDeferredShapeSignature(shape: []const []const u8) bool {

@@ -12,6 +12,7 @@ const symbols_mod = @import("resolve_symbols.zig");
 const rewrite_calls = @import("rewrite_calls.zig");
 const resolve_data = @import("resolve_data.zig");
 const constants = @import("resolve_const.zig");
+const array_dim_queries = @import("array_dim_queries.zig");
 const scope = @import("../scope.zig");
 const evaluator = @import("../evaluator.zig");
 
@@ -632,11 +633,7 @@ fn resolveDerivedComponentArrayExtent(raw_ctx: *anyopaque, name: []const u8, dim
 
 fn resolveDerivedComponentArrayLowerBound(raw_ctx: *anyopaque, name: []const u8, dim: usize) ?i64 {
     const ctx: *context.Context = @ptrCast(@alignCast(raw_ctx));
-    if (dim == 0) return null;
-    const idx = symbols_mod.findSymbolIndex(ctx, name) orelse return null;
-    const sym = ctx.symbols.items[idx];
-    if (sym.dims.len == 0 or dim > sym.dims.len) return null;
-    return evalDerivedComponentDimLower(ctx, sym.dims[dim - 1]);
+    return array_dim_queries.resolveArrayLowerBound(ctx, name, dim, evalDerivedComponentDimLower);
 }
 
 fn evalDerivedComponentDimExtent(ctx: *context.Context, expr: *ast.Expr) ?i64 {

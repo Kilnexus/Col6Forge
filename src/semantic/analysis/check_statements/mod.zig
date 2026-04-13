@@ -14,6 +14,7 @@ const allocate_checks = @import("allocate/mod.zig");
 const procedure_calls = @import("procedure_calls.zig");
 const expr_semantics = @import("expr_semantics.zig");
 const abstract_expr_use = @import("abstract_expr_use.zig");
+const static_shapes = @import("static_shapes.zig");
 
 pub const CheckError = anyerror;
 
@@ -428,110 +429,14 @@ fn rejectStaticShapeMismatch(
     target: *ast.Expr,
     value: *ast.Expr,
 ) CheckError!void {
-    const target_shape = staticShapeForExpr(self, target) orelse return;
-    const value_shape = staticShapeForExpr(self, value) orelse return;
+    const target_shape = static_shapes.staticShapeForExpr(self, target) orelse return;
+    const value_shape = static_shapes.staticShapeForExpr(self, value) orelse return;
     if (target_shape.len != value_shape.len) {
         return emitExprConstraint(self, value, "Different shape");
     }
     for (target_shape, value_shape) |expected, actual| {
         if (expected != actual) return emitExprConstraint(self, value, "Different shape");
     }
-}
-
-fn staticShapeForExpr(self: *context.Context, expr_node: *ast.Expr) ?[]const i64 {
-    return switch (expr_node.*) {
-        .identifier => |name| blk: {
-            const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk null;
-            break :blk staticShapeForDims(self, self.symbols.items[idx].dims);
-        },
-        .call_or_subscript => |call| staticShapeForCall(self, call),
-        else => null,
-    };
-}
-
-fn staticShapeForCall(self: *context.Context, call: ast.CallOrSubscript) ?[]const i64 {
-    if (std.ascii.eqlIgnoreCase(call.name, "sum") or std.ascii.eqlIgnoreCase(call.name, "product")) {
-        if (call.args.len < 2) return null;
-        const base_shape = staticShapeForExpr(self, call.args[0]) orelse return null;
-        const dim = staticIntValue(self, call.args[1]) orelse return null;
-        if (dim <= 0) return null;
-        const dim_index: usize = @intCast(dim - 1);
-        if (dim_index >= base_shape.len) return null;
-        if (base_shape.len == 1) {
-            const out = self.arena.alloc(i64, 0) catch return null;
-            return out;
-        }
-        const out = self.arena.alloc(i64, base_shape.len - 1) catch return null;
-        var out_idx: usize = 0;
-        for (base_shape, 0..) |extent, idx| {
-            if (idx == dim_index) continue;
-            out[out_idx] = extent;
-            out_idx += 1;
-        }
-        return out;
-    }
-
-    if (std.ascii.eqlIgnoreCase(call.name, "matmul")) {
-        if (call.args.len != 2) return null;
-        const lhs_shape = staticShapeForExpr(self, call.args[0]) orelse return null;
-        const rhs_shape = staticShapeForExpr(self, call.args[1]) orelse return null;
-        const lhs_rank = resolve_expr.exprRank(self, call.args[0]);
-        const rhs_rank = resolve_expr.exprRank(self, call.args[1]);
-        if (!((lhs_rank == 1 or lhs_rank == 2) and (rhs_rank == 1 or rhs_rank == 2))) return null;
-        const lhs_inner = if (lhs_rank == 1) lhs_shape[0] else lhs_shape[1];
-        const rhs_inner = rhs_shape[0];
-        if (lhs_inner != rhs_inner) return null;
-
-        if (lhs_rank == 2 and rhs_rank == 2) {
-            const out = self.arena.alloc(i64, 2) catch return null;
-            out[0] = lhs_shape[0];
-            out[1] = rhs_shape[1];
-            return out;
-        }
-        if (lhs_rank == 2 and rhs_rank == 1) {
-            const out = self.arena.alloc(i64, 1) catch return null;
-            out[0] = lhs_shape[0];
-            return out;
-        }
-        if (lhs_rank == 1 and rhs_rank == 2) {
-            const out = self.arena.alloc(i64, 1) catch return null;
-            out[0] = rhs_shape[1];
-            return out;
-        }
-        return self.arena.alloc(i64, 0) catch null;
-    }
-
-    return null;
-}
-
-fn staticShapeForDims(self: *context.Context, dims: []*ast.Expr) ?[]const i64 {
-    if (dims.len == 0) return null;
-    const out = self.arena.alloc(i64, dims.len) catch return null;
-    for (dims, 0..) |dim_expr, idx| {
-        out[idx] = staticDimExtent(self, dim_expr) orelse return null;
-    }
-    return out;
-}
-
-fn staticDimExtent(self: *context.Context, expr_node: *ast.Expr) ?i64 {
-    return switch (expr_node.*) {
-        .dim_range => |range| blk: {
-            if (range.stride != null) break :blk null;
-            const upper = staticIntValue(self, range.upper) orelse break :blk null;
-            const lower = if (range.lower) |lower_expr| staticIntValue(self, lower_expr) orelse break :blk null else 1;
-            if (upper < lower) break :blk 0;
-            break :blk upper - lower + 1;
-        },
-        else => staticIntValue(self, expr_node),
-    };
-}
-
-fn staticIntValue(self: *context.Context, expr_node: *ast.Expr) ?i64 {
-    const value = resolve_const.evalConst(self, expr_node) catch return null;
-    return switch (value orelse return null) {
-        .integer => |v| v,
-        else => null,
-    };
 }
 
 fn dummyArgTypeCompatible(

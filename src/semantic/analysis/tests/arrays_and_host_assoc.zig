@@ -874,6 +874,31 @@ test "external procedure without visible explicit interface does not enforce dum
     try testing.expect(diag.take() == null);
 }
 
+test "SELECT RANK rejects non-assumed-rank selector" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "subroutine s(x)\n" ++
+        "  integer :: x(3)\n" ++
+        "  select rank (x)\n" ++
+        "  rank (1)\n" ++
+        "    print *, x\n" ++
+        "  end select\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    try testing.expectError(error.AssignmentTypeMismatch, split_api.analyzeProgram(arena.allocator(), program));
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "must be an assumed rank variable") != null);
+}
+
 test {
     _ = @import("../mod_proc_component_tests.zig");
     _ = @import("../mod_regression_tests.zig");

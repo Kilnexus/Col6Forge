@@ -12,6 +12,9 @@ const expr_semantics = @import("expr_semantics.zig");
 pub const CheckError = anyerror;
 
 pub fn checkAssociateBlock(self: *context.Context, associate: ast.AssociateBlock, comptime deps: anytype) CheckError!void {
+    if (associate.select_rank) |select_rank| {
+        try checkSelectRankAssociateBlock(self, associate, select_rank, deps);
+    }
     var first_err: ?anyerror = null;
     const binding_ok = try self.arena.alloc(bool, associate.bindings.len);
     for (associate.bindings, 0..) |binding, idx| {
@@ -60,6 +63,189 @@ pub fn checkAssociateBlock(self: *context.Context, associate: ast.AssociateBlock
         };
     }
     if (first_err) |err| return err;
+}
+
+fn checkSelectRankAssociateBlock(
+    self: *context.Context,
+    associate: ast.AssociateBlock,
+    select_rank: ast.SelectRankInfo,
+    comptime deps: anytype,
+) CheckError!void {
+    _ = deps;
+    const selector_expr = if (associate.bindings.len != 0) associate.bindings[0].selector else return;
+    const selector_source = self.sourceForExpr(selector_expr) orelse ast.SourceRef{};
+    const selector_info = selectRankSelectorInfo(self, selector_expr);
+
+    if (!selector_info.assumed_rank) {
+        self.setDiagnostic(
+            if (selector_source.line == 0) 1 else selector_source.line,
+            if (selector_source.column == 0) 1 else selector_source.column,
+            catalog.semantic.assignment_type_mismatch.code,
+            "must be an assumed rank variable",
+            selector_source.text,
+        );
+        for (select_rank.clauses) |clause| {
+            self.setDiagnostic(
+                if (clause.source.line == 0) 1 else clause.source.line,
+                if (clause.source.column == 0) 1 else clause.source.column,
+                catalog.parser.unexpected_token.code,
+                "Unexpected RANK statement",
+                clause.source.text,
+            );
+        }
+        if (select_rank.end_source.line != 0) {
+            self.setDiagnostic(
+                select_rank.end_source.line,
+                if (select_rank.end_source.column == 0) 1 else select_rank.end_source.column,
+                catalog.parser.unexpected_token.code,
+                "Expecting END SUBROUTINE statement",
+                select_rank.end_source.text,
+            );
+        }
+        return error.AssignmentTypeMismatch;
+    }
+
+    if (selector_info.pointer_or_allocatable) {
+        self.setDiagnostic(
+            if (selector_source.line == 0) 1 else selector_source.line,
+            if (selector_source.column == 0) 1 else selector_source.column,
+            catalog.semantic.assignment_type_mismatch.code,
+            "cannot be used with the pointer or allocatable selector",
+            selector_source.text,
+        );
+    }
+
+    var seen_default = false;
+    var seen_star = false;
+    var seen_rank = std.AutoHashMap(i64, void).init(self.arena);
+    for (select_rank.clauses) |clause| {
+        switch (clause.kind) {
+            .rank_default => {
+                if (seen_default) {
+                    emitSelectRankClauseDiagnostic(self, clause.source, "is repeated");
+                }
+                seen_default = true;
+            },
+            .rank_star => {
+                if (selector_info.pointer_or_allocatable) {
+                    emitSelectRankClauseDiagnostic(self, clause.source, "cannot be used with the pointer or allocatable selector");
+                }
+                if (seen_star) {
+                    emitSelectRankClauseDiagnostic(self, clause.source, "is repeated");
+                }
+                if (associate.bindings.len != 0) {
+                    const selector_name = associate.bindings[0].name;
+                    for (clause.stmts) |stmt| {
+                        if (selectRankStmtUsesWholeSelectorArray(stmt, selector_name)) {
+                            emitSelectRankStmtDiagnostic(self, stmt, "assumed-size array");
+                        }
+                    }
+                }
+                seen_star = true;
+            },
+            .rank_value => {
+                const rank_expr = clause.rank_expr orelse continue;
+                const rank_spec = try resolve_expr.exprTypeSpec(self, rank_expr);
+                if (resolve_expr.exprRank(self, rank_expr) != 0) {
+                    emitSelectRankClauseDiagnostic(self, clause.source, "must be a scalar");
+                    continue;
+                }
+                if (rank_spec.lowered_kind != .integer) {
+                    emitSelectRankClauseDiagnostic(self, clause.source, "must be a scalar");
+                    continue;
+                }
+                const rank_value = (constants.evalConst(self, rank_expr) catch null) orelse {
+                    emitSelectRankClauseDiagnostic(self, clause.source, "must be a scalar");
+                    continue;
+                };
+                const rank_int = switch (rank_value) {
+                    .integer => |value| value,
+                    else => {
+                        emitSelectRankClauseDiagnostic(self, clause.source, "must be a scalar");
+                        continue;
+                    },
+                };
+                if (rank_int < 0 or rank_int > 15) {
+                    emitSelectRankClauseDiagnostic(self, clause.source, "must not be less than zero or greater than 15");
+                    continue;
+                }
+                const gop = seen_rank.getOrPut(rank_int) catch continue;
+                if (gop.found_existing) {
+                    emitSelectRankClauseDiagnostic(self, clause.source, "is repeated");
+                }
+            },
+        }
+    }
+}
+
+const SelectRankSelectorInfo = struct {
+    assumed_rank: bool = false,
+    pointer_or_allocatable: bool = false,
+};
+
+fn selectRankSelectorInfo(self: *context.Context, selector: *ast.Expr) SelectRankSelectorInfo {
+    const idx = switch (selector.*) {
+        .identifier => |name| resolve_symbols.findSymbolIndex(self, name),
+        else => null,
+    } orelse return .{};
+    const sym = self.symbols.items[idx];
+    return .{
+        .assumed_rank = dimsRepresentAssumedRank(sym.dims),
+        .pointer_or_allocatable = sym.is_pointer or sym.is_allocatable,
+    };
+}
+
+fn dimsRepresentAssumedRank(dims: []const *ast.Expr) bool {
+    if (dims.len != 1) return false;
+    return switch (dims[0].*) {
+        .dim_range => |range| range.from_dotdot,
+        else => false,
+    };
+}
+
+fn emitSelectRankClauseDiagnostic(self: *context.Context, source: ast.SourceRef, message: []const u8) void {
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.assignment_type_mismatch.code,
+        message,
+        source.text,
+    );
+}
+
+fn emitSelectRankStmtDiagnostic(self: *context.Context, stmt: ast.Stmt, message: []const u8) void {
+    self.setDiagnostic(
+        if (stmt.source_line == 0) 1 else stmt.source_line,
+        if (stmt.source_column == 0) 1 else stmt.source_column,
+        catalog.semantic.assignment_type_mismatch.code,
+        message,
+        stmt.source_text,
+    );
+}
+
+fn selectRankStmtUsesWholeSelectorArray(stmt: ast.Stmt, selector_name: []const u8) bool {
+    return switch (stmt.node) {
+        .write => |write| blk: {
+            for (write.args) |arg| {
+                if (exprIsBareIdentifier(arg, selector_name)) break :blk true;
+            }
+            break :blk false;
+        },
+        .read => |read| blk: {
+            for (read.args) |arg| {
+                if (exprIsBareIdentifier(arg, selector_name)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+fn exprIsBareIdentifier(expr_node: *ast.Expr, name: []const u8) bool {
+    return switch (expr_node.*) {
+        .identifier => |ident| std.ascii.eqlIgnoreCase(ident, name),
+        else => false,
+    };
 }
 
 pub fn checkSelectTypeBlock(self: *context.Context, select_type: ast.SelectTypeBlock, comptime deps: anytype) CheckError!void {

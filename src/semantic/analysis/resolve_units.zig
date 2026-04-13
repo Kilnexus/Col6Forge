@@ -5,6 +5,7 @@ const catalog = @import("../../common/error_catalog.zig");
 const symbols = @import("../symbol/mod.zig");
 const context = @import("context.zig");
 const decls = @import("resolve_decls.zig");
+const decl_diag = @import("resolve_decls_diag_helpers.zig");
 const specs = @import("resolve_specs/mod.zig");
 const statements = @import("resolve_statements.zig");
 const symbols_mod = @import("resolve_symbols.zig");
@@ -57,6 +58,7 @@ pub const Resolver = struct {
                 ctx.setCurrentDeclSource(null);
             }
         }
+        maybeEmitImplicitFunctionResultDiagnostic(ctx);
         if (ctx.unit.decl_sources.len != 0) {
             std.debug.assert(ctx.unit.decl_sources.len == ctx.unit.decls.len);
         }
@@ -342,6 +344,51 @@ fn hasCustomCurrentDiagnostic(ctx: *context.Context) bool {
             return diag_entry.line == (if (decl_source.line == 0) 1 else decl_source.line) and
                 diag_entry.column == (if (decl_source.column == 0) 1 else decl_source.column);
         }
+    }
+    return false;
+}
+
+fn maybeEmitImplicitFunctionResultDiagnostic(ctx: *context.Context) void {
+    if (ctx.unit.kind != .function) return;
+    if (!unitHasImplicitNone(ctx)) return;
+    if (functionHeaderProvidesExplicitResultType(ctx)) return;
+    if (!unitDeclaresUnknownDerivedType(ctx)) return;
+    decl_diag.emitCurrentFunctionNoImplicitDiagnostic(ctx);
+}
+
+fn unitHasImplicitNone(ctx: *const context.Context) bool {
+    for (ctx.unit.decls) |decl| {
+        if (decl != .implicit) continue;
+        if (decl.implicit.rules.len == 0) return true;
+    }
+    return false;
+}
+
+fn functionHeaderProvidesExplicitResultType(ctx: *const context.Context) bool {
+    const result_name = ctx.unit.result_name orelse ctx.unit.name;
+    for (ctx.unit.decls, 0..) |decl, decl_idx| {
+        if (decl_idx >= ctx.unit.decl_sources.len) continue;
+        const decl_source = ctx.unit.decl_sources[decl_idx];
+        if (std.ascii.indexOfIgnoreCase(decl_source.text, "function") == null) continue;
+        switch (decl) {
+            .type_decl => |type_decl| {
+                for (type_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, result_name)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn unitDeclaresUnknownDerivedType(ctx: *const context.Context) bool {
+    for (ctx.unit.decls) |decl| {
+        if (decl != .type_decl) continue;
+        const type_decl = decl.type_decl;
+        if (type_decl.type_kind != .derived or type_decl.polymorphic or type_decl.assumed_type) continue;
+        const derived_name = type_decl.derived_type_name orelse continue;
+        if (!symbols_mod.hasDerivedType(ctx, derived_name)) return true;
     }
     return false;
 }

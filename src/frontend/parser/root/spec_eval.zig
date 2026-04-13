@@ -32,15 +32,16 @@ pub fn recordArrayNames(
     switch (decl_node) {
         .type_decl => |td| {
             for (td.items) |item| {
-                if (item.dims.len > 0) {
-                    try array_names.put(item.name, try arrayInfoFromDims(allocator, item.dims, param_ints));
-                }
+                var info = try arrayInfoFromDims(allocator, item.dims, param_ints, td.pointer, td.allocatable);
+                info.type_kind = td.type_kind;
+                info.kind_value = inferKindValue(td.kind_selector, param_ints);
+                try array_names.put(item.name, info);
             }
         },
         .dimension => |dim| {
             for (dim.items) |item| {
                 if (item.dims.len > 0) {
-                    try array_names.put(item.name, try arrayInfoFromDims(allocator, item.dims, param_ints));
+                    try array_names.put(item.name, try arrayInfoFromDims(allocator, item.dims, param_ints, dim.pointer, dim.allocatable));
                 }
             }
         },
@@ -48,7 +49,7 @@ pub fn recordArrayNames(
             for (com.blocks) |block| {
                 for (block.items) |item| {
                     if (item.dims.len > 0) {
-                        try array_names.put(item.name, try arrayInfoFromDims(allocator, item.dims, param_ints));
+                        try array_names.put(item.name, try arrayInfoFromDims(allocator, item.dims, param_ints, false, false));
                     }
                 }
             }
@@ -77,6 +78,8 @@ pub fn arrayInfoFromDims(
     allocator: std.mem.Allocator,
     dims: []*ast.Expr,
     param_ints: *const std.StringHashMap(i64),
+    pointer: bool,
+    allocatable: bool,
 ) !array_info.ArrayInfo {
     const size = arraySizeFromDims(dims, param_ints);
     const rank = dims.len;
@@ -114,9 +117,25 @@ pub fn arrayInfoFromDims(
     return .{
         .size = size,
         .rank = rank,
+        .assumed_rank = dimsRepresentAssumedRank(dims),
+        .pointer = pointer,
+        .allocatable = allocatable,
         .lower = lower,
-        .lower_bounds = if (lowers_known) lowers else null,
-        .extents = if (extents_known) extents else null,
+        .lower_bounds = if (rank != 0 and lowers_known) lowers else null,
+        .extents = if (rank != 0 and extents_known) extents else null,
+    };
+}
+
+fn inferKindValue(kind_selector: ?*ast.Expr, param_ints: *const std.StringHashMap(i64)) ?i64 {
+    const expr_node = kind_selector orelse return null;
+    return evalParamInt(expr_node, param_ints);
+}
+
+fn dimsRepresentAssumedRank(dims: []*ast.Expr) bool {
+    if (dims.len != 1) return false;
+    return switch (dims[0].*) {
+        .dim_range => |range| range.from_dotdot,
+        else => false,
     };
 }
 

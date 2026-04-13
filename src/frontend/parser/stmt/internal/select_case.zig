@@ -54,6 +54,16 @@ const CharacterCaseRange = struct {
     upper: ?[]const u8 = null,
 };
 
+const IntegerCaseRange = struct {
+    lower: ?i64 = null,
+    upper: ?i64 = null,
+};
+
+const LogicalCaseValue = enum {
+    false_value,
+    true_value,
+};
+
 fn prependLabeledContinue(
     arena: std.mem.Allocator,
     line: logical_line.LogicalLine,
@@ -134,11 +144,23 @@ pub fn parseSelectCaseStatement(
         try makeIdentifierExpr(arena, tmp_name)
     else
         selector;
+    const selector_integer_kind = selectorIntegerKindValue(selector, array_names);
+    if (selectorIsDefinitelyArray(selector, array_names)) {
+        diag_bag.set(
+            lp.line.span.start_line,
+            defaultSourceColumn(lp.line),
+            catalog.semantic.assignment_type_mismatch.code,
+            "must be a scalar expression",
+            lp.line.text,
+        );
+    }
 
     index.* += 1;
 
     var clauses = std.array_list.Managed(CaseClause).init(arena);
     var seen_character_ranges = std.array_list.Managed(CharacterCaseRange).init(arena);
+    var seen_integer_ranges = std.array_list.Managed(IntegerCaseRange).init(arena);
+    var seen_logical_values = std.EnumSet(LogicalCaseValue).initEmpty();
     var default_stmts: ?[]Stmt = null;
     var saw_end_select = false;
 
@@ -158,8 +180,12 @@ pub fn parseSelectCaseStatement(
         if (!isCaseLine(case_lp)) return error.UnexpectedToken;
 
         const case_header = try parseCaseHeader(arena, &case_lp, selector_for_clauses);
+        diagnoseInvalidIntegerCaseSpecification(diag_bag, line, case_header.ranges, selector_integer_kind);
         diagnoseCharacterCaseOverlap(arena, diag_bag, line, case_header.ranges, seen_character_ranges.items);
         try appendCharacterCaseRanges(arena, &seen_character_ranges, case_header.ranges);
+        diagnoseIntegerCaseOverlap(diag_bag, line, case_header.ranges, seen_integer_ranges.items);
+        try appendIntegerCaseRanges(&seen_integer_ranges, case_header.ranges);
+        diagnoseRepeatedLogicalCase(diag_bag, line, case_header.ranges, &seen_logical_values);
         index.* += 1;
         const parsed_block_stmts = try parseSelectCaseBlock(arena, lines, index, do_ctx, param_ints, param_strings, array_names, diag_bag, lex_diag_bag, parse_statement_fn);
         const block_stmts = try prependLabeledContinue(arena, line, parsed_block_stmts);
@@ -335,6 +361,16 @@ fn appendCharacterCaseRanges(
     }
 }
 
+fn appendIntegerCaseRanges(
+    seen: *std.array_list.Managed(IntegerCaseRange),
+    ranges: []const CaseSelectorRange,
+) !void {
+    for (ranges) |range| {
+        const converted = integerCaseRangeFromSelector(range) orelse continue;
+        try seen.append(converted);
+    }
+}
+
 fn diagnoseCharacterCaseOverlap(
     arena: std.mem.Allocator,
     diag_bag: *parse_diag.Bag,
@@ -360,6 +396,89 @@ fn diagnoseCharacterCaseOverlap(
     }
 }
 
+fn diagnoseIntegerCaseOverlap(
+    diag_bag: *parse_diag.Bag,
+    line: logical_line.LogicalLine,
+    ranges: []const CaseSelectorRange,
+    seen: []const IntegerCaseRange,
+) void {
+    for (ranges) |range| {
+        const current = integerCaseRangeFromSelector(range) orelse continue;
+        for (seen) |prior| {
+            if (!integerCaseRangesOverlap(prior, current)) continue;
+            diag_bag.set(
+                line.span.start_line,
+                defaultSourceColumn(line),
+                catalog.parser.unexpected_token.code,
+                "CASE label overlaps with CASE label",
+                line.text,
+            );
+            return;
+        }
+    }
+}
+
+fn diagnoseRepeatedLogicalCase(
+    diag_bag: *parse_diag.Bag,
+    line: logical_line.LogicalLine,
+    ranges: []const CaseSelectorRange,
+    seen: *std.EnumSet(LogicalCaseValue),
+) void {
+    for (ranges) |range| {
+        const value = logicalCaseValueFromSelector(range) orelse continue;
+        if (seen.contains(value)) {
+            diag_bag.set(
+                line.span.start_line,
+                defaultSourceColumn(line),
+                catalog.semantic.assignment_type_mismatch.code,
+                "value in CASE statement is repeated",
+                line.text,
+            );
+            return;
+        }
+        seen.insert(value);
+    }
+}
+
+fn diagnoseInvalidIntegerCaseSpecification(
+    diag_bag: *parse_diag.Bag,
+    line: logical_line.LogicalLine,
+    ranges: []const CaseSelectorRange,
+    selector_kind_value: ?i64,
+) void {
+    const kind_value = selector_kind_value orelse return;
+    const bounds = integerKindBounds(kind_value) orelse return;
+    for (ranges) |range| {
+        if (range.lower) |lower_expr| {
+            const lower = integerCaseBound(lower_expr) orelse continue;
+            if (lower < bounds.min or lower > bounds.max) {
+                emitInvalidCaseSpecification(diag_bag, line);
+                return;
+            }
+        }
+        if (range.upper) |upper_expr| {
+            const upper = integerCaseBound(upper_expr) orelse continue;
+            if (upper < bounds.min or upper > bounds.max) {
+                emitInvalidCaseSpecification(diag_bag, line);
+                return;
+            }
+        }
+    }
+}
+
+fn emitInvalidCaseSpecification(
+    diag_bag: *parse_diag.Bag,
+    line: logical_line.LogicalLine,
+) void {
+    diag_bag.set(
+        line.span.start_line,
+        defaultSourceColumn(line),
+        catalog.parser.unexpected_token.code,
+        "Syntax error in CASE specification",
+        line.text,
+    );
+}
+
 fn characterCaseRangeFromSelector(range: CaseSelectorRange) ?CharacterCaseRange {
     const lower = if (range.lower) |expr_node| characterCaseBound(expr_node) else null;
     const upper = if (range.upper) |expr_node| characterCaseBound(expr_node) else null;
@@ -371,6 +490,113 @@ fn characterCaseRangeFromSelector(range: CaseSelectorRange) ?CharacterCaseRange 
         .lower = if (lower) |bound| bound.bytes else null,
         .upper = if (upper) |bound| bound.bytes else null,
     };
+}
+
+fn integerCaseRangeFromSelector(range: CaseSelectorRange) ?IntegerCaseRange {
+    const lower = if (range.lower) |expr_node| integerCaseBound(expr_node) else null;
+    const upper = if (range.upper) |expr_node| integerCaseBound(expr_node) else null;
+    if (range.lower != null and lower == null) return null;
+    if (range.upper != null and upper == null) return null;
+    return .{
+        .lower = lower,
+        .upper = upper,
+    };
+}
+
+fn integerCaseBound(expr_node: *Expr) ?i64 {
+    return switch (expr_node.*) {
+        .literal => |lit| switch (lit.kind) {
+            .integer => std.fmt.parseInt(i64, lit.text, 10) catch null,
+            else => null,
+        },
+        .unary => |un| blk: {
+            const inner = integerCaseBound(un.expr) orelse break :blk null;
+            break :blk switch (un.op) {
+                .plus => inner,
+                .minus => -inner,
+                else => null,
+            };
+        },
+        else => null,
+    };
+}
+
+fn integerCaseRangesOverlap(lhs: IntegerCaseRange, rhs: IntegerCaseRange) bool {
+    const lhs_lower = lhs.lower orelse std.math.minInt(i64);
+    const lhs_upper = lhs.upper orelse std.math.maxInt(i64);
+    const rhs_lower = rhs.lower orelse std.math.minInt(i64);
+    const rhs_upper = rhs.upper orelse std.math.maxInt(i64);
+    return lhs_lower <= rhs_upper and rhs_lower <= lhs_upper;
+}
+
+fn integerKindBounds(kind_value: i64) ?struct { min: i64, max: i64 } {
+    return switch (kind_value) {
+        1 => .{ .min = -128, .max = 127 },
+        2 => .{ .min = -32768, .max = 32767 },
+        4 => .{ .min = -2147483648, .max = 2147483647 },
+        8 => .{ .min = -9223372036854775808, .max = 9223372036854775807 },
+        else => null,
+    };
+}
+
+fn logicalCaseValueFromSelector(range: CaseSelectorRange) ?LogicalCaseValue {
+    const lower = range.lower orelse return null;
+    const upper = range.upper orelse return null;
+    const lower_value = logicalCaseBound(lower) orelse return null;
+    const upper_value = logicalCaseBound(upper) orelse return null;
+    if (lower_value != upper_value) return null;
+    return lower_value;
+}
+
+fn logicalCaseBound(expr_node: *Expr) ?LogicalCaseValue {
+    return switch (expr_node.*) {
+        .literal => |lit| switch (lit.kind) {
+            .logical => if (std.mem.eql(u8, lit.text, "1") or std.ascii.eqlIgnoreCase(lit.text, ".true."))
+                .true_value
+            else if (std.mem.eql(u8, lit.text, "0") or std.ascii.eqlIgnoreCase(lit.text, ".false."))
+                .false_value
+            else
+                null,
+            else => null,
+        },
+        else => null,
+    };
+}
+
+fn selectorIsDefinitelyArray(
+    selector: *Expr,
+    array_names: *const std.StringHashMap(array_info.ArrayInfo),
+) bool {
+    return switch (selector.*) {
+        .identifier => |name| blk: {
+            const info = array_names.get(name) orelse break :blk false;
+            break :blk info.rank > 0;
+        },
+        .call_or_subscript => |call| blk: {
+            const info = array_names.get(call.name) orelse break :blk false;
+            if (info.rank == 0) break :blk false;
+            for (call.args) |arg| {
+                if (arg.* == .dim_range) break :blk true;
+            }
+            break :blk false;
+        },
+        .substring => |sub| sub.args.len != 0,
+        else => false,
+    };
+}
+
+fn selectorIntegerKindValue(
+    selector: *Expr,
+    array_names: *const std.StringHashMap(array_info.ArrayInfo),
+) ?i64 {
+    const name = switch (selector.*) {
+        .identifier => |ident| ident,
+        else => return null,
+    };
+    const info = array_names.get(name) orelse return null;
+    if (info.rank != 0) return null;
+    if (info.type_kind != .integer) return null;
+    return info.kind_value;
 }
 
 fn characterCaseBound(expr_node: *Expr) ?struct { kind_value: i64, bytes: []const u8 } {

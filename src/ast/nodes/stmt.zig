@@ -75,6 +75,26 @@ pub const AssociateBinding = struct {
 pub const AssociateBlock = struct {
     bindings: []AssociateBinding,
     stmts: []Stmt,
+    select_rank: ?SelectRankInfo = null,
+};
+
+pub const SelectRankClauseKind = enum {
+    rank_value,
+    rank_star,
+    rank_default,
+};
+
+pub const SelectRankClause = struct {
+    kind: SelectRankClauseKind,
+    rank_expr: ?*Expr = null,
+    stmts: []Stmt = &.{},
+    source: SourceRef = .{},
+};
+
+pub const SelectRankInfo = struct {
+    construct_name: ?[]const u8 = null,
+    clauses: []const SelectRankClause = &.{},
+    end_source: SourceRef = .{},
 };
 
 pub const SelectTypeClauseKind = enum {

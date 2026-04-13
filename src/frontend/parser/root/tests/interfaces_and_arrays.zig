@@ -280,6 +280,43 @@ test "parseProgramWithDiagnostics recovers bare call-like statement in implicit 
     try testing.expectEqualStrings("Unexpected end of file", third.message);
 }
 
+test "parseProgramWithDiagnostics reports declarator initializer shape mismatch before later parse errors" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "contains\n" ++
+        "  subroutine s(x)\n" ++
+        "    integer :: x(..)\n" ++
+        "    integer, dimension(10) :: arr = (/1,2,3,4,5/)\n" ++
+        "    select rank(arr(1:3))\n" ++
+        "    rank(1)\n" ++
+        "      print *, 1\n" ++
+        "    end select\n" ++
+        "  end subroutine s\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var diag_bag = parse_diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    _ = try parseProgramWithDiagnostics(arena.allocator(), lines, &diag_bag);
+
+    var saw_shape = false;
+    var saw_rank_syntax = false;
+    while (diag_bag.take()) |diag| {
+        defer diag_bag.release(diag);
+        if (std.mem.indexOf(u8, diag.message, "Different shape for array assignment") != null) saw_shape = true;
+        if (std.mem.indexOf(u8, diag.message, "Syntax error in argument list") != null) saw_rank_syntax = true;
+    }
+    try testing.expect(saw_shape);
+    try testing.expect(saw_rank_syntax);
+}
+
 test "parseProgram handles free-form complex parameter slash array constructor declaration" {
     const testing = std.testing;
     const allocator = testing.allocator;

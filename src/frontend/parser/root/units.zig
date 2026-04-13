@@ -13,6 +13,7 @@ const root_header = @import("header.zig");
 const root_prelude = @import("prelude.zig");
 const root_predicates = @import("predicates.zig");
 const root_diagnostics = @import("diagnostics.zig");
+const root_decl_diagnostics = @import("decl_diagnostics.zig");
 const root_control = @import("control_helpers.zig");
 const root_interface = @import("interface.zig");
 const root_spec_eval = @import("spec_eval.zig");
@@ -43,6 +44,8 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
     var module_decls = std.array_list.Managed(Decl).init(self.arena);
     var module_decl_sources = std.array_list.Managed(DeclSource).init(self.arena);
     var module_uses = std.array_list.Managed(ast.UseStmt).init(self.arena);
+    var module_param_ints = std.StringHashMap(i64).init(self.arena);
+    var module_array_names = std.StringHashMap(array_info.ArrayInfo).init(self.arena);
     var saw_contains = false;
     while (self.index < self.lines.len) {
         const line = self.lines[self.index];
@@ -139,6 +142,18 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
                 self.index += 1;
                 continue;
             };
+            if (decl_node == .parameter) {
+                try root_spec_eval.recordParamInts(&module_param_ints, decl_node.parameter.assigns);
+            }
+            try root_spec_eval.recordArrayNames(self.arena, &module_array_names, decl_node, &module_param_ints);
+            try root_decl_diagnostics.noteDeclaratorInitializerShapeDiagnostics(
+                self.arena,
+                self.diag_bag,
+                line,
+                decl_node,
+                &module_param_ints,
+                &module_array_names,
+            );
             try module_decls.append(decl_node);
             try module_decl_sources.append(root_diagnostics.sourceFromLine(line));
         }
@@ -199,6 +214,8 @@ pub fn parseSubmoduleContainer(self: anytype, units: *std.array_list.Managed(Pro
     var module_decls = std.array_list.Managed(Decl).init(self.arena);
     var module_decl_sources = std.array_list.Managed(DeclSource).init(self.arena);
     var module_uses = std.array_list.Managed(ast.UseStmt).init(self.arena);
+    var module_param_ints = std.StringHashMap(i64).init(self.arena);
+    var module_array_names = std.StringHashMap(array_info.ArrayInfo).init(self.arena);
     var saw_contains = false;
     var module_procedure_count: usize = 0;
     const prev_in_submodule_spec_part = self.in_submodule_spec_part;
@@ -258,6 +275,18 @@ pub fn parseSubmoduleContainer(self: anytype, units: *std.array_list.Managed(Pro
                 self.index += 1;
                 continue;
             };
+            if (decl_node == .parameter) {
+                try root_spec_eval.recordParamInts(&module_param_ints, decl_node.parameter.assigns);
+            }
+            try root_spec_eval.recordArrayNames(self.arena, &module_array_names, decl_node, &module_param_ints);
+            try root_decl_diagnostics.noteDeclaratorInitializerShapeDiagnostics(
+                self.arena,
+                self.diag_bag,
+                line,
+                decl_node,
+                &module_param_ints,
+                &module_array_names,
+            );
             try module_decls.append(decl_node);
             try module_decl_sources.append(root_diagnostics.sourceFromLine(line));
         }
@@ -621,6 +650,14 @@ pub fn parseProgramUnitBody(
                 try root_spec_eval.recordParamStrings(&param_strings, decl_node.parameter.assigns);
             }
             try root_spec_eval.recordArrayNames(self.arena, &array_names, decl_node, &param_ints);
+            try root_decl_diagnostics.noteDeclaratorInitializerShapeDiagnostics(
+                self.arena,
+                self.diag_bag,
+                line,
+                decl_node,
+                &param_ints,
+                &array_names,
+            );
             try decls.append(decl_node);
             try decl_sources.append(root_diagnostics.sourceFromLine(line));
             self.index += 1;

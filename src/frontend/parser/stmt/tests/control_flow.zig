@@ -342,6 +342,129 @@ test "parseStatement hoists non-trivial SELECT CASE selector into temp assignmen
     try testing.expectEqual(@as(usize, 7), idx);
 }
 
+test "parseStatementWithDiagnostics rejects array SELECT CASE selector" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "select case(a)\n" ++
+        "case (0)\n" ++
+        "end select\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var idx: usize = 0;
+    var do_ctx = DoContext.init(arena.allocator());
+    var param_ints = std.StringHashMap(i64).init(arena.allocator());
+    var param_strings = std.StringHashMap(ast.Literal).init(arena.allocator());
+    var array_names = std.StringHashMap(array_info.ArrayInfo).init(arena.allocator());
+    try array_names.put("a", .{ .size = 4, .rank = 1, .lower = 1 });
+    var diag_bag = parse_diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    var lex_diag_bag = lexer.Bag.init(arena.allocator());
+    defer lex_diag_bag.deinit();
+
+    _ = try parseStatementWithDiagnostics(
+        arena.allocator(),
+        lines,
+        &idx,
+        &do_ctx,
+        &param_ints,
+        &param_strings,
+        &array_names,
+        &diag_bag,
+        &lex_diag_bag,
+    );
+
+    const diag = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(diag);
+    try testing.expect(std.mem.indexOf(u8, diag.message, "must be a scalar expression") != null);
+}
+
+test "parseStatementWithDiagnostics rejects overlapping SELECT CASE ranges" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "select case(i)\n" ++
+        "case (20:30)\n" ++
+        "case (25:)\n" ++
+        "end select\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var idx: usize = 0;
+    var do_ctx = DoContext.init(arena.allocator());
+    var param_ints = std.StringHashMap(i64).init(arena.allocator());
+    var param_strings = std.StringHashMap(ast.Literal).init(arena.allocator());
+    var array_names = std.StringHashMap(array_info.ArrayInfo).init(arena.allocator());
+    var diag_bag = parse_diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    var lex_diag_bag = lexer.Bag.init(arena.allocator());
+    defer lex_diag_bag.deinit();
+
+    _ = try parseStatementWithDiagnostics(
+        arena.allocator(),
+        lines,
+        &idx,
+        &do_ctx,
+        &param_ints,
+        &param_strings,
+        &array_names,
+        &diag_bag,
+        &lex_diag_bag,
+    );
+
+    const diag = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(diag);
+    try testing.expect(std.mem.indexOf(u8, diag.message, "overlaps with CASE") != null);
+}
+
+test "parseStatementWithDiagnostics rejects out-of-range integer CASE selector value" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "select case(i)\n" ++
+        "case (129)\n" ++
+        "end select\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var idx: usize = 0;
+    var do_ctx = DoContext.init(arena.allocator());
+    var param_ints = std.StringHashMap(i64).init(arena.allocator());
+    var param_strings = std.StringHashMap(ast.Literal).init(arena.allocator());
+    var array_names = std.StringHashMap(array_info.ArrayInfo).init(arena.allocator());
+    try array_names.put("i", .{ .size = null, .rank = 0, .type_kind = .integer, .kind_value = 1, .lower = null });
+    var diag_bag = parse_diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    var lex_diag_bag = lexer.Bag.init(arena.allocator());
+    defer lex_diag_bag.deinit();
+
+    _ = try parseStatementWithDiagnostics(
+        arena.allocator(),
+        lines,
+        &idx,
+        &do_ctx,
+        &param_ints,
+        &param_strings,
+        &array_names,
+        &diag_bag,
+        &lex_diag_bag,
+    );
+
+    const diag = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(diag);
+    try testing.expect(std.mem.indexOf(u8, diag.message, "Syntax error in CASE specification") != null);
+}
+
 test "parseStatement handles block DO with END DO" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -701,5 +824,36 @@ test "parseStatement maps EXIT in labeled DO to loop exit label" {
 
     const after_stmt = try parseStatement(arena.allocator(), lines, &idx, &do_ctx, &param_ints, &param_strings, &array_names);
     try testing.expect(after_stmt.node == .assignment);
+}
+
+test "parseStatement preserves SELECT RANK clause metadata" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "      SELECT RANK (X)\n" ++
+        "      RANK (2)\n" ++
+        "      PRINT *, X\n" ++
+        "      RANK DEFAULT\n" ++
+        "      PRINT *, X\n" ++
+        "      END SELECT\n";
+    const lines = try fixed_form.normalizeFixedForm(allocator, source);
+    defer fixed_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var idx: usize = 0;
+    var do_ctx = DoContext.init(arena.allocator());
+    var param_ints = std.StringHashMap(i64).init(arena.allocator());
+    var param_strings = std.StringHashMap(ast.Literal).init(arena.allocator());
+    var array_names = std.StringHashMap(array_info.ArrayInfo).init(arena.allocator());
+
+    const stmt_node = try parseStatement(arena.allocator(), lines, &idx, &do_ctx, &param_ints, &param_strings, &array_names);
+    try testing.expect(stmt_node.node == .associate_block);
+    const select_rank = stmt_node.node.associate_block.select_rank orelse return error.TestExpectedEqual;
+    try testing.expectEqual(@as(usize, 2), select_rank.clauses.len);
+    try testing.expect(select_rank.clauses[0].kind == .rank_value);
+    try testing.expect(select_rank.clauses[0].rank_expr != null);
+    try testing.expect(select_rank.clauses[1].kind == .rank_default);
 }
 

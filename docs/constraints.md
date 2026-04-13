@@ -79,6 +79,22 @@ This document is a public English reference for the currently registered constra
 - Secondary Enforcers: golden, architecture-audit
 - Rationale: Character data, logical length, storage length, and hidden ABI length handling must stay aligned through one shared value plan.
 
+### DC-B-006: Formatted I/O execution must flow through PreparedExecutionFormatPlan.
+
+- Class: B: Unified Model Entry
+- Blocking: blocking
+- Primary Enforcers: codegen tests
+- Secondary Enforcers: golden, architecture-audit
+- Rationale: Formatted I/O lowering must not rebuild dynamic-label, runtime-character, and static-op execution state in scattered local branches once the shared execution plan exists.
+
+### DC-B-007: COMMON and EQUIVALENCE layout decisions must flow through storage_model.
+
+- Class: B: Unified Model Entry
+- Blocking: blocking
+- Primary Enforcers: semantic tests
+- Secondary Enforcers: verify, architecture-audit
+- Rationale: Storage overlays, common blocks, and equivalence groups must be derived from one shared storage model instead of being recomputed ad hoc in semantic and codegen paths.
+
 ### DC-C-001: Diagnostic Bag is the single source of truth for diagnostics.
 
 - Class: C: Structured Diagnostic
@@ -94,6 +110,14 @@ This document is a public English reference for the currently registered constra
 - Primary Enforcers: architecture-audit
 - Secondary Enforcers: integration tests
 - Rationale: Generated public references must be derived from the catalog. Hand-maintained mirrors drift and eventually stop matching emitted diagnostics.
+
+### DC-C-003: Compat diagnostic storage must not re-enter parser, driver, or tools paths.
+
+- Class: C: Structured Diagnostic
+- Blocking: blocking
+- Primary Enforcers: architecture-audit
+- Secondary Enforcers: diagnostic golden, review checklist
+- Rationale: Once diagnostics are carried through explicit Bag and Diagnostic models, parser, driver, and tooling paths must not regain hidden compat-storage dependencies or publish-side shims.
 
 ### DC-D-001: ABI and object-construction decisions must be target-driven, not host-driven.
 

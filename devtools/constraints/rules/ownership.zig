@@ -53,6 +53,13 @@ const common_specs = [_]OwnerSpec{
         .definition_kind = .function,
         .owner_exact_path = "src/common/type_specs.zig",
     },
+    .{
+        .id = "AR-OWN-041",
+        .title = "compiler Diagnostic type owner",
+        .symbol_name = "Diagnostic",
+        .definition_kind = .type_struct,
+        .owner_exact_path = "src/common/diagnostic.zig",
+    },
 };
 
 const frontend_specs = [_]OwnerSpec{
@@ -87,6 +94,44 @@ const codegen_type_specs = [_]OwnerSpec{
         .definition_kind = .type_union,
         .owner_exact_path = "src/codegen/llvm/stmts/io/formatted/context.zig",
     },
+    .{
+        .id = "AR-OWN-044",
+        .title = "validated array actual helper owner",
+        .symbol_name = "validatedArrayActual",
+        .definition_kind = .function,
+        .owner_exact_path = "src/codegen/llvm/codegen/expression/call/shared.zig",
+    },
+    .{
+        .id = "AR-OWN-045",
+        .title = "validated character value plan helper owner",
+        .symbol_name = "validatedCharacterValuePlan",
+        .definition_kind = .function,
+        .owner_exact_path = "src/codegen/llvm/codegen/expression/dispatch/shared.zig",
+    },
+    .{
+        .id = "AR-OWN-046",
+        .title = "prepared execution format plan helper owner",
+        .symbol_name = "prepareExecutionFormatPlan",
+        .definition_kind = .function,
+        .owner_exact_path = "src/codegen/llvm/stmts/io/formatted/context.zig",
+    },
+};
+
+const pipeline_specs = [_]OwnerSpec{
+    .{
+        .id = "AR-OWN-042",
+        .title = "PipelineOptions type owner",
+        .symbol_name = "PipelineOptions",
+        .definition_kind = .type_struct,
+        .owner_exact_path = "src/driver/pipeline/types.zig",
+    },
+    .{
+        .id = "AR-OWN-043",
+        .title = "PipelineResult type owner",
+        .symbol_name = "PipelineResult",
+        .definition_kind = .type_struct,
+        .owner_exact_path = "src/driver/pipeline/types.zig",
+    },
 };
 
 const semantic_specs = [_]OwnerSpec{
@@ -117,6 +162,37 @@ const semantic_specs = [_]OwnerSpec{
         .symbol_name = "shapeSignatureForDims",
         .definition_kind = .function,
         .owner_exact_path = "src/semantic/split/api/procedure_inference/shape_signatures.zig",
+    },
+};
+
+const storage_model_specs = [_]OwnerSpec{
+    .{
+        .id = "AR-OWN-047",
+        .title = "storage model common block builder owner",
+        .symbol_name = "buildUnitCommonBlocks",
+        .definition_kind = .function,
+        .owner_exact_path = "src/semantic/split/storage_model.zig",
+    },
+    .{
+        .id = "AR-OWN-048",
+        .title = "storage model common block deinit owner",
+        .symbol_name = "deinitCommonBlocks",
+        .definition_kind = .function,
+        .owner_exact_path = "src/semantic/split/storage_model.zig",
+    },
+    .{
+        .id = "AR-OWN-049",
+        .title = "storage model equivalence group builder owner",
+        .symbol_name = "buildUnitEquivalenceGroups",
+        .definition_kind = .function,
+        .owner_exact_path = "src/semantic/split/storage_model.zig",
+    },
+    .{
+        .id = "AR-OWN-050",
+        .title = "storage model equivalence group deinit owner",
+        .symbol_name = "deinitEquivalenceGroups",
+        .definition_kind = .function,
+        .owner_exact_path = "src/semantic/split/storage_model.zig",
     },
 };
 
@@ -334,7 +410,9 @@ const runtime_text_specs = [_]OwnerSpec{
 const common_rules = buildOwnerRules(.{ .domain = .common }, common_specs[0..]);
 const frontend_rules = buildOwnerRules(.{ .domain = .frontend }, frontend_specs[0..]);
 const codegen_type_rules = buildOwnerRules(.{ .domain = .codegen }, codegen_type_specs[0..]);
+const pipeline_rules = buildOwnerRules(.any, pipeline_specs[0..]);
 const semantic_rules = buildOwnerRules(.{ .domain = .semantic }, semantic_specs[0..]);
+const storage_model_rules = buildOwnerRules(.any, storage_model_specs[0..]);
 const implied_helper_rules = buildOwnerRules(.{ .domain = .codegen }, implied_helper_specs[0..]);
 const runtime_arg_rules = buildOwnerRules(.{ .domain = .runtime }, runtime_arg_specs[0..]);
 const runtime_memory_rules = buildOwnerRules(.{ .domain = .runtime }, runtime_memory_specs[0..]);
@@ -345,7 +423,9 @@ pub const file_rules =
     common_rules ++
     frontend_rules ++
     codegen_type_rules ++
+    pipeline_rules ++
     semantic_rules ++
+    storage_model_rules ++
     implied_helper_rules ++
     runtime_arg_rules ++
     runtime_memory_rules ++

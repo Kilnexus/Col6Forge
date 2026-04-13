@@ -60,6 +60,16 @@ const io_list_read_prefix = "src/runtime/col6forge_rt/io_list_read/";
 const io_list_read_shared = "src/runtime/col6forge_rt/io_list_read/shared.zig";
 const io_list_read_title = "io_list_read shared helper use must import the shared facade module and bind aliases to shared";
 
+const array_actual_validation_prefix = "src/codegen/llvm/codegen/expression/";
+const array_actual_validation_owner = "src/codegen/llvm/codegen/expression/call/shared.zig";
+const array_actual_validation_title = "array actual validation must stay behind the shared array-actual module";
+
+const character_plan_validation_prefix = "src/codegen/llvm/codegen/expression/dispatch/";
+const character_plan_validation_owner = "src/codegen/llvm/codegen/expression/dispatch/shared.zig";
+const character_plan_validation_title = "character value plan validation must stay behind the shared character module";
+
+const storage_model_usage_title = "storage model helper use must stay behind the storage_model module";
+
 const verify_runner_entry = "src/tools/verify_runner.zig";
 const blas_runner_entry = "src/tools/blas_runner.zig";
 const gcc_dg_runner_entry = "src/tools/gcc_dg_runner.zig";
@@ -144,6 +154,24 @@ const gcc_dg_runner_specs = [_]UsageSpec{
     .{ .id = "AR-CALL-078", .symbol_name = "processCase", .import_fragment = "gcc_dg_runner/process.zig", .alias_path = "process_mod.processCase" },
 };
 
+const array_actual_validation_specs = [_]UsageSpec{
+    .{ .id = "AR-CALL-079", .symbol_name = "validatedArrayActual", .import_fragment = "shared.zig", .alias_path = "shared.validatedArrayActual" },
+};
+
+const character_plan_validation_specs = [_]UsageSpec{
+    .{ .id = "AR-CALL-080", .symbol_name = "validatedCharacterValuePlan", .import_fragment = "shared.zig", .call_path = "shared.validatedCharacterValuePlan" },
+};
+
+const storage_model_common_specs = [_]UsageSpec{
+    .{ .id = "AR-CALL-081", .symbol_name = "buildUnitCommonBlocks", .call_path = "storage_model.buildUnitCommonBlocks" },
+    .{ .id = "AR-CALL-082", .symbol_name = "deinitCommonBlocks", .call_path = "storage_model.deinitCommonBlocks" },
+};
+
+const storage_model_equivalence_specs = [_]UsageSpec{
+    .{ .id = "AR-CALL-083", .symbol_name = "buildUnitEquivalenceGroups", .call_path = "storage_model.buildUnitEquivalenceGroups" },
+    .{ .id = "AR-CALL-084", .symbol_name = "deinitEquivalenceGroups", .call_path = "storage_model.deinitEquivalenceGroups" },
+};
+
 const list_directed_stride_specs = [_]UsageSpec{
     .{ .id = "AR-CALL-068", .symbol_name = "impliedStrideForDim", .alias_path = "implied_helpers.impliedStrideForSymbolDim" },
 };
@@ -171,6 +199,10 @@ const io_list_read_rules = buildUsageRules(io_list_read_title, .{ .prefix = io_l
 const verify_runner_rules = buildUsageRules(verify_runner_title, .{ .prefix = verify_runner_entry }, verify_runner_specs[0..], &.{}, &.{});
 const blas_runner_rules = buildUsageRules(blas_runner_title, .{ .prefix = blas_runner_entry }, blas_runner_specs[0..], &.{}, &.{});
 const gcc_dg_runner_rules = buildUsageRules(gcc_dg_runner_title, .{ .prefix = gcc_dg_runner_entry }, gcc_dg_runner_specs[0..], &.{}, &.{});
+const array_actual_validation_rules = buildUsageRules(array_actual_validation_title, .{ .prefix = array_actual_validation_prefix }, array_actual_validation_specs[0..], &.{array_actual_validation_owner}, &.{});
+const character_plan_validation_rules = buildUsageRules(character_plan_validation_title, .{ .prefix = character_plan_validation_prefix }, character_plan_validation_specs[0..], &.{character_plan_validation_owner}, &.{});
+const storage_model_common_rules = buildUsageRules(storage_model_usage_title, .any, storage_model_common_specs[0..], &.{"src/semantic/split/storage_model.zig"}, &.{});
+const storage_model_equivalence_rules = buildUsageRules(storage_model_usage_title, .any, storage_model_equivalence_specs[0..], &.{"src/semantic/split/storage_model.zig"}, &.{});
 const list_directed_stride_rules = buildUsageRules("list-directed implied stride alias must bind to implied_helpers", .{ .prefix = "src/codegen/llvm/stmts/io/list_directed.zig" }, list_directed_stride_specs[0..], &.{}, &.{});
 const streaming_stride_rules = buildUsageRules("streaming implied stride alias must bind to implied_helpers", .{ .prefix = "src/codegen/llvm/stmts/io/direct/streaming.zig" }, streaming_stride_specs[0..], &.{}, &.{});
 const special_write_stride_rules = buildUsageRules("special write implied stride alias must bind to implied_helpers", .{ .prefix = "src/codegen/llvm/stmts/io/formatted/special_write.zig" }, special_write_stride_specs[0..], &.{}, &.{});
@@ -188,6 +220,10 @@ pub const file_rules =
     verify_runner_rules ++
     blas_runner_rules ++
     gcc_dg_runner_rules ++
+    array_actual_validation_rules ++
+    character_plan_validation_rules ++
+    storage_model_common_rules ++
+    storage_model_equivalence_rules ++
     list_directed_stride_rules ++
     streaming_stride_rules ++
     special_write_stride_rules ++

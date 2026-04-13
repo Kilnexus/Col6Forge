@@ -49,4 +49,25 @@ pub const file_rules = [_]model.AuditRule{
         .kind = .forbidden_function_call,
         .symbol_name = "emitReadFormattedStreamPrepared",
     },
+    .{
+        .id = "AR-TXT-023",
+        .title = "driver must not publish compat diagnostics",
+        .kind = .forbidden_function_call,
+        .scope = .{ .domain = .driver },
+        .symbol_name = "publishCompatFromBag",
+    },
+    .{
+        .id = "AR-TXT-024",
+        .title = "tools must not publish compat diagnostics",
+        .kind = .forbidden_function_call,
+        .scope = .{ .domain = .tools },
+        .symbol_name = "publishCompatFromBag",
+    },
+    .{
+        .id = "AR-TXT-025",
+        .title = "frontend parser must not publish compat diagnostics",
+        .kind = .forbidden_function_call,
+        .scope = .{ .prefix = "src/frontend/parser/" },
+        .symbol_name = "publishCompatFromBag",
+    },
 };

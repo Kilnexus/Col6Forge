@@ -50,4 +50,25 @@ pub const file_rules = [_]model.AuditRule{
             "src/tools/fallback_policy.zig",
         },
     },
+    .{
+        .id = "AR-IMP-006",
+        .title = "driver must not import compat diagnostic storage",
+        .kind = .forbidden_import_path_fragment,
+        .scope = .{ .domain = .driver },
+        .needle = "compat_diagnostic_storage.zig",
+    },
+    .{
+        .id = "AR-IMP-007",
+        .title = "tools must not import compat diagnostic storage",
+        .kind = .forbidden_import_path_fragment,
+        .scope = .{ .domain = .tools },
+        .needle = "compat_diagnostic_storage.zig",
+    },
+    .{
+        .id = "AR-IMP-008",
+        .title = "frontend parser must not import compat diagnostic storage",
+        .kind = .forbidden_import_path_fragment,
+        .scope = .{ .prefix = "src/frontend/parser/" },
+        .needle = "compat_diagnostic_storage.zig",
+    },
 };

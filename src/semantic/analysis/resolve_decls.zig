@@ -1070,5 +1070,26 @@ pub fn resolvedDeclTypeSpec(
         else => {},
     }
     const selector_value = try constants.evalConst(self, kind_selector.?);
-    return type_kind_selector.resolveSpecWithConst(base_type_kind, kind_selector, selector_value);
+    const resolved_spec = type_kind_selector.resolveSpecWithConst(base_type_kind, kind_selector, selector_value);
+    try validateResolvedTypeKindSelector(self, base_type_kind, resolved_spec);
+    return resolved_spec;
+}
+
+fn validateResolvedTypeKindSelector(
+    self: *context.Context,
+    base_type_kind: ast.TypeKind,
+    resolved_spec: symbols.TypeSpec,
+) !void {
+    if (base_type_kind != .character) return;
+    const kind_value = resolved_spec.kind_value orelse return;
+    if (kind_value == 1 or kind_value == 4) return;
+    const current_source = self.current_decl_source orelse ast.DeclSource{};
+    self.setDiagnostic(
+        if (current_source.line == 0) 1 else current_source.line,
+        if (current_source.column == 0) 1 else current_source.column,
+        catalog.semantic.unexpected_type_decl.code,
+        "is not supported for CHARACTER",
+        current_source.text,
+    );
+    return error.UnexpectedTypeDecl;
 }

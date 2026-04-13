@@ -86,6 +86,9 @@ pub const SelectTypeClauseKind = enum {
 pub const SelectTypeClause = struct {
     kind: SelectTypeClauseKind,
     type_kind: ?@import("decl.zig").TypeKind = null,
+    kind_selector: ?*Expr = null,
+    char_len: ?*Expr = null,
+    char_len_deferred: bool = false,
     derived_type_name: ?[]const u8 = null,
     stmts: []Stmt,
     source: SourceRef = .{},

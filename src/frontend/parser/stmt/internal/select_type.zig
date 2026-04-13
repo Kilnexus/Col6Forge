@@ -4,6 +4,7 @@ const logical_line = @import("../../../logical_line.zig");
 const lexer = @import("../../../lexer.zig");
 const context = @import("../../token_stream.zig");
 const decl = @import("../../decl/mod.zig");
+const type_specs = @import("../../decl/type_specs.zig");
 const expr = @import("../../expr.zig");
 const parse_diag = @import("../../diagnostic.zig");
 const array_info = @import("../../array_info.zig");
@@ -153,29 +154,19 @@ fn parseSelectTypeClauseSpec(
         .kind = kind,
         .stmts = &.{},
     };
-
-    if (lp.consumeKeyword("DOUBLEPRECISION")) {
-        clause.type_kind = .double_precision;
-    } else if (lp.consumeKeyword("DOUBLE")) {
-        if (!lp.consumeKeyword("PRECISION")) return error.ExpectedPrecision;
-        clause.type_kind = .double_precision;
-    } else if (lp.consumeKeyword("INTEGER")) {
-        clause.type_kind = .integer;
-    } else if (lp.consumeKeyword("REAL")) {
-        clause.type_kind = .real;
-    } else if (lp.consumeKeyword("COMPLEX")) {
-        clause.type_kind = .complex;
-    } else if (lp.consumeKeyword("LOGICAL")) {
-        clause.type_kind = .logical;
-    } else if (lp.consumeKeyword("CHARACTER")) {
-        clause.type_kind = .character;
+    const parsed: ?type_specs.ParsedTypeSpec = type_specs.parseTypeKind(lp, arena) catch |err| switch (err) {
+        error.UnknownType => null,
+        else => return err,
+    };
+    if (parsed) |type_spec| {
+        clause.type_kind = type_spec.type_kind;
+        clause.kind_selector = type_spec.kind_selector;
+        clause.char_len = type_spec.char_len;
+        clause.char_len_deferred = type_spec.char_len_deferred;
+        clause.derived_type_name = type_spec.derived_type_name;
     } else {
         clause.type_kind = .derived;
         clause.derived_type_name = lp.readName(arena) orelse return error.MissingName;
-    }
-
-    if (clause.type_kind != .derived and lp.peekIs(.l_paren)) {
-        try consumeBalancedParens(lp);
     }
 
     _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;

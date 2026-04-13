@@ -532,6 +532,29 @@ test "semantic rejects external character declarator with non-constant length" {
     try testing.expect(std.mem.indexOf(u8, diag.message, "constant character length") != null);
 }
 
+test "semantic rejects unsupported CHARACTER kind selected by SELECTED_CHAR_KIND" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  character(kind=selected_char_kind(\"\")) :: s\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_capture = DiagCapture.init(allocator);
+    defer diag_capture.deinit();
+    try testing.expectError(error.UnexpectedTypeDecl, analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_capture.bag));
+    const diag = try diag_capture.take();
+    defer diag_capture.release(diag);
+    try testing.expect(std.mem.indexOf(u8, diag.message, "is not supported for CHARACTER") != null);
+}
+
 test "semantic rejects allocatable array with explicit shape" {
     const testing = std.testing;
     const allocator = testing.allocator;

@@ -204,6 +204,41 @@ test "array sections remain definable actuals for elemental INTENT OUT dummy" {
     _ = try split_api.analyzeProgram(arena.allocator(), program);
 }
 
+test "SELECT TYPE character clause preserves kind selector for alias comparisons" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program main\n" ++
+        "  type :: any_vector\n" ++
+        "    class(*), allocatable :: x(:)\n" ++
+        "  end type\n" ++
+        "  type(any_vector) :: a\n" ++
+        "  character(kind = 4, len = 2) :: chr4(2) = [character(kind=4) :: 4_\"ab\", 4_\"cd\"]\n" ++
+        "  allocate (a%x(2), source = chr4)\n" ++
+        "  call check\n" ++
+        "contains\n" ++
+        "  subroutine check\n" ++
+        "    select type (z => a%x)\n" ++
+        "      type is (character(kind = 4, len = *))\n" ++
+        "        if (any(z .ne. chr4)) stop 1\n" ++
+        "    end select\n" ++
+        "  end subroutine check\n" ++
+        "end program\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    _ = try split_api.analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_bag);
+    try testing.expect(!diag_bag.has());
+}
+
 test "array sections preserve rank for assumed-size and contiguous dummy compatibility" {
     const testing = std.testing;
     const allocator = testing.allocator;

@@ -81,6 +81,10 @@ pub fn checkIntrinsicCallConstraintsForExprArgs(
 ) CheckError!void {
     if (leaf_helpers.lookupIntrinsicArity(self, name) == null) return;
     try checkIntrinsicSpecialActualRestrictionsForExprArgs(self, name, args);
+    if (std.ascii.eqlIgnoreCase(name, "selected_char_kind")) {
+        try checkSelectedCharKindExprArgs(self, args);
+        return;
+    }
     if (std.ascii.eqlIgnoreCase(name, "transfer")) {
         try checkTransferExprArgs(self, args);
     }
@@ -143,6 +147,18 @@ fn checkTransferExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!v
     const mold_storage_bits = constants.exprMeasure(self, args[1], .storage_size_bits) orelse return;
     if (mold_storage_bits != 0) return;
     return emitIntrinsicArgDiagnostic(self, args[1], "MOLD argument at (1) to TRANSFER shall not have storage size 0");
+}
+
+fn checkSelectedCharKindExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
+    if (args.len != 1) return;
+    const selector = args[0];
+    if (resolve_expr.exprRank(self, selector) != 0) {
+        return emitIntrinsicArgDiagnostic(self, selector, "must be a scalar");
+    }
+    const selector_spec = try resolve_expr.exprTypeSpec(self, selector);
+    if (selector_spec.lowered_kind != .character) {
+        return emitIntrinsicArgDiagnostic(self, selector, "must be CHARACTER");
+    }
 }
 
 fn intrinsicAllowsNoArgCheck(name: []const u8) bool {

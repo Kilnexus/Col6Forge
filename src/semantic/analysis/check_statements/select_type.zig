@@ -3,6 +3,8 @@ const ast = @import("../../../ast/nodes.zig");
 const catalog = @import("../../../common/error_catalog.zig");
 const symbols = @import("../../symbol/mod.zig");
 const context = @import("../context.zig");
+const constants = @import("../resolve_const.zig");
+const decls = @import("../resolve_decls.zig");
 const resolve_expr = @import("../resolve_expr.zig");
 const resolve_symbols = @import("../resolve_symbols.zig");
 const expr_semantics = @import("expr_semantics.zig");
@@ -547,16 +549,35 @@ fn selectTypeClauseResolvedSpec(
         }
         return symbols.TypeSpec.fromDerived(name).withPolymorphic(polymorphic);
     }
-    return switch (kind) {
-        .integer => symbols.TypeSpec.fromResolvedKind(.integer, .integer, null),
-        .real => symbols.TypeSpec.fromResolvedKind(.real, .real, null),
-        .double_precision => symbols.TypeSpec.fromResolvedKind(.real, .double_precision, null),
-        .complex => symbols.TypeSpec.fromResolvedKind(.complex, .complex, null),
-        .complex_double => symbols.TypeSpec.fromResolvedKind(.complex, .complex_double, null),
-        .logical => symbols.TypeSpec.fromResolvedKind(.logical, .logical, null),
-        .character => symbols.TypeSpec.fromResolvedKind(.character, .character, null).withCharacterLength(.constant, 1),
-        .derived => unreachable,
-    };
+    const spec = try decls.resolvedDeclTypeSpec(
+        self,
+        kind,
+        clause.derived_type_name,
+        clause.kind_selector,
+        polymorphic,
+        false,
+    );
+    if (kind != .character) return spec;
+    return try applySelectTypeCharacterClauseLength(self, spec, clause);
+}
+
+fn applySelectTypeCharacterClauseLength(
+    self: *context.Context,
+    base_spec: symbols.TypeSpec,
+    clause: ast.SelectTypeClause,
+) CheckError!symbols.TypeSpec {
+    if (clause.char_len_deferred) return base_spec.withCharacterLength(.deferred, null);
+    const len_expr = clause.char_len orelse return base_spec.withCharacterLength(.constant, 1);
+    if (len_expr.* == .literal and len_expr.literal.kind == .assumed_size) {
+        return base_spec.withCharacterLength(.assumed, null);
+    }
+    if (try constants.evalConst(self, len_expr)) |value| {
+        return switch (value) {
+            .integer => |int_val| base_spec.withCharacterLength(.constant, if (int_val < 0) 0 else @as(usize, @intCast(int_val))),
+            else => error.InvalidCharLen,
+        };
+    }
+    return error.InvalidCharLen;
 }
 
 fn clauseHeaderRequiresDiagnostic(

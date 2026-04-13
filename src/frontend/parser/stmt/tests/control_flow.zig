@@ -180,6 +180,41 @@ test "parseStatement preserves SELECT TYPE construct name and clause trailing na
     try testing.expectEqualStrings("LABEL", stmt.node.select_type_block.clauses[0].trailing_name.?);
 }
 
+test "parseStatement preserves SELECT TYPE CHARACTER clause kind and length" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "      SELECT TYPE (Z => A%X)\n" ++
+        "      TYPE IS (CHARACTER(KIND = 4, LEN = *))\n" ++
+        "      A=1\n" ++
+        "      END SELECT\n";
+    const lines = try fixed_form.normalizeFixedForm(allocator, source);
+    defer fixed_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var idx: usize = 0;
+    var do_ctx = DoContext.init(arena.allocator());
+    var param_ints = std.StringHashMap(i64).init(arena.allocator());
+    var param_strings = std.StringHashMap(ast.Literal).init(arena.allocator());
+    var array_names = std.StringHashMap(array_info.ArrayInfo).init(arena.allocator());
+
+    const stmt = try parseStatement(arena.allocator(), lines, &idx, &do_ctx, &param_ints, &param_strings, &array_names);
+    try testing.expect(stmt.node == .select_type_block);
+    try testing.expectEqual(@as(usize, 1), stmt.node.select_type_block.clauses.len);
+    const clause = stmt.node.select_type_block.clauses[0];
+    try testing.expectEqual(ast.TypeKind.character, clause.type_kind.?);
+    try testing.expect(clause.kind_selector != null);
+    try testing.expect(clause.char_len != null);
+    try testing.expect(!clause.char_len_deferred);
+    try testing.expect(clause.kind_selector.?.* == .literal);
+    try testing.expectEqual(ast.LiteralKind.integer, clause.kind_selector.?.literal.kind);
+    try testing.expectEqualStrings("4", clause.kind_selector.?.literal.text);
+    try testing.expect(clause.char_len.?.* == .literal);
+    try testing.expectEqual(ast.LiteralKind.assumed_size, clause.char_len.?.literal.kind);
+}
+
 test "parseStatement preserves labeled END SELECT as pending continue" {
     const testing = std.testing;
     const allocator = testing.allocator;

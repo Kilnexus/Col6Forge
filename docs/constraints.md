@@ -21,7 +21,7 @@ This document is a public English reference for the currently registered constra
 - Blocking: blocking
 - Primary Enforcers: architecture-audit
 - Secondary Enforcers: review checklist, path-based CI
-- Rationale: Known legacy duplication may temporarily exist behind a code-native baseline, but new clusters or cluster growth must fail mechanically so convergence does not rely on reviewer memory.
+- Rationale: Known legacy duplication may temporarily exist behind a code-native blocking baseline, but new clusters or cluster growth must fail mechanically and AST duplicate scans must stay visible so convergence does not rely on reviewer memory.
 
 ### DC-B-001: Do not reuse assignment, actual-argument, and ABI rules across semantic layers.
 

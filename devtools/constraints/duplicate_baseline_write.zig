@@ -12,6 +12,8 @@ pub fn main() !void {
     var root: []const u8 = baseline.root;
     var min_normalized_len: usize = baseline.min_normalized_len;
     var fingerprint_mode: duplicates.FingerprintMode = baseline.fingerprint_mode;
+    var advisory_fingerprint_mode: ?duplicates.FingerprintMode = baseline.advisory_fingerprint_mode;
+    var advisory_top_clusters: usize = baseline.advisory_top_clusters;
     var write = false;
 
     var args = try std.process.argsWithAllocator(allocator);
@@ -30,6 +32,19 @@ pub fn main() !void {
                 std.log.err("unknown fingerprint mode: {s}", .{value});
                 return error.InvalidArgument;
             };
+        } else if (std.mem.eql(u8, arg, "--advisory-fingerprint")) {
+            const value = args.next() orelse return error.MissingArgumentValue;
+            if (std.mem.eql(u8, value, "none")) {
+                advisory_fingerprint_mode = null;
+            } else {
+                advisory_fingerprint_mode = parseFingerprintMode(value) orelse {
+                    std.log.err("unknown advisory fingerprint mode: {s}", .{value});
+                    return error.InvalidArgument;
+                };
+            }
+        } else if (std.mem.eql(u8, arg, "--advisory-top")) {
+            const value = args.next() orelse return error.MissingArgumentValue;
+            advisory_top_clusters = try std.fmt.parseInt(usize, value, 10);
         } else if (std.mem.eql(u8, arg, "--write")) {
             write = true;
         } else {
@@ -54,7 +69,15 @@ pub fn main() !void {
         allocator.free(clusters);
     }
 
-    const rendered = try renderBaseline(allocator, clusters, root, min_normalized_len, fingerprint_mode);
+    const rendered = try renderBaseline(
+        allocator,
+        clusters,
+        root,
+        min_normalized_len,
+        fingerprint_mode,
+        advisory_fingerprint_mode,
+        advisory_top_clusters,
+    );
     defer allocator.free(rendered);
 
     const cwd = std.fs.cwd();
@@ -84,6 +107,8 @@ fn renderBaseline(
     root: []const u8,
     min_normalized_len: usize,
     fingerprint_mode: duplicates.FingerprintMode,
+    advisory_fingerprint_mode: ?duplicates.FingerprintMode,
+    advisory_top_clusters: usize,
 ) ![]u8 {
     var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
@@ -96,6 +121,12 @@ fn renderBaseline(
     try writer.print("pub const root = \"{s}\";\n", .{root});
     try writer.print("pub const min_normalized_len: usize = {d};\n", .{min_normalized_len});
     try writer.print("pub const fingerprint_mode: duplicates.FingerprintMode = .{s};\n\n", .{@tagName(fingerprint_mode)});
+    if (advisory_fingerprint_mode) |mode| {
+        try writer.print("pub const advisory_fingerprint_mode: ?duplicates.FingerprintMode = .{s};\n", .{@tagName(mode)});
+    } else {
+        try writer.writeAll("pub const advisory_fingerprint_mode: ?duplicates.FingerprintMode = null;\n");
+    }
+    try writer.print("pub const advisory_top_clusters: usize = {d};\n\n", .{advisory_top_clusters});
     try out.appendSlice(allocator,
         \\pub const AllowedCluster = struct {
         \\    body_hash: u64,

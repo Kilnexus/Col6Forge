@@ -52,7 +52,7 @@ pub const entries = [_]Entry{
     .{
         .id = "DC-A-002",
         .summary = "New duplicate function-body clusters must not enter the mainline.",
-        .rationale = "Known legacy duplication may temporarily exist behind a code-native baseline, but new clusters or cluster growth must fail mechanically so convergence does not rely on reviewer memory.",
+        .rationale = "Known legacy duplication may temporarily exist behind a code-native blocking baseline, but new clusters or cluster growth must fail mechanically and AST duplicate scans must stay visible so convergence does not rely on reviewer memory.",
         .class = .a_static_forbidden,
         .primary = &.{.architecture_audit},
         .secondary = &.{ .review_checklist, .path_based_ci },

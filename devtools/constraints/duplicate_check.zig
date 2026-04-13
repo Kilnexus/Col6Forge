@@ -33,6 +33,8 @@ pub fn main() !void {
         }
     }
 
+    try runAdvisorySnapshot(allocator);
+
     if (failed) return error.DuplicateBaselineViolation;
 
     std.log.info(
@@ -45,6 +47,35 @@ pub fn main() !void {
             @tagName(baseline.fingerprint_mode),
         },
     );
+}
+
+fn runAdvisorySnapshot(allocator: std.mem.Allocator) !void {
+    const advisory_mode = baseline.advisory_fingerprint_mode orelse return;
+    if (advisory_mode == baseline.fingerprint_mode) return;
+
+    const clusters = try duplicates.findDuplicateClustersWithMode(
+        allocator,
+        baseline.root,
+        baseline.min_normalized_len,
+        advisory_mode,
+    );
+    defer {
+        for (clusters) |*cluster| cluster.deinit(allocator);
+        allocator.free(clusters);
+    }
+
+    std.log.info(
+        "duplicate advisory snapshot: {d} current clusters, root={s}, min_normalized_len={d}, fingerprint={s}",
+        .{ clusters.len, baseline.root, baseline.min_normalized_len, @tagName(advisory_mode) },
+    );
+
+    const top = @min(baseline.advisory_top_clusters, clusters.len);
+    for (clusters[0..top], 0..) |cluster, idx| {
+        std.log.info(
+            "  advisory cluster {d}: body_hash=0x{x}, members={d}, normalized_len={d}",
+            .{ idx + 1, cluster.body_hash, cluster.members.len, cluster.normalized_len },
+        );
+    }
 }
 
 fn validateBaseline() !void {

@@ -3,6 +3,8 @@ const duplicates = @import("duplicates.zig");
 pub const root = "src";
 pub const min_normalized_len: usize = 120;
 pub const fingerprint_mode: duplicates.FingerprintMode = .lexical;
+pub const advisory_fingerprint_mode: ?duplicates.FingerprintMode = .ast;
+pub const advisory_top_clusters: usize = 5;
 
 pub const AllowedCluster = struct {
     body_hash: u64,

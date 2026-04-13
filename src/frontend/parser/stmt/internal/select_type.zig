@@ -445,6 +445,7 @@ pub fn parseSelectTypeStatement(
     var leading_stmts = std.array_list.Managed(Stmt).init(arena);
     var clauses = std.array_list.Managed(ast.SelectTypeClause).init(arena);
     var saw_end_select = false;
+    var end_source: ast.SourceRef = .{};
 
     while (index.* < lines.len) {
         const line = lines[index.*];
@@ -460,6 +461,7 @@ pub fn parseSelectTypeStatement(
                     .construct_name = construct_name,
                     .leading_stmts = try leading_stmts.toOwnedSlice(),
                     .clauses = try clauses.toOwnedSlice(),
+                    .end_source = end_source,
                 } },
             };
         }
@@ -472,11 +474,17 @@ pub fn parseSelectTypeStatement(
                     .construct_name = construct_name,
                     .leading_stmts = try leading_stmts.toOwnedSlice(),
                     .clauses = try clauses.toOwnedSlice(),
+                    .end_source = end_source,
                 } },
             };
         }
         if (isSelectStart(scan)) return error.UnexpectedToken;
         if (isEndSelectLine(scan)) {
+            end_source = .{
+                .line = line.span.start_line,
+                .column = defaultSourceColumn(line),
+                .text = line.text,
+            };
             index.* += 1;
             saw_end_select = true;
             break;
@@ -523,6 +531,7 @@ pub fn parseSelectTypeStatement(
                     .construct_name = construct_name,
                     .leading_stmts = try leading_stmts.toOwnedSlice(),
                     .clauses = try clauses.toOwnedSlice(),
+                    .end_source = end_source,
                 } },
             };
         }
@@ -537,6 +546,7 @@ pub fn parseSelectTypeStatement(
             .construct_name = construct_name,
             .leading_stmts = try leading_stmts.toOwnedSlice(),
             .clauses = try clauses.toOwnedSlice(),
+            .end_source = end_source,
         } },
     };
 }

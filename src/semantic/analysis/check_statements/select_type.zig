@@ -293,6 +293,7 @@ pub fn checkSelectTypeBlock(self: *context.Context, select_type: ast.SelectTypeB
         if (!self.usesExplicitDiagnosticBag()) return err;
         if (first_err == null) first_err = err;
     };
+    maybeEmitInvalidSelectTypeRecoveryEndDiagnostic(self, select_type, selector_spec);
 
     const selector_rank = resolve_expr.exprRank(self, select_type.selector);
     for (select_type.leading_stmts) |inner| {
@@ -329,6 +330,43 @@ pub fn checkSelectTypeBlock(self: *context.Context, select_type: ast.SelectTypeB
         }
     }
     if (first_err) |err| return err;
+}
+
+fn maybeEmitInvalidSelectTypeRecoveryEndDiagnostic(
+    self: *context.Context,
+    select_type: ast.SelectTypeBlock,
+    selector_spec: symbols.TypeSpec,
+) void {
+    if (self.unit.kind != .function) return;
+    if (select_type.end_source.line == 0) return;
+    if (selector_spec.lowered_kind == .derived and selector_spec.polymorphic) return;
+    if (!selectTypeHasInvalidTypedClause(self, select_type.clauses)) return;
+    self.setDiagnostic(
+        select_type.end_source.line,
+        if (select_type.end_source.column == 0) 1 else select_type.end_source.column,
+        catalog.parser.unexpected_token.code,
+        "Expecting END FUNCTION statement",
+        select_type.end_source.text,
+    );
+}
+
+fn selectTypeHasInvalidTypedClause(
+    self: *context.Context,
+    clauses: []const ast.SelectTypeClause,
+) bool {
+    for (clauses) |clause| {
+        if (clause.kind == .class_default) continue;
+        if (selectTypeClauseIsInvalidForRecovery(self, clause)) return true;
+    }
+    return false;
+}
+
+fn selectTypeClauseIsInvalidForRecovery(
+    self: *context.Context,
+    clause: ast.SelectTypeClause,
+) bool {
+    _ = selectTypeClauseResolvedSpec(self, clause, clause.kind == .class_is) catch return true;
+    return false;
 }
 
 fn associateSelectorMayBeVariable(selector: *ast.Expr) bool {

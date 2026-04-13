@@ -386,7 +386,7 @@ fn unitDeclaresUnknownDerivedType(ctx: *const context.Context) bool {
     for (ctx.unit.decls) |decl| {
         if (decl != .type_decl) continue;
         const type_decl = decl.type_decl;
-        if (type_decl.type_kind != .derived or type_decl.polymorphic or type_decl.assumed_type) continue;
+        if (type_decl.type_kind != .derived or type_decl.assumed_type) continue;
         const derived_name = type_decl.derived_type_name orelse continue;
         if (!symbols_mod.hasDerivedType(ctx, derived_name)) return true;
     }

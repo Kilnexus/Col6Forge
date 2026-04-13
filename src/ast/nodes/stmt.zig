@@ -122,6 +122,7 @@ pub const SelectTypeBlock = struct {
     construct_name: ?[]const u8 = null,
     leading_stmts: []Stmt = &.{},
     clauses: []SelectTypeClause,
+    end_source: SourceRef = .{},
 };
 
 pub const AssignLabelStmt = struct {

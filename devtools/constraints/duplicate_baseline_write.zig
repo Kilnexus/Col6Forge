@@ -11,6 +11,7 @@ pub fn main() !void {
 
     var root: []const u8 = baseline.root;
     var min_normalized_len: usize = baseline.min_normalized_len;
+    var fingerprint_mode: duplicates.FingerprintMode = baseline.fingerprint_mode;
     var write = false;
 
     var args = try std.process.argsWithAllocator(allocator);
@@ -23,6 +24,12 @@ pub fn main() !void {
         } else if (std.mem.eql(u8, arg, "--min-normalized-len")) {
             const value = args.next() orelse return error.MissingArgumentValue;
             min_normalized_len = try std.fmt.parseInt(usize, value, 10);
+        } else if (std.mem.eql(u8, arg, "--fingerprint")) {
+            const value = args.next() orelse return error.MissingArgumentValue;
+            fingerprint_mode = parseFingerprintMode(value) orelse {
+                std.log.err("unknown fingerprint mode: {s}", .{value});
+                return error.InvalidArgument;
+            };
         } else if (std.mem.eql(u8, arg, "--write")) {
             write = true;
         } else {
@@ -36,13 +43,18 @@ pub fn main() !void {
         return error.MissingWriteMode;
     }
 
-    const clusters = try duplicates.findDuplicateClusters(allocator, root, min_normalized_len);
+    const clusters = try duplicates.findDuplicateClustersWithMode(
+        allocator,
+        root,
+        min_normalized_len,
+        fingerprint_mode,
+    );
     defer {
         for (clusters) |*cluster| cluster.deinit(allocator);
         allocator.free(clusters);
     }
 
-    const rendered = try renderBaseline(allocator, clusters, root, min_normalized_len);
+    const rendered = try renderBaseline(allocator, clusters, root, min_normalized_len, fingerprint_mode);
     defer allocator.free(rendered);
 
     const cwd = std.fs.cwd();
@@ -60,7 +72,10 @@ pub fn main() !void {
         .sub_path = baseline_path,
         .data = rendered,
     });
-    std.log.info("wrote duplicate baseline: {d} clusters to {s}", .{ clusters.len, baseline_path });
+    std.log.info(
+        "wrote duplicate baseline: {d} clusters to {s} (fingerprint={s})",
+        .{ clusters.len, baseline_path, @tagName(fingerprint_mode) },
+    );
 }
 
 fn renderBaseline(
@@ -68,13 +83,19 @@ fn renderBaseline(
     clusters: []const duplicates.Cluster,
     root: []const u8,
     min_normalized_len: usize,
+    fingerprint_mode: duplicates.FingerprintMode,
 ) ![]u8 {
     var out = std.ArrayList(u8).empty;
     defer out.deinit(allocator);
     const writer = out.writer(allocator);
 
+    try out.appendSlice(allocator,
+        \\const duplicates = @import("duplicates.zig");
+        \\
+    );
     try writer.print("pub const root = \"{s}\";\n", .{root});
-    try writer.print("pub const min_normalized_len: usize = {d};\n\n", .{min_normalized_len});
+    try writer.print("pub const min_normalized_len: usize = {d};\n", .{min_normalized_len});
+    try writer.print("pub const fingerprint_mode: duplicates.FingerprintMode = .{s};\n\n", .{@tagName(fingerprint_mode)});
     try out.appendSlice(allocator,
         \\pub const AllowedCluster = struct {
         \\    body_hash: u64,
@@ -94,4 +115,10 @@ fn renderBaseline(
     }
     try writer.writeAll("};\n");
     return out.toOwnedSlice(allocator);
+}
+
+fn parseFingerprintMode(value: []const u8) ?duplicates.FingerprintMode {
+    if (std.mem.eql(u8, value, "lexical")) return .lexical;
+    if (std.mem.eql(u8, value, "ast")) return .ast;
+    return null;
 }

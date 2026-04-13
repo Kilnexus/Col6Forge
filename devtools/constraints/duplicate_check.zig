@@ -9,7 +9,12 @@ pub fn main() !void {
 
     try validateBaseline();
 
-    const clusters = try duplicates.findDuplicateClusters(allocator, baseline.root, baseline.min_normalized_len);
+    const clusters = try duplicates.findDuplicateClustersWithMode(
+        allocator,
+        baseline.root,
+        baseline.min_normalized_len,
+        baseline.fingerprint_mode,
+    );
     defer {
         for (clusters) |*cluster| cluster.deinit(allocator);
         allocator.free(clusters);
@@ -31,8 +36,14 @@ pub fn main() !void {
     if (failed) return error.DuplicateBaselineViolation;
 
     std.log.info(
-        "duplicate baseline passed: {d} current clusters, {d} allowed clusters, root={s}, min_normalized_len={d}",
-        .{ clusters.len, baseline.allowed_clusters.len, baseline.root, baseline.min_normalized_len },
+        "duplicate baseline passed: {d} current clusters, {d} allowed clusters, root={s}, min_normalized_len={d}, fingerprint={s}",
+        .{
+            clusters.len,
+            baseline.allowed_clusters.len,
+            baseline.root,
+            baseline.min_normalized_len,
+            @tagName(baseline.fingerprint_mode),
+        },
     );
 }
 

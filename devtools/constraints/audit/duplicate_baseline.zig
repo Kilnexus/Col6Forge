@@ -1,5 +1,8 @@
+const duplicates = @import("duplicates.zig");
+
 pub const root = "src";
 pub const min_normalized_len: usize = 120;
+pub const fingerprint_mode: duplicates.FingerprintMode = .lexical;
 
 pub const AllowedCluster = struct {
     body_hash: u64,

@@ -770,3 +770,38 @@ test "parseProgramWithDiagnostics recovers malformed BIND(C) procedure header in
     try testing.expect(saw_end_module);
 }
 
+test "parseProgramWithDiagnostics accepts select type over parameterized class selector" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module c1162a\n" ++
+        "  type pdt(kind,len)\n" ++
+        "    integer, kind :: kind\n" ++
+        "    integer, len :: len\n" ++
+        "  end type\n" ++
+        " contains\n" ++
+        "  subroutine foo(x)\n" ++
+        "    class(pdt(kind = 1, len = :)), allocatable :: x\n" ++
+        "    select type (x)\n" ++
+        "      type is (pdt(kind = *, len = *)) ! { dg-error \"does not have a default value\" }\n" ++
+        "      type is (pdt(kind = :, len = *)) ! { dg-error \"does not have a default value\" }\n" ++
+        "    end select\n" ++
+        "    select type (x)\n" ++
+        "      type is (pdt(kind = 1, len = *)) ! This, of course, is OK\n" ++
+        "    end select\n" ++
+        "  end subroutine\n" ++
+        "end module\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var diag_bag = parse_diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    const program = try parseProgramWithDiagnostics(arena.allocator(), lines, &diag_bag);
+    try testing.expectEqual(@as(usize, 2), program.units.len);
+    try testing.expect(diag_bag.take() == null);
+}
+

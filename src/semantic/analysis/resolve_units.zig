@@ -450,7 +450,7 @@ fn buildDerivedComponentInfo(
                 if (item.char_len_deferred) {
                     spec = spec.withCharacterLength(.deferred, null);
                 } else if (item.char_len != null) {
-                    const length = try resolveDerivedCharacterComponentLen(ctx, item.char_len.?);
+                    const length = try resolveDerivedCharacterComponentLen(ctx, item.char_len.?, item.init != null);
                     spec = spec.withCharacterLength(.constant, length);
                 } else {
                     spec = spec.withCharacterLength(.constant, 1);
@@ -577,7 +577,7 @@ fn derivedProcedureComponentHasExplicitInterface(
     };
 }
 
-fn resolveDerivedCharacterComponentLen(ctx: *context.Context, expr: *ast.Expr) !usize {
+fn resolveDerivedCharacterComponentLen(ctx: *context.Context, expr: *ast.Expr, has_initializer: bool) !usize {
     if (expr.* == .literal and expr.literal.kind == .assumed_size) {
         return error.InvalidCharLen;
     }
@@ -590,7 +590,11 @@ fn resolveDerivedCharacterComponentLen(ctx: *context.Context, expr: *ast.Expr) !
             else => error.InvalidCharLen,
         };
     }
-    emitDerivedComponentSpecExprDiagnostic(ctx);
+    if (has_initializer) {
+        emitDerivedComponentInitExprDiagnostic(ctx);
+    } else {
+        emitDerivedComponentSpecExprDiagnostic(ctx);
+    }
     return error.InvalidCharLen;
 }
 
@@ -706,6 +710,17 @@ fn emitDerivedComponentSpecExprDiagnostic(ctx: *context.Context) void {
         decl_source.text,
         &.{.{ .text = "Derived type component bounds and lengths must be specification expressions." }},
         &.{.{ .text = "Replace the runtime-dependent expression with a constant or specification expression visible at the type definition." }},
+    );
+}
+
+fn emitDerivedComponentInitExprDiagnostic(ctx: *context.Context) void {
+    const decl_source = ctx.current_decl_source orelse return;
+    ctx.setDiagnostic(
+        if (decl_source.line == 0) 1 else decl_source.line,
+        if (decl_source.column == 0) 1 else decl_source.column,
+        catalog.semantic.invalid_char_len.code,
+        "Expected an initialization expression",
+        decl_source.text,
     );
 }
 

@@ -13,6 +13,7 @@ pub const DeclSource = program_nodes.DeclSource;
 pub const TypeKind = decl_nodes.TypeKind;
 pub const Decl = decl_nodes.Decl;
 pub const TypeDecl = decl_nodes.TypeDecl;
+pub const BindEntityDecl = decl_nodes.BindEntityDecl;
 pub const ProcedureTypeSpec = decl_nodes.ProcedureTypeSpec;
 pub const ProcedureInterface = decl_nodes.ProcedureInterface;
 pub const ProcedureDecl = decl_nodes.ProcedureDecl;

@@ -13,6 +13,7 @@ pub const DeclSource = nodes.DeclSource;
 pub const TypeKind = nodes.TypeKind;
 pub const Decl = nodes.Decl;
 pub const TypeDecl = nodes.TypeDecl;
+pub const BindEntityDecl = nodes.BindEntityDecl;
 pub const ProcedureTypeSpec = nodes.ProcedureTypeSpec;
 pub const ProcedureInterface = nodes.ProcedureInterface;
 pub const ProcedureDecl = nodes.ProcedureDecl;

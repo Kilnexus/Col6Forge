@@ -678,6 +678,7 @@ pub fn prependDecls(
         .prelude_decl_count = unit.prelude_decl_count + filtered_decls.items.len,
         .owner_name = unit.owner_name,
         .owner_kind = unit.owner_kind,
+        .bind_c = unit.bind_c,
         .bind_name = unit.bind_name,
         .result_name = unit.result_name,
         .alt_return_dummy_count = unit.alt_return_dummy_count,
@@ -713,6 +714,7 @@ fn declsEquivalentForImport(a: Decl, b: Decl) bool {
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
     return switch (a) {
         .type_decl => |type_decl| namesEqualDeclarators(type_decl.items, b.type_decl.items),
+        .bind_entity => |bind_entity_decl| namesEqualStrings(bind_entity_decl.names, b.bind_entity.names),
         .procedure => |procedure| namesEqualDeclarators(procedure.items, b.procedure.items),
         .derived_type_def => |derived| std.ascii.eqlIgnoreCase(derived.name, b.derived_type_def.name),
         .interface_block => |interface_block| blk: {

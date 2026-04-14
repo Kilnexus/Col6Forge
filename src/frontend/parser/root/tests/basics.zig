@@ -738,3 +738,35 @@ test "parseProgram handles MODULE container with contained procedure" {
     try testing.expectEqual(ast.LexicalOwnerKind.module, program.units[1].owner_kind.?);
 }
 
+test "parseProgramWithDiagnostics recovers malformed BIND(C) procedure header inside module" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module m\n" ++
+        "contains\n" ++
+        "  subroutine sub6() bind(c, name=\"         )\n" ++
+        "  end subroutine sub6\n" ++
+        "end module m\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var diag_bag = parse_diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    const program = try parseProgramWithDiagnostics(arena.allocator(), lines, &diag_bag);
+    try testing.expectEqual(@as(usize, 1), program.units.len);
+
+    var saw_invalid = false;
+    var saw_end_module = false;
+    while (diag_bag.take()) |diag| {
+        defer diag_bag.release(diag);
+        if (std.mem.indexOf(u8, diag.message, "Invalid C identifier") != null) saw_invalid = true;
+        if (std.mem.indexOf(u8, diag.message, "Expecting END MODULE statement") != null) saw_end_module = true;
+    }
+    try testing.expect(saw_invalid);
+    try testing.expect(saw_end_module);
+}
+

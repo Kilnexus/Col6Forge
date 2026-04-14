@@ -25,6 +25,7 @@ pub fn mangleName(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
 
 pub fn mangleProcedureUnitName(allocator: std.mem.Allocator, unit: ast.ProgramUnit) ![]const u8 {
     if (unit.bind_name) |bind_name| {
+        if (bind_name.len == 0) return mangleName(allocator, unit.name);
         return lowerName(allocator, bind_name);
     }
     if (unit.owner_name) |owner_name| {
@@ -198,6 +199,14 @@ test "mangleProcedureUnitName namespaces owned procedures and honors bind names"
         .decls = &.{},
         .stmts = &.{},
     };
+    const empty_bind_unit = ast.ProgramUnit{
+        .kind = .subroutine,
+        .name = "EMPTY",
+        .bind_name = "",
+        .args = &.{},
+        .decls = &.{},
+        .stmts = &.{},
+    };
 
     const module_name = try mangleProcedureUnitName(allocator, module_unit);
     defer allocator.free(module_name);
@@ -210,6 +219,10 @@ test "mangleProcedureUnitName namespaces owned procedures and honors bind names"
     const bind_name = try mangleProcedureUnitName(allocator, bind_unit);
     defer allocator.free(bind_name);
     try testing.expectEqualStrings("bar", bind_name);
+
+    const empty_bind_name = try mangleProcedureUnitName(allocator, empty_bind_unit);
+    defer allocator.free(empty_bind_name);
+    try testing.expectEqualStrings("empty_", empty_bind_name);
 }
 
 pub fn formatInt(allocator: std.mem.Allocator, value: i64) []const u8 {

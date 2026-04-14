@@ -13,6 +13,7 @@ const rewrite_calls = @import("rewrite_calls.zig");
 const resolve_data = @import("resolve_data.zig");
 const constants = @import("resolve_const.zig");
 const array_dim_queries = @import("array_dim_queries.zig");
+const bind_c_validation = @import("resolve_units_bind_c.zig");
 const scope = @import("../scope.zig");
 const evaluator = @import("../evaluator.zig");
 
@@ -140,6 +141,8 @@ pub const Resolver = struct {
                 }
             }
         }
+        try bind_c_validation.validateBindCInterfaceBlocks(ctx);
+        try bind_c_validation.validateBindCCharacters(ctx);
         try validateAssumedCharacterLengths(ctx);
         try resolve_data.lowerDataStatements(ctx);
         // First pass resolves statement-level symbol/shape ambiguity (e.g. statement

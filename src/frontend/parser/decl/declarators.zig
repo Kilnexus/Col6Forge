@@ -156,6 +156,11 @@ pub fn consumeDeclAttributes(lp: *LineParser, arena: std.mem.Allocator) !DeclAtt
                     return error.UnexpectedToken;
                 _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
             }
+            if (context.eqNoCase(attr_name, "BIND")) {
+                const bind_info = try parseBindSpec(lp, arena);
+                attrs.bind_c = bind_info.bind_c;
+                attrs.bind_name_expr = bind_info.bind_name_expr;
+            }
             if (context.eqNoCase(attr_name, "DIMENSION")) {
                 if (lp.consume(.l_paren)) {
                     attrs.dimension = try parseAttrDimensions(lp, arena);
@@ -175,6 +180,32 @@ pub fn consumeDeclAttributes(lp: *LineParser, arena: std.mem.Allocator) !DeclAtt
 
     _ = consumeDoubleColon(lp);
     return attrs;
+}
+
+pub const BindSpec = struct {
+    bind_c: bool = false,
+    bind_name_expr: ?*ast.Expr = null,
+};
+
+pub fn parseBindSpec(lp: *LineParser, arena: std.mem.Allocator) !BindSpec {
+    _ = lp.expect(.l_paren) orelse return error.UnexpectedToken;
+    var bind_info: BindSpec = .{};
+    while (!lp.peekIs(.r_paren)) {
+        const tok = lp.peek() orelse return error.UnexpectedToken;
+        if (tok.kind == .identifier and context.eqNoCase(lp.tokenText(tok), "C")) {
+            _ = lp.next();
+            bind_info.bind_c = true;
+        } else if (tok.kind == .identifier and context.eqNoCase(lp.tokenText(tok), "NAME")) {
+            _ = lp.next();
+            _ = lp.expect(.equals) orelse return error.UnexpectedToken;
+            bind_info.bind_name_expr = try expr.parseExpr(lp, arena, 0);
+        } else {
+            return error.UnexpectedToken;
+        }
+        _ = lp.consume(.comma);
+    }
+    _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
+    return bind_info;
 }
 
 pub fn parseDeclarators(

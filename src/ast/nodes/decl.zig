@@ -16,6 +16,7 @@ pub const TypeKind = enum {
 pub const Decl = union(enum) {
     implicit: ImplicitDecl,
     type_decl: TypeDecl,
+    bind_entity: BindEntityDecl,
     procedure: ProcedureDecl,
     derived_type_def: DerivedTypeDef,
     interface_block: InterfaceBlock,
@@ -49,6 +50,13 @@ pub const TypeDecl = struct {
     contiguous: bool = false,
     value_attr: bool = false,
     volatile_attr: bool = false,
+    bind_c: bool = false,
+    bind_name_expr: ?*Expr = null,
+};
+
+pub const BindEntityDecl = struct {
+    names: []const []const u8,
+    bind_name_expr: ?*Expr = null,
 };
 
 pub const ProcedureTypeSpec = struct {
@@ -84,6 +92,7 @@ pub const InterfaceProcedure = struct {
     pure: bool = false,
     elemental: bool = false,
     recursive: bool = false,
+    bind_c: bool = false,
     bind_name: ?[]const u8 = null,
     result_name: ?[]const u8 = null,
     args: []const []const u8,

@@ -32,6 +32,7 @@ pub const ProgramUnitHeader = struct {
     pure: bool,
     elemental: bool,
     recursive: bool,
+    bind_c: bool,
     bind_name: ?[]const u8,
     result_name: ?[]const u8,
     args: []const []const u8,
@@ -100,12 +101,23 @@ pub fn parseProgramUnitHeader(arena: std.mem.Allocator, lp: *LineParser, block_d
         _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
     }
     var result_name: ?[]const u8 = null;
-    if (kind == .function and lp.consumeKeyword("RESULT")) {
-        _ = lp.expect(.l_paren) orelse return error.UnexpectedToken;
-        result_name = lp.readName(arena) orelse return error.MissingName;
-        _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
+    var bind_spec: ParsedBindSpec = .{};
+    while (true) {
+        if (kind == .function and result_name == null and lp.consumeKeyword("RESULT")) {
+            _ = lp.expect(.l_paren) orelse return error.UnexpectedToken;
+            result_name = lp.readName(arena) orelse return error.MissingName;
+            _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
+            continue;
+        }
+        if (!bind_spec.bind_c and bind_spec.bind_name == null) {
+            const parsed_bind_spec = try parseBindSpec(arena, lp);
+            if (parsed_bind_spec.bind_c or parsed_bind_spec.bind_name != null) {
+                bind_spec = parsed_bind_spec;
+                continue;
+            }
+        }
+        break;
     }
-    const bind_name = try parseBindName(arena, lp);
 
     var type_decl: ?ast.Decl = null;
     if (type_info) |info| {
@@ -133,7 +145,8 @@ pub fn parseProgramUnitHeader(arena: std.mem.Allocator, lp: *LineParser, block_d
         .pure = pure,
         .elemental = elemental,
         .recursive = recursive,
-        .bind_name = bind_name,
+        .bind_c = bind_spec.bind_c,
+        .bind_name = bind_spec.bind_name,
         .result_name = result_name,
         .args = try args_list.toOwnedSlice(),
         .alt_return_dummy_count = alt_return_dummy_count,
@@ -141,18 +154,26 @@ pub fn parseProgramUnitHeader(arena: std.mem.Allocator, lp: *LineParser, block_d
     };
 }
 
-fn parseBindName(arena: std.mem.Allocator, lp: *LineParser) !?[]const u8 {
-    if (!lp.consumeKeyword("BIND")) return null;
+const ParsedBindSpec = struct {
+    bind_c: bool = false,
+    bind_name: ?[]const u8 = null,
+};
+
+fn parseBindSpec(arena: std.mem.Allocator, lp: *LineParser) !ParsedBindSpec {
+    if (!lp.consumeKeyword("BIND")) return .{};
     _ = lp.expect(.l_paren) orelse return error.UnexpectedToken;
 
-    var bind_name: ?[]const u8 = null;
+    var bind_spec: ParsedBindSpec = .{};
     while (!lp.peekIs(.r_paren)) {
         if (lp.peek()) |tok| {
-            if (tok.kind == .identifier and context.eqNoCase(lp.tokenText(tok), "NAME")) {
+            if (tok.kind == .identifier and context.eqNoCase(lp.tokenText(tok), "C")) {
+                _ = lp.next();
+                bind_spec.bind_c = true;
+            } else if (tok.kind == .identifier and context.eqNoCase(lp.tokenText(tok), "NAME")) {
                 _ = lp.next();
                 _ = lp.expect(.equals) orelse return error.UnexpectedToken;
                 const string_tok = lp.expect(.string) orelse return error.UnexpectedToken;
-                bind_name = try decodeHeaderStringLiteral(arena, lp.tokenText(string_tok));
+                bind_spec.bind_name = try decodeHeaderStringLiteral(arena, lp.tokenText(string_tok));
             } else {
                 _ = lp.next();
             }
@@ -162,7 +183,7 @@ fn parseBindName(arena: std.mem.Allocator, lp: *LineParser) !?[]const u8 {
         _ = lp.consume(.comma);
     }
     _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
-    return bind_name;
+    return bind_spec;
 }
 
 fn decodeHeaderStringLiteral(arena: std.mem.Allocator, text: []const u8) ![]const u8 {

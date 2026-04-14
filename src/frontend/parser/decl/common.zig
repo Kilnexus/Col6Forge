@@ -4,6 +4,7 @@ const context = @import("../token_stream.zig");
 pub const LineParser = context.LineParser;
 pub const TypeKind = ast.TypeKind;
 pub const Decl = ast.Decl;
+pub const BindEntityDecl = ast.BindEntityDecl;
 pub const ParamAssign = ast.ParamAssign;
 pub const CommonBlock = ast.CommonBlock;
 pub const EquivalenceGroup = ast.EquivalenceGroup;
@@ -52,6 +53,8 @@ pub const DeclAttributes = struct {
     contiguous: bool = false,
     value_attr: bool = false,
     volatile_attr: bool = false,
+    bind_c: bool = false,
+    bind_name_expr: ?*ast.Expr = null,
 };
 
 pub const LegacyStarSplit = struct {

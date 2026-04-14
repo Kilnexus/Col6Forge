@@ -11,6 +11,7 @@ const expressions = @import("../resolve_expr.zig");
 const decls = @import("../resolve_decls.zig");
 const binding_diagnostics = @import("bindings/diagnostics.zig");
 const binding_validation = @import("bindings/validation.zig");
+const bind_entities = @import("bind_entities.zig");
 const check_const = @import("../check_const.zig");
 const helpers = @import("helpers.zig");
 const interfaces = @import("interfaces.zig");
@@ -102,6 +103,9 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
             }
         },
         .procedure => return error.UnexpectedTypeDecl,
+        .bind_entity => |bind_entity_decl| {
+            try bind_entities.applyBindEntity(self, bind_entity_decl);
+        },
         .derived_type_def => |derived| {
             if (isImportedPreludeDecl(self)) return;
             try validateDerivedTypeDef(self, derived);

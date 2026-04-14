@@ -30,7 +30,7 @@ pub fn isDeclarationStart(lp: LineParser) bool {
     if (type_specs.isDoubleComplexTypeStart(lp)) return true;
     if (type_specs.isDoublePrecisionTypeStart(lp)) return true;
     if (type_specs.isDerivedTypeDeclStart(lp)) return true;
-    return lp.isKeywordSplit("DIMENSION") or lp.isKeywordSplit("ALLOCATABLE") or lp.isKeywordSplit("POINTER") or lp.isKeywordSplit("PARAMETER") or lp.isKeywordSplit("COMMON") or lp.isKeywordSplit("EQUIVALENCE") or lp.isKeywordSplit("IMPLICIT") or lp.isKeywordSplit("EXTERNAL") or lp.isKeywordSplit("INTRINSIC") or lp.isKeywordSplit("SAVE") or lp.isKeywordSplit("PROCEDURE") or lp.isKeywordSplit("IMPORT") or lp.isKeywordSplit("INTENT") or lp.isKeywordSplit("OPTIONAL");
+    return lp.isKeywordSplit("DIMENSION") or lp.isKeywordSplit("ALLOCATABLE") or lp.isKeywordSplit("POINTER") or lp.isKeywordSplit("PARAMETER") or lp.isKeywordSplit("COMMON") or lp.isKeywordSplit("EQUIVALENCE") or lp.isKeywordSplit("IMPLICIT") or lp.isKeywordSplit("EXTERNAL") or lp.isKeywordSplit("INTRINSIC") or lp.isKeywordSplit("SAVE") or lp.isKeywordSplit("PROCEDURE") or lp.isKeywordSplit("IMPORT") or lp.isKeywordSplit("INTENT") or lp.isKeywordSplit("OPTIONAL") or lp.isKeywordSplit("BIND");
 }
 
 pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
@@ -213,6 +213,15 @@ pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
             .private = attrs.private,
         } };
     }
+    if (lp.isKeywordSplit("BIND")) {
+        _ = lp.consumeKeyword("BIND");
+        const bind_info = try declarators.parseBindSpec(lp, arena);
+        _ = declarators.consumeDoubleColon(lp);
+        return .{ .bind_entity = .{
+            .names = try declarators.parseNameList(lp, arena),
+            .bind_name_expr = bind_info.bind_name_expr,
+        } };
+    }
 
     const type_spec = try type_specs.parseDeclTypeKind(lp, arena);
     var default_char_len: ParsedCharacterLen = .{ .expr = type_spec.char_len, .deferred = type_spec.char_len_deferred };
@@ -238,6 +247,8 @@ pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
         .contiguous = attrs.contiguous,
         .value_attr = attrs.value_attr,
         .volatile_attr = attrs.volatile_attr,
+        .bind_c = attrs.bind_c,
+        .bind_name_expr = attrs.bind_name_expr,
     } };
 }
 

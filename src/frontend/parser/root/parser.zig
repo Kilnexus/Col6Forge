@@ -283,6 +283,7 @@ pub const Parser = struct {
             .pure = false,
             .elemental = false,
             .recursive = false,
+            .bind_c = false,
             .bind_name = null,
             .result_name = null,
             .args = &.{},

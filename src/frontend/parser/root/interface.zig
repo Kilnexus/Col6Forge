@@ -31,6 +31,7 @@ pub fn interfaceProcedureFromUnit(
         .pure = unit.pure,
         .elemental = unit.elemental,
         .recursive = unit.recursive,
+        .bind_c = unit.bind_c,
         .bind_name = unit.bind_name,
         .result_name = unit.result_name,
         .args = unit.args,
@@ -70,6 +71,8 @@ pub fn cloneProcedureResultDecl(
                         .contiguous = type_decl.contiguous,
                         .value_attr = type_decl.value_attr,
                         .volatile_attr = type_decl.volatile_attr,
+                        .bind_c = type_decl.bind_c,
+                        .bind_name_expr = type_decl.bind_name_expr,
                     } };
                 }
             },
@@ -84,6 +87,9 @@ pub fn cloneProcedureResultDecl(
                         .pointer = procedure_decl.pointer,
                         .optional = procedure_decl.optional,
                         .save = procedure_decl.save,
+                        .nopass = procedure_decl.nopass,
+                        .pass_name = procedure_decl.pass_name,
+                        .private = procedure_decl.private,
                     } };
                 }
             },

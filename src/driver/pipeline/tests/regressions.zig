@@ -103,3 +103,25 @@ test "runPipelineWithOptionsAndDiagnostics compiles ENTRY function alternate res
     try testing.expect(std.mem.indexOf(u8, result.output, "@ef852_") != null);
 }
 
+test "runPipelineWithOptionsAndDiagnostics rejects bind(c) interface character array result in implicit main" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var diag_bag = diag.Bag.init(allocator);
+    defer diag_bag.deinit();
+
+    try testing.expectError(
+        error.InvalidCharLen,
+        runPipelineWithOptionsAndDiagnostics(
+            allocator,
+            "tests/gcc-tests/gfortran.dg/bind_c_18.f90",
+            .llvm,
+            .{},
+            &diag_bag,
+        ),
+    );
+    const diag_info = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(diag_info);
+    try testing.expect(std.mem.indexOf(u8, diag_info.message, "cannot be an array") != null);
+}
+

@@ -35,6 +35,9 @@ fn printDecl(writer: anytype, decl: ast.Decl) !void {
         .type_decl => |td| {
             try writer.print(";   decl type {s} items({d})\n", .{ typeKindName(td.type_kind), td.items.len });
         },
+        .bind_entity => |bind_entity_decl| {
+            try writer.print(";   decl bind-entity names({d})\n", .{bind_entity_decl.names.len});
+        },
         .procedure => |proc_decl| {
             const mode = if (proc_decl.pointer) "pointer" else "plain";
             try writer.print(";   decl procedure {s} items({d})\n", .{ mode, proc_decl.items.len });

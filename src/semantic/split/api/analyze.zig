@@ -8,6 +8,7 @@ const procedure_calls = @import("../../analysis/check_statements/procedure_calls
 const resolve_expr = @import("../../analysis/resolve_expr.zig");
 const resolve_symbols = @import("../../analysis/resolve_symbols.zig");
 const resolve_units = @import("../../analysis/resolve_units.zig");
+const resolve_units_bind_c = @import("../../analysis/resolve_units_bind_c.zig");
 const context = @import("../../context.zig");
 const diagnostic = @import("../../diagnostic.zig");
 const symbols = @import("../../symbol/mod.zig");
@@ -82,6 +83,18 @@ pub fn analyzeProgramWithKnownAndOptionsAndDiagnostics(
     var active_host_owner: ?[]const u8 = null;
 
     try seedKnownProcedures(arena, known_fn_types, known_proc_sigs, &known_function_type_specs, &known_procedure_sigs);
+    try validateProgramBindCInterfaces(
+        arena,
+        mutable_program,
+        &known_function_type_specs,
+        &known_procedure_sigs,
+        &known_host_symbols,
+        &known_host_derived_types,
+        &known_host_interface_sources,
+        &known_host_abstract_interfaces,
+        options,
+        diag_bag,
+    );
     try inferProgramProcedures(arena, mutable_program, &known_function_type_specs, &known_procedure_sigs);
     try interfaces.installExplicitInterfaceProcedures(arena, mutable_program, &known_function_type_specs, &known_procedure_sigs);
     try interfaces.installSingleTargetGenericInterfaces(arena, mutable_program, &known_function_type_specs, &known_procedure_sigs);
@@ -176,6 +189,41 @@ pub fn analyzeProgramWithKnownAndOptionsAndDiagnostics(
     if (first_error) |err| return err;
     try common_validation.validateCommonBlocksWithDiagnostics(arena, mutable_program, units.items, diag_bag);
     return .{ .units = try units.toOwnedSlice() };
+}
+
+fn validateProgramBindCInterfaces(
+    arena: std.mem.Allocator,
+    program: ast.Program,
+    known_function_type_specs: *const std.StringHashMap(symbols.TypeSpec),
+    known_procedure_sigs: *const std.StringHashMap(context.Context.ProcedureSig),
+    known_host_symbols: *const std.StringHashMap(symbols.Symbol),
+    known_host_derived_types: *const std.StringHashMap(context.Context.DerivedTypeInfo),
+    known_host_interface_sources: *const std.StringHashMap(ast.DeclSource),
+    known_host_abstract_interfaces: *const std.StringHashMap(void),
+    options: types.AnalyzeOptions,
+    diag_bag: *diagnostic.Bag,
+) !void {
+    for (program.units) |*unit| {
+        var unit_analyzer = analyzer.UnitAnalyzer.initWithDiagnostics(
+            arena,
+            unit,
+            &.{},
+            known_function_type_specs,
+            known_procedure_sigs,
+            known_host_symbols,
+            known_host_derived_types,
+            known_host_interface_sources,
+            known_host_abstract_interfaces,
+            null,
+            options.target_layout,
+            options.range_check,
+            diag_bag,
+        );
+        unit_analyzer.ctx.fbackslash = options.fbackslash;
+        unit_analyzer.ctx.allow_argument_mismatch = options.allow_argument_mismatch;
+        unit_analyzer.ctx.dialect = options.dialect;
+        try resolve_units_bind_c.validateBindCInterfaceBlocks(&unit_analyzer.ctx);
+    }
 }
 
 fn mergeProgramImplicitCallSigs(

@@ -98,6 +98,64 @@ test "parseProgram keeps declarations after USE in specification part" {
     try testing.expect(program.units[0].stmts[1].node == .assignment);
 }
 
+test "parseProgram preserves module specification-part USE imports separately" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module a\n" ++
+        "end module a\n" ++
+        "module b\n" ++
+        "  use a\n" ++
+        "end module b\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parseProgram(arena.allocator(), lines);
+
+    try testing.expectEqual(@as(usize, 2), program.units.len);
+    try testing.expectEqualStrings("b", program.units[1].name);
+    try testing.expectEqual(@as(usize, 1), program.units[1].use_imports.len);
+    try testing.expectEqualStrings("a", program.units[1].use_imports[0].module_name);
+}
+
+test "parseProgram preserves implicit-main bind(c) interface character result declaration" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "implicit none\n" ++
+        "  interface\n" ++
+        "    function my() bind(C,name=\"my\") result(r)\n" ++
+        "      use iso_c_binding\n" ++
+        "      character(kind=C_CHAR) :: r(10)\n" ++
+        "    end function\n" ++
+        "  end interface\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    const program = try parseProgram(allocator, lines);
+    try testing.expectEqual(@as(usize, 1), program.units.len);
+    const unit = program.units[0];
+    try testing.expectEqual(@as(usize, 2), unit.decls.len);
+    try testing.expect(unit.decls[1] == .interface_block);
+    try testing.expectEqual(@as(usize, 1), unit.decls[1].interface_block.procedure_headers.len);
+
+    const proc = unit.decls[1].interface_block.procedure_headers[0];
+    try testing.expect(proc.bind_c);
+    try testing.expectEqualStrings("my", proc.bind_name.?);
+    try testing.expect(proc.result_name != null);
+    try testing.expectEqualStrings("r", proc.result_name.?);
+    try testing.expectEqual(@as(usize, 1), proc.decls.len);
+    try testing.expect(proc.decls[0] == .type_decl);
+    try testing.expectEqual(@as(usize, 1), proc.decls[0].type_decl.items.len);
+    try testing.expectEqualStrings("r", proc.decls[0].type_decl.items[0].name);
+    try testing.expectEqual(@as(usize, 1), proc.decls[0].type_decl.items[0].dims.len);
+}
+
 test "parseProgram keeps split TYPEI assignment after execution begins" {
     const testing = std.testing;
     const allocator = testing.allocator;

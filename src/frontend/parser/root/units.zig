@@ -72,6 +72,7 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
                 .args = &.{},
                 .decls = @constCast(stored_decls),
                 .decl_sources = @constCast(stored_decl_sources),
+                .use_imports = try module_uses.toOwnedSlice(),
                 .stmts = &.{},
                 .expr_sources = &.{},
             });
@@ -99,6 +100,7 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
                 .args = &.{},
                 .decls = @constCast(stored_decls),
                 .decl_sources = @constCast(stored_decl_sources),
+                .use_imports = try module_uses.toOwnedSlice(),
                 .stmts = &.{},
                 .expr_sources = &.{},
             });
@@ -182,6 +184,7 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
         .args = &.{},
         .decls = @constCast(stored_decls),
         .decl_sources = @constCast(stored_decl_sources),
+        .use_imports = try module_uses.toOwnedSlice(),
         .stmts = &.{},
         .expr_sources = &.{},
     });
@@ -335,6 +338,7 @@ pub fn parseSubmoduleContainer(self: anytype, units: *std.array_list.Managed(Pro
         .args = &.{},
         .decls = @constCast(stored_decls),
         .decl_sources = @constCast(stored_decl_sources),
+        .use_imports = try module_uses.toOwnedSlice(),
         .stmts = &.{},
         .expr_sources = &.{},
     });
@@ -398,6 +402,9 @@ pub fn parseProgramUnit(self: anytype) !ProgramUnit {
     const header_line = self.lines[self.index];
     root_diagnostics.noteFallbackForLine(self.diag_bag, header_line);
     const header_tokens = self.tokensForIndex(self.index) catch |err| {
+        if (try recoverMalformedBindProcedureHeader(self, header_line, err)) |recovered| {
+            return recovered;
+        }
         root_diagnostics.setLexerOrLineDiagnostic(self.diag_bag, self.lex_diag_bag, header_line, err);
         return err;
     };
@@ -412,6 +419,9 @@ pub fn parseProgramUnit(self: anytype) !ProgramUnit {
             break :blk try self.syntheticProgramHeader();
         },
         else => {
+            if (try recoverMalformedBindProcedureHeader(self, header_line, err)) |recovered| {
+                return recovered;
+            }
             root_diagnostics.setParseDiagnosticFromStream(self.diag_bag, header_line, lp, err);
             return err;
         },
@@ -435,6 +445,106 @@ pub fn parseProgramUnit(self: anytype) !ProgramUnit {
         unit.owner_kind = self.pending_owner_kind;
     }
     return unit;
+}
+
+fn recoverMalformedBindProcedureHeader(
+    self: anytype,
+    header_line: logical_line.LogicalLine,
+    err: anyerror,
+) !?ProgramUnit {
+    if (err != error.UnexpectedToken and err != error.MissingName and err != error.InvalidStringLiteral) return null;
+    const message = malformedBindHeaderMessage(header_line.text) orelse return null;
+    const recovered_info = recoverProcedureHeaderInfo(self.arena, header_line.text) orelse return null;
+
+    self.diag_bag.set(
+        header_line.span.start_line,
+        if (header_line.segments.len > 0) header_line.segments[0].column else 1,
+        catalog.parser.unexpected_token.code,
+        message,
+        header_line.text,
+    );
+
+    var scan_index = self.index + 1;
+    while (scan_index < self.lines.len) : (scan_index += 1) {
+        const line = self.lines[scan_index];
+        const tokens = self.tokensForIndex(scan_index) catch continue;
+        if (!root_predicates.isProgramUnitEndTokens(line, tokens) and !root_predicates.isStandaloneEndTokens(line, tokens)) continue;
+        self.diag_bag.set(
+            line.span.start_line,
+            if (line.segments.len > 0) line.segments[0].column else 1,
+            catalog.parser.unexpected_token.code,
+            "Expecting END MODULE statement",
+            line.text,
+        );
+        self.index = scan_index + 1;
+        return ProgramUnit{
+            .kind = recovered_info.kind,
+            .name = recovered_info.name,
+            .source = root_diagnostics.sourceFromLine(header_line),
+            .args = &.{},
+            .decls = &.{},
+            .stmts = &.{},
+            .expr_sources = &.{},
+        };
+    }
+    return null;
+}
+
+const RecoveredProcedureHeader = struct {
+    kind: ast.ProgramUnitKind,
+    name: []const u8,
+};
+
+fn recoverProcedureHeaderInfo(arena: std.mem.Allocator, line_text: []const u8) ?RecoveredProcedureHeader {
+    const comment_start = std.mem.indexOfScalar(u8, line_text, '!') orelse line_text.len;
+    const prefix = line_text[0..comment_start];
+    var it = std.mem.tokenizeAny(u8, prefix, " \t(),");
+    while (it.next()) |word| {
+        if (std.ascii.eqlIgnoreCase(word, "pure") or
+            std.ascii.eqlIgnoreCase(word, "elemental") or
+            std.ascii.eqlIgnoreCase(word, "recursive") or
+            std.ascii.eqlIgnoreCase(word, "module"))
+        {
+            continue;
+        }
+        if (std.ascii.eqlIgnoreCase(word, "subroutine")) {
+            const name = it.next() orelse return null;
+            return .{ .kind = .subroutine, .name = arena.dupe(u8, name) catch return null };
+        }
+        if (std.ascii.eqlIgnoreCase(word, "function")) {
+            const name = it.next() orelse return null;
+            return .{ .kind = .function, .name = arena.dupe(u8, name) catch return null };
+        }
+    }
+    return null;
+}
+
+fn malformedBindHeaderMessage(line_text: []const u8) ?[]const u8 {
+    const comment_start = std.mem.indexOfScalar(u8, line_text, '!') orelse line_text.len;
+    const prefix = std.mem.trimRight(u8, line_text[0..comment_start], " \t");
+    if (std.ascii.indexOfIgnoreCase(prefix, "bind(") == null) return null;
+    const name_idx = std.ascii.indexOfIgnoreCase(prefix, "name") orelse return null;
+    var tail = prefix[name_idx + 4 ..];
+    tail = std.mem.trimLeft(u8, tail, " \t");
+    if (tail.len == 0) return "Syntax error";
+    if (tail[0] == ')') return "Syntax error";
+    if (tail[0] != '=') return null;
+    tail = std.mem.trimLeft(u8, tail[1..], " \t");
+    if (tail.len == 0 or tail[0] == ')') return "Invalid character";
+    if (tail[0] == '"' or tail[0] == '\'') {
+        const quote = tail[0];
+        var idx: usize = 1;
+        while (idx < tail.len) : (idx += 1) {
+            if (tail[idx] != quote) continue;
+            if (idx + 1 < tail.len and tail[idx + 1] == quote) {
+                idx += 1;
+                continue;
+            }
+            return null;
+        }
+        return "Invalid C identifier";
+    }
+    return "Syntax error";
 }
 
 fn parseInheritedModuleProcedureUnit(self: anytype, available_decls: []const Decl) !?ProgramUnit {
@@ -466,6 +576,7 @@ fn parseInheritedModuleProcedureUnit(self: anytype, available_decls: []const Dec
             .pure = false,
             .elemental = false,
             .recursive = false,
+            .bind_c = false,
             .bind_name = null,
             .result_name = null,
             .args = &.{},
@@ -535,6 +646,7 @@ fn programUnitHeaderFromInterfaceProcedure(
         .pure = proc_header.pure,
         .elemental = proc_header.elemental,
         .recursive = proc_header.recursive,
+        .bind_c = proc_header.bind_c,
         .bind_name = proc_header.bind_name,
         .result_name = proc_header.result_name,
         .args = proc_header.args,
@@ -726,6 +838,7 @@ pub fn parseProgramUnitBody(
         .pure = header.pure,
         .elemental = header.elemental,
         .recursive = header.recursive,
+        .bind_c = header.bind_c,
         .bind_name = header.bind_name,
         .result_name = header.result_name,
         .args = header.args,

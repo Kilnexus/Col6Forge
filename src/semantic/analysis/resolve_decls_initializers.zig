@@ -27,6 +27,7 @@ pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Ex
         );
         return error.ParameterNotConstant;
     }
+    try validateInvalidDerivedArrayConstructorInitializer(self, expr);
     try validateRestrictedInitializationInquiry(self, expr);
 }
 
@@ -192,6 +193,62 @@ fn inquirySubjectNeedsRuntimeBounds(self: *context.Context, expr: *ast.Expr) boo
         },
         else => false,
     };
+}
+
+fn validateInvalidDerivedArrayConstructorInitializer(self: *context.Context, expr: *ast.Expr) !void {
+    const decl_source = self.current_decl_source orelse return;
+    if (expr.* != .array_constructor) return;
+
+    const target_name = declarationTargetNameFromSource(decl_source.text) orelse return;
+    const idx = symbols_mod.findSymbolIndex(self, target_name) orelse return;
+    const sym = self.symbols.items[idx];
+    if (sym.dims.len == 0) return;
+    if (sym.type_spec.lowered_kind != .derived) return;
+    const derived_name = sym.type_spec.derived_type_name orelse return;
+    if (!derivedTypeHasNonConstantCharacterComponentLen(self, derived_name)) return;
+
+    self.setDiagnostic(
+        if (decl_source.line == 0) 1 else decl_source.line,
+        if (decl_source.column == 0) 1 else decl_source.column,
+        catalog.parser.unexpected_token.code,
+        "Syntax error in array constructor",
+        decl_source.text,
+    );
+    return error.UnexpectedToken;
+}
+
+fn declarationTargetNameFromSource(text: []const u8) ?[]const u8 {
+    const dbl_colon = std.mem.indexOf(u8, text, "::") orelse return null;
+    const after = std.mem.trimLeft(u8, text[dbl_colon + 2 ..], " \t");
+    if (after.len == 0) return null;
+    var end: usize = 0;
+    while (end < after.len) : (end += 1) {
+        const ch = after[end];
+        if (!(std.ascii.isAlphanumeric(ch) or ch == '_')) break;
+    }
+    if (end == 0) return null;
+    return after[0..end];
+}
+
+fn derivedTypeHasNonConstantCharacterComponentLen(self: *context.Context, derived_name: []const u8) bool {
+    for (self.unit.decls) |decl| {
+        if (decl != .derived_type_def) continue;
+        if (!std.ascii.eqlIgnoreCase(decl.derived_type_def.name, derived_name)) continue;
+        for (decl.derived_type_def.components) |type_decl| {
+            if (type_decl.type_kind != .character) continue;
+            for (type_decl.items) |item| {
+                if (item.char_len_deferred) return true;
+                const len_expr = item.char_len orelse continue;
+                const value = constants.evalConst(self, len_expr) catch return true;
+                switch (value orelse return true) {
+                    .integer => {},
+                    else => return true,
+                }
+            }
+        }
+        return false;
+    }
+    return false;
 }
 
 fn findDisallowedInitializationIntrinsic(expr: *ast.Expr) ?[]const u8 {

@@ -270,10 +270,39 @@ fn parseSelectTypeClauseSpec(
     } else {
         clause.type_kind = .derived;
         clause.derived_type_name = lp.readName(arena) orelse return error.MissingName;
+        if (lp.consume(.l_paren)) {
+            clause.derived_params = try parseSelectTypeDerivedParams(lp, arena);
+        }
     }
 
     _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
     return clause;
+}
+
+fn parseSelectTypeDerivedParams(
+    lp: *LineParser,
+    arena: std.mem.Allocator,
+) anyerror![]const ast.SelectTypeDerivedParam {
+    var params = std.array_list.Managed(ast.SelectTypeDerivedParam).init(arena);
+    while (!lp.peekIs(.r_paren)) {
+        const name = lp.readName(arena) orelse return error.MissingName;
+        _ = lp.expect(.equals) orelse return error.UnexpectedToken;
+        const value_kind: ast.SelectTypeDerivedParamValueKind = if (lp.consume(.star))
+            .star
+        else if (lp.consume(.colon))
+            .colon
+        else blk: {
+            _ = try expr.parseExpr(lp, arena, 0);
+            break :blk .expr;
+        };
+        try params.append(.{
+            .name = name,
+            .value_kind = value_kind,
+        });
+        if (!lp.consume(.comma)) break;
+    }
+    _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
+    return params.toOwnedSlice();
 }
 
 fn consumeBalancedParens(lp: *LineParser) anyerror!void {

@@ -450,7 +450,15 @@ fn buildDerivedComponentInfo(
                 if (item.char_len_deferred) {
                     spec = spec.withCharacterLength(.deferred, null);
                 } else if (item.char_len != null) {
-                    const length = try resolveDerivedCharacterComponentLen(ctx, item.char_len.?, item.init != null);
+                    const length = blk: {
+                        const resolved = resolveDerivedCharacterComponentLen(ctx, item.char_len.?, item.init != null) catch |err| {
+                            if (!ctx.usesExplicitDiagnosticBag() or err != error.InvalidCharLen) return err;
+                            // Keep derived-type registration alive in recovery mode so later
+                            // declarator initializer diagnostics can still be emitted.
+                            break :blk 0;
+                        };
+                        break :blk resolved;
+                    };
                     spec = spec.withCharacterLength(.constant, length);
                 } else {
                     spec = spec.withCharacterLength(.constant, 1);
@@ -591,7 +599,14 @@ fn resolveDerivedCharacterComponentLen(ctx: *context.Context, expr: *ast.Expr, h
         };
     }
     if (has_initializer) {
-        emitDerivedComponentInitExprDiagnostic(ctx);
+        const decl_source = ctx.current_decl_source orelse return error.InvalidCharLen;
+        ctx.setDiagnostic(
+            if (decl_source.line == 0) 1 else decl_source.line,
+            if (decl_source.column == 0) 1 else decl_source.column,
+            catalog.semantic.invalid_char_len.code,
+            "Expected an initialization expression",
+            decl_source.text,
+        );
     } else {
         emitDerivedComponentSpecExprDiagnostic(ctx);
     }
@@ -710,17 +725,6 @@ fn emitDerivedComponentSpecExprDiagnostic(ctx: *context.Context) void {
         decl_source.text,
         &.{.{ .text = "Derived type component bounds and lengths must be specification expressions." }},
         &.{.{ .text = "Replace the runtime-dependent expression with a constant or specification expression visible at the type definition." }},
-    );
-}
-
-fn emitDerivedComponentInitExprDiagnostic(ctx: *context.Context) void {
-    const decl_source = ctx.current_decl_source orelse return;
-    ctx.setDiagnostic(
-        if (decl_source.line == 0) 1 else decl_source.line,
-        if (decl_source.column == 0) 1 else decl_source.column,
-        catalog.semantic.invalid_char_len.code,
-        "Expected an initialization expression",
-        decl_source.text,
     );
 }
 

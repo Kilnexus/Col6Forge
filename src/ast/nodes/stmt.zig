@@ -103,6 +103,17 @@ pub const SelectTypeClauseKind = enum {
     class_default,
 };
 
+pub const SelectTypeDerivedParamValueKind = enum {
+    expr,
+    star,
+    colon,
+};
+
+pub const SelectTypeDerivedParam = struct {
+    name: []const u8,
+    value_kind: SelectTypeDerivedParamValueKind = .expr,
+};
+
 pub const SelectTypeClause = struct {
     kind: SelectTypeClauseKind,
     type_kind: ?@import("decl.zig").TypeKind = null,
@@ -110,6 +121,7 @@ pub const SelectTypeClause = struct {
     char_len: ?*Expr = null,
     char_len_deferred: bool = false,
     derived_type_name: ?[]const u8 = null,
+    derived_params: []const SelectTypeDerivedParam = &.{},
     stmts: []Stmt,
     source: SourceRef = .{},
     trailing_name: ?[]const u8 = null,

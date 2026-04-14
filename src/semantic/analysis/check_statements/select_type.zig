@@ -738,6 +738,16 @@ fn selectTypeClauseResolvedSpec(
             );
             return error.AssignmentTypeMismatch;
         };
+        if (selectTypeClauseHasDefaultlessNonLenParam(clause)) {
+            self.setDiagnostic(
+                if (clause.source.line == 0) 1 else clause.source.line,
+                if (clause.source.column == 0) 1 else clause.source.column,
+                catalog.semantic.assignment_type_mismatch.code,
+                "does not have a default value",
+                clause.source.text,
+            );
+            return error.AssignmentTypeMismatch;
+        }
         if (!resolve_symbols.hasDerivedType(self, name)) {
             self.setDiagnostic(
                 if (clause.source.line == 0) 1 else clause.source.line,
@@ -760,6 +770,14 @@ fn selectTypeClauseResolvedSpec(
     );
     if (kind != .character) return spec;
     return try select_type_char_clause.applySelectTypeCharacterClauseLength(self, spec, clause);
+}
+
+fn selectTypeClauseHasDefaultlessNonLenParam(clause: ast.SelectTypeClause) bool {
+    for (clause.derived_params) |param| {
+        if (std.ascii.eqlIgnoreCase(param.name, "len")) continue;
+        if (param.value_kind == .star or param.value_kind == .colon) return true;
+    }
+    return false;
 }
 
 fn clauseHeaderRequiresDiagnostic(

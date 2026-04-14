@@ -5,6 +5,7 @@ const fixed_form = @import("../../../frontend/fixed_form.zig");
 const free_form = @import("../../../frontend/free_form.zig");
 const parser = @import("../../../frontend/parser/mod.zig");
 const diagnostic = @import("../../diagnostic.zig");
+const symbols = @import("../../symbol/mod.zig");
 const api = @import("mod.zig");
 const procedure_inference = @import("procedure_inference.zig");
 const analyzeProgram = api.analyzeProgram;
@@ -663,6 +664,63 @@ test "analyzeProgram preserves used derived types for module and implicit-main c
     const sem = try analyzeProgram(arena.allocator(), program);
 
     try testing.expectEqual(@as(usize, 5), sem.units.len);
+}
+
+test "analyzeProgram exports host-associated parameter constants for contained procedures" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module teststr\n" ++
+        "  implicit none\n" ++
+        "  integer, parameter :: grh_size = 20, nmax = 64\n" ++
+        "  type strtype\n" ++
+        "    integer :: size\n" ++
+        "    character :: mdr(nmax)\n" ++
+        "  end type strtype\n" ++
+        "contains\n" ++
+        "  subroutine sub2(string, str_size)\n" ++
+        "    integer, intent(in) :: str_size\n" ++
+        "    character, intent(out) :: string(str_size)\n" ++
+        "    string(:) = 'a'\n" ++
+        "  end subroutine sub2\n" ++
+        "  subroutine sub1(a)\n" ++
+        "    type(strtype), intent(inout) :: a\n" ++
+        "    call sub2(a%mdr(grh_size + 1), a%size - grh_size)\n" ++
+        "  end subroutine sub1\n" ++
+        "end module teststr\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem = try analyzeProgram(arena.allocator(), program);
+
+    const sub1 = blk: {
+        for (sem.units) |unit| {
+            if (std.ascii.eqlIgnoreCase(unit.name, "sub1")) break :blk unit;
+        }
+        return error.TestExpectedEqual;
+    };
+
+    var found_grh_size = false;
+    var found_nmax = false;
+    for (sub1.symbols) |sym| {
+        if (std.ascii.eqlIgnoreCase(sym.name, "grh_size")) {
+            found_grh_size = true;
+            try testing.expect(sym.is_host_associated);
+            try testing.expectEqual(@as(?symbols.ConstValue, .{ .integer = 20 }), sym.const_value);
+        }
+        if (std.ascii.eqlIgnoreCase(sym.name, "nmax")) {
+            found_nmax = true;
+            try testing.expect(sym.is_host_associated);
+            try testing.expectEqual(@as(?symbols.ConstValue, .{ .integer = 64 }), sym.const_value);
+        }
+    }
+
+    try testing.expect(found_grh_size);
+    try testing.expect(found_nmax);
 }
 
 test "analyzeProgram does not export synthetic constructor symbols into contained host context" {

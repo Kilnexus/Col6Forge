@@ -98,4 +98,18 @@ pub const file_rules = [_]model.AuditRule{
         .exclude_tests = true,
         .excluded_exact_paths = &.{"src/common/error_catalog.zig"},
     },
+    .{
+        .id = "AR-TXT-026",
+        .title = "codegen const resolver must not scan AST declarations",
+        .kind = .forbidden_member_access_path,
+        .scope = .{ .prefix = "src/codegen/llvm/codegen/context/support/const_eval.zig" },
+        .needle = "ctx.unit.decls",
+    },
+    .{
+        .id = "AR-TXT-027",
+        .title = "codegen const resolver must not reintroduce mirrored prelude fallback helper",
+        .kind = .forbidden_text,
+        .scope = .{ .prefix = "src/codegen/llvm/codegen/context/support/const_eval.zig" },
+        .needle = "resolveMirroredPreludeParameterConstValue",
+    },
 };

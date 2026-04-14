@@ -115,15 +115,46 @@ pub const UnitAnalyzer = struct {
             if (first_err == null) first_err = err;
         };
         if (first_err) |err| return err;
+        const exported_symbols = try exportedSemanticSymbols(ctx);
         return .{
             .name = ctx.unit.name,
             .kind = ctx.unit.kind,
-            .symbols = try ctx.symbols.toOwnedSlice(),
+            .symbols = exported_symbols,
             .implicit_rules = try ctx.implicit.toOwnedSlice(),
             .resolved_refs = try ctx.refs.toOwnedSlice(),
         };
     }
 };
+
+fn exportedSemanticSymbols(ctx: *context.Context) ![]symbols.Symbol {
+    if (ctx.unit.owner_name == null or ctx.known_host_parameters.count() == 0) {
+        return ctx.symbols.toOwnedSlice();
+    }
+
+    var out = std.array_list.Managed(symbols.Symbol).init(ctx.arena);
+    try out.appendSlice(ctx.symbols.items);
+
+    var host_it = ctx.known_host_parameters.iterator();
+    while (host_it.next()) |entry| {
+        const host_sym = entry.value_ptr.*.normalized();
+        if (host_sym.kind != .parameter) continue;
+        if (containsSymbolNamed(out.items, host_sym.name)) continue;
+
+        var exported = host_sym;
+        exported.is_host_associated = true;
+        exported.host_owner_name = ctx.known_host_owner;
+        try out.append(exported);
+    }
+
+    return out.toOwnedSlice();
+}
+
+fn containsSymbolNamed(symbols_list: []const symbols.Symbol, target_name: []const u8) bool {
+    for (symbols_list) |sym| {
+        if (std.ascii.eqlIgnoreCase(sym.name, target_name)) return true;
+    }
+    return false;
+}
 
 pub fn recordSemanticError(ctx: *context.Context, err: anyerror) void {
     if (ctx.usesExplicitDiagnosticBag() and ctx.hasDiagnostic()) return;

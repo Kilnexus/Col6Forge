@@ -62,8 +62,7 @@ const sizeAlignForIRType = pure_helpers.sizeAlignForIRType;
 const stmtCanFallthroughInBlock = pure_helpers.stmtCanFallthroughInBlock;
 const writeUnsignedDecimal = pure_helpers.writeUnsignedDecimal;
 const inferConstantCharLen = const_eval.inferConstantCharLen;
-const resolveCodegenConstValue = const_eval.resolveCodegenConstValue;
-const resolveCodegenArrayExtent = const_eval.resolveCodegenArrayExtent;
+const makeCodegenConstResolver = const_eval.makeCodegenConstResolver;
 
 pub const Context = struct {
     allocator: std.mem.Allocator,
@@ -951,12 +950,8 @@ pub const Context = struct {
     }
 
     fn codegenEvalConstInt(self: *Context, expr: *input.Expr) !?i64 {
-        const resolver = evaluator.ConstResolver{
-            .ctx = self,
-            .resolveFn = resolveCodegenConstValue,
-            .arrayExtentFn = resolveCodegenArrayExtent,
-        };
-        const value = try evaluator.evalConst(expr, resolver);
+        const resolver = makeCodegenConstResolver(self);
+        const value = try evaluator.evalConst(expr, resolver.resolver);
         return switch (value orelse return null) {
             .integer => |v| v,
             else => null,

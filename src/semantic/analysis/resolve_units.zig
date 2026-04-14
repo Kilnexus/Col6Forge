@@ -14,6 +14,7 @@ const resolve_data = @import("resolve_data.zig");
 const constants = @import("resolve_const.zig");
 const array_dim_queries = @import("array_dim_queries.zig");
 const bind_c_validation = @import("resolve_units_bind_c.zig");
+const bind_entities = @import("resolve_specs/bind_entities.zig");
 const scope = @import("../scope.zig");
 const evaluator = @import("../evaluator.zig");
 
@@ -85,6 +86,11 @@ pub const Resolver = struct {
                         if (!hasCustomCurrentDiagnostic(ctx)) ctx.recordSemanticError(err);
                         continue;
                     };
+                    bind_entities.validateTypeDeclBinding(ctx, type_decl) catch |err| {
+                        if (!ctx.usesExplicitDiagnosticBag()) return err;
+                        if (first_stmt_error == null) first_stmt_error = err;
+                        if (!hasCustomCurrentDiagnostic(ctx)) ctx.recordSemanticError(err);
+                    };
                     specs.applyTypeDeclParameter(ctx, type_decl) catch |err| {
                         if (!ctx.usesExplicitDiagnosticBag()) return err;
                         if (first_stmt_error == null) first_stmt_error = err;
@@ -142,6 +148,7 @@ pub const Resolver = struct {
             }
         }
         try bind_c_validation.validateBindCInterfaceBlocks(ctx);
+        try bind_c_validation.validateBindCFunctionResult(ctx);
         try bind_c_validation.validateBindCCharacters(ctx);
         try validateAssumedCharacterLengths(ctx);
         try resolve_data.lowerDataStatements(ctx);

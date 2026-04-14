@@ -56,6 +56,7 @@ pub const TypeDecl = struct {
 
 pub const BindEntityDecl = struct {
     names: []const []const u8,
+    common_blocks: []const []const u8 = &.{},
     bind_name_expr: ?*Expr = null,
 };
 

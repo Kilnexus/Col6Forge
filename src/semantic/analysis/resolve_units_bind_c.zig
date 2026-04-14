@@ -3,6 +3,7 @@ const ast = @import("../../ast/nodes.zig");
 const catalog = @import("../../common/error_catalog.zig");
 const context = @import("context.zig");
 const interface_bind_c = @import("resolve_specs/interfaces_bind_c.zig");
+const bind_c_shared = @import("resolve_specs/bind_c_shared.zig");
 
 pub fn validateBindCCharacters(ctx: *context.Context) !void {
     if (!ctx.unit.bind_c) return;
@@ -62,6 +63,39 @@ pub fn validateBindCCharacters(ctx: *context.Context) !void {
         );
         return error.InvalidCharLen;
     }
+}
+
+pub fn validateBindCFunctionResult(ctx: *context.Context) !void {
+    if (!ctx.unit.bind_c or ctx.unit.kind != .function) return;
+    const result = findCharacterFunctionResult(ctx.unit) orelse return;
+    const source = ctx.unit.source;
+    const line = if (source.line == 0) 1 else source.line;
+    const column = if (source.column == 0) 1 else source.column;
+
+    if (result.has_array) {
+        ctx.setDiagnosticDetailed(
+            line,
+            column,
+            catalog.semantic.invalid_char_len.code,
+            "BIND(C) character function result cannot be an array",
+            source.text,
+            &.{.{ .text = "Interoperable BIND(C) CHARACTER function results must be scalar." }},
+            &.{.{ .text = "Make the function result scalar, or remove BIND(C) from the function." }},
+        );
+        return error.InvalidCharLen;
+    }
+    if (result.length_is_one) return;
+
+    ctx.setDiagnosticDetailed(
+        line,
+        column,
+        catalog.semantic.invalid_char_len.code,
+        "BIND(C) character function result must have length 1",
+        source.text,
+        &.{.{ .text = "Interoperable BIND(C) CHARACTER function results must have CHARACTER length one." }},
+        &.{.{ .text = "Use CHARACTER(LEN=1), or remove BIND(C) from the function." }},
+    );
+    return error.InvalidCharLen;
 }
 
 pub fn validateBindCInterfaceBlocks(ctx: *context.Context) !void {
@@ -132,6 +166,11 @@ const CharacterLengthForm = enum {
     other,
 };
 
+const CharacterResultInfo = struct {
+    has_array: bool = false,
+    length_is_one: bool = true,
+};
+
 fn findCharacterDummyDeclInfo(ctx: *context.Context, target_name: []const u8) ?CharacterDummyDeclInfo {
     var info: ?CharacterDummyDeclInfo = null;
 
@@ -180,6 +219,36 @@ fn characterLengthForm(info: CharacterDummyDeclInfo) CharacterLengthForm {
         },
         else => .other,
     };
+}
+
+fn findCharacterFunctionResult(unit: ast.ProgramUnit) ?CharacterResultInfo {
+    const result_name = unit.result_name orelse unit.name;
+    var info: ?CharacterResultInfo = null;
+
+    for (unit.decls) |decl| {
+        switch (decl) {
+            .type_decl => |type_decl| {
+                if (type_decl.type_kind != .character) continue;
+                for (type_decl.items) |item| {
+                    if (!std.ascii.eqlIgnoreCase(item.name, result_name)) continue;
+                    info = .{
+                        .has_array = item.dims.len != 0,
+                        .length_is_one = bind_c_shared.characterDeclaratorHasLengthOne(item),
+                    };
+                }
+            },
+            .dimension => |dimension_decl| {
+                for (dimension_decl.items) |item| {
+                    if (!std.ascii.eqlIgnoreCase(item.name, result_name)) continue;
+                    if (info == null) info = .{};
+                    info.?.has_array = info.?.has_array or item.dims.len != 0;
+                }
+            },
+            else => {},
+        }
+    }
+
+    return info;
 }
 
 fn isAssumedShape(dims: []const *ast.Expr) bool {

@@ -87,7 +87,9 @@ pub fn parseProgramUnitHeader(arena: std.mem.Allocator, lp: *LineParser, block_d
     };
     var args_list = std.array_list.Managed([]const u8).init(arena);
     var alt_return_dummy_count: usize = 0;
+    var saw_arg_parens = false;
     if (lp.consume(.l_paren)) {
+        saw_arg_parens = true;
         while (!lp.peekIs(.r_paren)) {
             if (lp.consume(.star)) {
                 alt_return_dummy_count += 1;
@@ -117,6 +119,9 @@ pub fn parseProgramUnitHeader(arena: std.mem.Allocator, lp: *LineParser, block_d
             }
         }
         break;
+    }
+    if ((kind == .subroutine or kind == .function) and bind_spec.bind_c and !saw_arg_parens) {
+        return error.UnexpectedToken;
     }
 
     var type_decl: ?ast.Decl = null;

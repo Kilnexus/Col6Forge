@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../../../ast/nodes.zig");
 const catalog = @import("../../../common/error_catalog.zig");
 const context = @import("../context.zig");
+const bind_c_shared = @import("bind_c_shared.zig");
 
 pub fn validateBindCInterfaceProcedure(self: *context.Context, proc_header: ast.InterfaceProcedure) !void {
     if (!proc_header.bind_c and proc_header.bind_name == null) return;
@@ -54,7 +55,7 @@ fn findCharacterResult(proc_header: ast.InterfaceProcedure) ?CharacterResultInfo
                     if (!std.ascii.eqlIgnoreCase(item.name, result_name)) continue;
                     var out: CharacterResultInfo = .{};
                     out.has_array = item.dims.len != 0;
-                    out.length_is_one = characterDeclaratorHasLengthOne(item);
+                    out.length_is_one = bind_c_shared.characterDeclaratorHasLengthOne(item);
                     info = out;
                 }
             },
@@ -70,12 +71,4 @@ fn findCharacterResult(proc_header: ast.InterfaceProcedure) ?CharacterResultInfo
     }
 
     return info;
-}
-
-fn characterDeclaratorHasLengthOne(item: ast.Declarator) bool {
-    const len_expr = item.char_len orelse return true;
-    return switch (len_expr.*) {
-        .literal => |lit| lit.kind == .integer and std.mem.eql(u8, lit.text, "1"),
-        else => false,
-    };
 }

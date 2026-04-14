@@ -37,6 +37,7 @@ fn printDecl(writer: anytype, decl: ast.Decl) !void {
         },
         .bind_entity => |bind_entity_decl| {
             try writer.print(";   decl bind-entity names({d})\n", .{bind_entity_decl.names.len});
+            try writer.print(";   decl bind-entity common-blocks({d})\n", .{bind_entity_decl.common_blocks.len});
         },
         .procedure => |proc_decl| {
             const mode = if (proc_decl.pointer) "pointer" else "plain";

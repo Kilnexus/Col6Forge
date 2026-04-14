@@ -217,8 +217,10 @@ pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
         _ = lp.consumeKeyword("BIND");
         const bind_info = try declarators.parseBindSpec(lp, arena);
         _ = declarators.consumeDoubleColon(lp);
+        const bind_targets = try parseBindEntityTargets(lp, arena);
         return .{ .bind_entity = .{
-            .names = try declarators.parseNameList(lp, arena),
+            .names = bind_targets.names,
+            .common_blocks = bind_targets.common_blocks,
             .bind_name_expr = bind_info.bind_name_expr,
         } };
     }
@@ -356,4 +358,34 @@ pub fn isDerivedTypeDeclStart(lp: LineParser) bool {
 
 test {
     _ = @import("tests.zig");
+}
+
+const BindEntityTargets = struct {
+    names: []const []const u8,
+    common_blocks: []const []const u8,
+};
+
+fn parseBindEntityTargets(lp: *LineParser, arena: std.mem.Allocator) !BindEntityTargets {
+    var names = std.array_list.Managed([]const u8).init(arena);
+    var common_blocks = std.array_list.Managed([]const u8).init(arena);
+    var parsed_any = false;
+
+    while (lp.peek()) |_| {
+        parsed_any = true;
+        if (lp.consume(.slash)) {
+            const block_name = lp.readName(arena) orelse return error.MissingName;
+            _ = lp.expect(.slash) orelse return error.UnexpectedToken;
+            try common_blocks.append(block_name);
+        } else {
+            const name = lp.readName(arena) orelse return error.MissingName;
+            try names.append(name);
+        }
+        if (!lp.consume(.comma)) break;
+    }
+
+    if (!parsed_any) return error.MissingName;
+    return .{
+        .names = try names.toOwnedSlice(),
+        .common_blocks = try common_blocks.toOwnedSlice(),
+    };
 }

@@ -18,6 +18,8 @@ const root_control = @import("control_helpers.zig");
 const root_interface = @import("interface.zig");
 const root_spec_eval = @import("spec_eval.zig");
 const root_binding_owners = @import("binding_owners.zig");
+const bind_recovery = @import("units/bind_recovery.zig");
+const no_arg_check = @import("units/no_arg_check.zig");
 const submodule_validation = @import("units/submodule_validation.zig");
 
 const ProgramUnit = ast.ProgramUnit;
@@ -402,7 +404,7 @@ pub fn parseProgramUnit(self: anytype) !ProgramUnit {
     const header_line = self.lines[self.index];
     root_diagnostics.noteFallbackForLine(self.diag_bag, header_line);
     const header_tokens = self.tokensForIndex(self.index) catch |err| {
-        if (try recoverMalformedBindProcedureHeader(self, header_line, err)) |recovered| {
+        if (try bind_recovery.recoverMalformedBindProcedureHeader(self, header_line, err)) |recovered| {
             return recovered;
         }
         root_diagnostics.setLexerOrLineDiagnostic(self.diag_bag, self.lex_diag_bag, header_line, err);
@@ -419,7 +421,7 @@ pub fn parseProgramUnit(self: anytype) !ProgramUnit {
             break :blk try self.syntheticProgramHeader();
         },
         else => {
-            if (try recoverMalformedBindProcedureHeader(self, header_line, err)) |recovered| {
+            if (try bind_recovery.recoverMalformedBindProcedureHeader(self, header_line, err)) |recovered| {
                 return recovered;
             }
             root_diagnostics.setParseDiagnosticFromStream(self.diag_bag, header_line, lp, err);
@@ -445,106 +447,6 @@ pub fn parseProgramUnit(self: anytype) !ProgramUnit {
         unit.owner_kind = self.pending_owner_kind;
     }
     return unit;
-}
-
-fn recoverMalformedBindProcedureHeader(
-    self: anytype,
-    header_line: logical_line.LogicalLine,
-    err: anyerror,
-) !?ProgramUnit {
-    if (err != error.UnexpectedToken and err != error.MissingName and err != error.InvalidStringLiteral) return null;
-    const message = malformedBindHeaderMessage(header_line.text) orelse return null;
-    const recovered_info = recoverProcedureHeaderInfo(self.arena, header_line.text) orelse return null;
-
-    self.diag_bag.set(
-        header_line.span.start_line,
-        if (header_line.segments.len > 0) header_line.segments[0].column else 1,
-        catalog.parser.unexpected_token.code,
-        message,
-        header_line.text,
-    );
-
-    var scan_index = self.index + 1;
-    while (scan_index < self.lines.len) : (scan_index += 1) {
-        const line = self.lines[scan_index];
-        const tokens = self.tokensForIndex(scan_index) catch continue;
-        if (!root_predicates.isProgramUnitEndTokens(line, tokens) and !root_predicates.isStandaloneEndTokens(line, tokens)) continue;
-        self.diag_bag.set(
-            line.span.start_line,
-            if (line.segments.len > 0) line.segments[0].column else 1,
-            catalog.parser.unexpected_token.code,
-            "Expecting END MODULE statement",
-            line.text,
-        );
-        self.index = scan_index + 1;
-        return ProgramUnit{
-            .kind = recovered_info.kind,
-            .name = recovered_info.name,
-            .source = root_diagnostics.sourceFromLine(header_line),
-            .args = &.{},
-            .decls = &.{},
-            .stmts = &.{},
-            .expr_sources = &.{},
-        };
-    }
-    return null;
-}
-
-const RecoveredProcedureHeader = struct {
-    kind: ast.ProgramUnitKind,
-    name: []const u8,
-};
-
-fn recoverProcedureHeaderInfo(arena: std.mem.Allocator, line_text: []const u8) ?RecoveredProcedureHeader {
-    const comment_start = std.mem.indexOfScalar(u8, line_text, '!') orelse line_text.len;
-    const prefix = line_text[0..comment_start];
-    var it = std.mem.tokenizeAny(u8, prefix, " \t(),");
-    while (it.next()) |word| {
-        if (std.ascii.eqlIgnoreCase(word, "pure") or
-            std.ascii.eqlIgnoreCase(word, "elemental") or
-            std.ascii.eqlIgnoreCase(word, "recursive") or
-            std.ascii.eqlIgnoreCase(word, "module"))
-        {
-            continue;
-        }
-        if (std.ascii.eqlIgnoreCase(word, "subroutine")) {
-            const name = it.next() orelse return null;
-            return .{ .kind = .subroutine, .name = arena.dupe(u8, name) catch return null };
-        }
-        if (std.ascii.eqlIgnoreCase(word, "function")) {
-            const name = it.next() orelse return null;
-            return .{ .kind = .function, .name = arena.dupe(u8, name) catch return null };
-        }
-    }
-    return null;
-}
-
-fn malformedBindHeaderMessage(line_text: []const u8) ?[]const u8 {
-    const comment_start = std.mem.indexOfScalar(u8, line_text, '!') orelse line_text.len;
-    const prefix = std.mem.trimRight(u8, line_text[0..comment_start], " \t");
-    if (std.ascii.indexOfIgnoreCase(prefix, "bind(") == null) return null;
-    const name_idx = std.ascii.indexOfIgnoreCase(prefix, "name") orelse return null;
-    var tail = prefix[name_idx + 4 ..];
-    tail = std.mem.trimLeft(u8, tail, " \t");
-    if (tail.len == 0) return "Syntax error";
-    if (tail[0] == ')') return "Syntax error";
-    if (tail[0] != '=') return null;
-    tail = std.mem.trimLeft(u8, tail[1..], " \t");
-    if (tail.len == 0 or tail[0] == ')') return "Invalid character";
-    if (tail[0] == '"' or tail[0] == '\'') {
-        const quote = tail[0];
-        var idx: usize = 1;
-        while (idx < tail.len) : (idx += 1) {
-            if (tail[idx] != quote) continue;
-            if (idx + 1 < tail.len and tail[idx + 1] == quote) {
-                idx += 1;
-                continue;
-            }
-            return null;
-        }
-        return "Invalid C identifier";
-    }
-    return "Syntax error";
 }
 
 fn parseInheritedModuleProcedureUnit(self: anytype, available_decls: []const Decl) !?ProgramUnit {
@@ -681,8 +583,8 @@ pub fn parseProgramUnitBody(
     while (self.index < self.lines.len) {
         const line = self.lines[self.index];
         root_diagnostics.noteFallbackForLine(self.diag_bag, line);
-        if (spec_part_open and try consumeNoArgCheckDirectiveLine(self.arena, line, &pending_no_arg_check)) {
-            applyPendingNoArgCheckToDecls(decls.items, &pending_no_arg_check);
+        if (spec_part_open and try no_arg_check.consumeNoArgCheckDirectiveLine(self.arena, line, &pending_no_arg_check)) {
+            no_arg_check.applyPendingNoArgCheckToDecls(decls.items, &pending_no_arg_check);
             self.index += 1;
             continue;
         }
@@ -762,7 +664,7 @@ pub fn parseProgramUnitBody(
                 root_diagnostics.setParseDiagnosticFromStream(self.diag_bag, line, stmt_lp, err);
                 return err;
             };
-            applyPendingNoArgCheck(&decl_node, &pending_no_arg_check);
+            no_arg_check.applyPendingNoArgCheck(&decl_node, &pending_no_arg_check);
             if (decl_node == .parameter) {
                 try root_spec_eval.recordParamInts(&param_ints, decl_node.parameter.assigns);
                 try root_spec_eval.recordParamStrings(&param_strings, decl_node.parameter.assigns);
@@ -852,71 +754,6 @@ pub fn parseProgramUnitBody(
     return unit;
 }
 
-fn consumeNoArgCheckDirectiveLine(
-    arena: std.mem.Allocator,
-    line: logical_line.LogicalLine,
-    pending: *std.StringHashMap(void),
-) !bool {
-    const trimmed = std.mem.trim(u8, line.text, " \t");
-    if (!std.ascii.startsWithIgnoreCase(trimmed, "!gcc$")) return false;
-    if (std.ascii.indexOfIgnoreCase(trimmed, "attributes") == null) return false;
-    if (std.ascii.indexOfIgnoreCase(trimmed, "no_arg_check") == null) return false;
-    const sep = std.mem.indexOf(u8, trimmed, "::") orelse return false;
-    var rest = trimmed[sep + 2 ..];
-    while (true) {
-        const next_sep = std.mem.indexOfScalar(u8, rest, ',') orelse rest.len;
-        const raw_name = std.mem.trim(u8, rest[0..next_sep], " \t");
-        if (raw_name.len != 0) {
-            const lowered = try arena.alloc(u8, raw_name.len);
-            for (raw_name, 0..) |ch, idx| lowered[idx] = std.ascii.toLower(ch);
-            try pending.put(lowered, {});
-        }
-        if (next_sep == rest.len) break;
-        rest = rest[next_sep + 1 ..];
-    }
-    return true;
-}
-
-fn applyPendingNoArgCheck(decl_node: *Decl, pending: *const std.StringHashMap(void)) void {
-    switch (decl_node.*) {
-        .type_decl => |*type_decl| {
-            for (type_decl.items) |*item| {
-                if (pendingContainsName(pending, item.name)) item.no_arg_check = true;
-            }
-        },
-        .procedure => |*procedure_decl| {
-            for (procedure_decl.items) |*item| {
-                if (pendingContainsName(pending, item.name)) item.no_arg_check = true;
-            }
-        },
-        .dimension => |*dimension_decl| {
-            for (dimension_decl.items) |*item| {
-                if (pendingContainsName(pending, item.name)) item.no_arg_check = true;
-            }
-        },
-        else => {},
-    }
-}
-
-fn applyPendingNoArgCheckToDecls(decls: []Decl, pending: *const std.StringHashMap(void)) void {
-    for (decls) |*decl_node| {
-        applyPendingNoArgCheck(decl_node, pending);
-    }
-}
-
-fn pendingContainsName(pending: *const std.StringHashMap(void), name: []const u8) bool {
-    var key_buf: [128]u8 = undefined;
-    if (name.len <= key_buf.len) {
-        for (name, 0..) |ch, idx| key_buf[idx] = std.ascii.toLower(ch);
-        return pending.contains(key_buf[0..name.len]);
-    }
-    var it = pending.iterator();
-    while (it.next()) |entry| {
-        if (std.ascii.eqlIgnoreCase(entry.key_ptr.*, name)) return true;
-    }
-    return false;
-}
-
 pub fn importUsedModulePreludes(self: anytype, unit: ProgramUnit) !ProgramUnit {
     var imported = unit;
     var seen = std.StringHashMap(void).init(self.arena);
@@ -973,6 +810,7 @@ pub fn parseInterfaceBlock(self: anytype) anyerror!Decl {
     var procedures = std.array_list.Managed([]const u8).init(self.arena);
     var procedure_sources = std.array_list.Managed(DeclSource).init(self.arena);
     var procedure_headers = std.array_list.Managed(ast.InterfaceProcedure).init(self.arena);
+    var deferred_error: ?anyerror = null;
 
     while (self.index < self.lines.len) {
         const line = self.lines[self.index];
@@ -997,6 +835,7 @@ pub fn parseInterfaceBlock(self: anytype) anyerror!Decl {
                     );
                 }
                 self.index += 1;
+                if (deferred_error) |err| return err;
                 return .{ .interface_block = .{
                     .abstract = is_abstract,
                     .name = interface_name,
@@ -1057,8 +896,32 @@ pub fn parseInterfaceBlock(self: anytype) anyerror!Decl {
         } else {
             var block_data_counter: usize = 0;
             const line_has_module_prefix = lineHasModuleProcedurePrefix(line, tokens);
-            const header = root_header.parseProgramUnitHeader(self.arena, &body_lp, &block_data_counter) catch null;
+            const header = root_header.parseProgramUnitHeader(self.arena, &body_lp, &block_data_counter) catch |err| blk: {
+                if (err == error.UnexpectedToken and bind_recovery.isBindCProcedureHeaderMissingParens(line, tokens)) {
+                    self.diag_bag.set(
+                        line.span.start_line,
+                        if (line.segments.len > 0) line.segments[0].column else 1,
+                        catalog.parser.unexpected_token.code,
+                        "Missing required parentheses",
+                        line.text,
+                    );
+                    deferred_error = error.UnexpectedToken;
+                }
+                break :blk null;
+            };
             if (header != null) {
+                if (bind_recovery.isBindCProcedureHeaderMissingParens(line, tokens)) {
+                    self.diag_bag.set(
+                        line.span.start_line,
+                        if (line.segments.len > 0) line.segments[0].column else 1,
+                        catalog.parser.unexpected_token.code,
+                        "Missing required parentheses",
+                        line.text,
+                    );
+                    deferred_error = error.UnexpectedToken;
+                    self.index += 1;
+                    continue;
+                }
                 const body_start_index = self.index + 1;
                 const expr_mark = self.expr_capture.mark();
                 self.index += 1;

@@ -17,6 +17,7 @@ const helpers = @import("helpers.zig");
 const interfaces = @import("interfaces.zig");
 const equivalence = @import("equivalence.zig");
 const procedure_interfaces = @import("../check_statements/procedure_interfaces.zig");
+const bind_c_shared = @import("bind_c_shared.zig");
 
 const resolvedDeclTypeSpec = helpers.resolvedDeclTypeSpec;
 const ensureImplicitRuleNoOverlap = helpers.ensureImplicitRuleNoOverlap;
@@ -436,6 +437,11 @@ fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDef) !
         if (first_error == null) first_error = error.DuplicateDeclaration;
     }
 
+    if (validateBindCCharacterComponents(self, derived)) |err| {
+        if (!self.usesExplicitDiagnosticBag()) return err;
+        if (first_error == null) first_error = err;
+    }
+
     for (derived.components, 0..) |type_decl, component_idx| {
         if (type_decl.type_kind != .derived) continue;
         const derived_name = type_decl.derived_type_name orelse continue;
@@ -487,6 +493,29 @@ fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDef) !
     }
 
     if (first_error) |err| return err;
+}
+
+fn validateBindCCharacterComponents(
+    self: *context.Context,
+    derived: ast.DerivedTypeDef,
+) ?anyerror {
+    if (!derived.bind_c) return null;
+
+    for (derived.components, 0..) |type_decl, component_idx| {
+        if (type_decl.type_kind != .character) continue;
+        const source = if (component_idx < derived.component_sources.len)
+            derived.component_sources[component_idx]
+        else
+            self.current_decl_source orelse ast.DeclSource{};
+
+        for (type_decl.items) |item| {
+            if (bind_c_shared.characterDeclaratorHasLengthOne(item)) continue;
+            setSourceDiagnostic(self, source, "BIND(C) CHARACTER component must have length one");
+            return error.InvalidCharLen;
+        }
+    }
+
+    return null;
 }
 
 fn validateDerivedProcedureComponents(

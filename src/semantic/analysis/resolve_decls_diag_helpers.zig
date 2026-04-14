@@ -3,7 +3,7 @@ const ast = @import("../../ast/nodes.zig");
 const catalog = @import("../../common/error_catalog.zig");
 const context = @import("context.zig");
 
-fn emitCurrentDeclSimpleDiagnostic(self: *context.Context, code: []const u8, message: []const u8) void {
+pub fn emitCurrentDeclSimpleDiagnostic(self: *context.Context, code: []const u8, message: []const u8) void {
     const decl_source = self.current_decl_source orelse ast.DeclSource{};
     self.setDiagnostic(
         if (decl_source.line == 0) 1 else decl_source.line,

@@ -714,7 +714,8 @@ fn declsEquivalentForImport(a: Decl, b: Decl) bool {
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
     return switch (a) {
         .type_decl => |type_decl| namesEqualDeclarators(type_decl.items, b.type_decl.items),
-        .bind_entity => |bind_entity_decl| namesEqualStrings(bind_entity_decl.names, b.bind_entity.names),
+        .bind_entity => |bind_entity_decl| namesEqualStrings(bind_entity_decl.names, b.bind_entity.names) and
+            namesEqualStrings(bind_entity_decl.common_blocks, b.bind_entity.common_blocks),
         .procedure => |procedure| namesEqualDeclarators(procedure.items, b.procedure.items),
         .derived_type_def => |derived| std.ascii.eqlIgnoreCase(derived.name, b.derived_type_def.name),
         .interface_block => |interface_block| blk: {

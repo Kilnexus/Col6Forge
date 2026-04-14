@@ -156,6 +156,60 @@ test "parseProgram preserves implicit-main bind(c) interface character result de
     try testing.expectEqual(@as(usize, 1), proc.decls[0].type_decl.items[0].dims.len);
 }
 
+test "parseProgram captures bind(c) common-block entity targets" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  common /com/ i\n" ++
+        "  bind(c) :: /com/\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parseProgram(arena.allocator(), lines);
+
+    try testing.expectEqual(@as(usize, 1), program.units.len);
+    const unit = program.units[0];
+    try testing.expectEqual(@as(usize, 2), unit.decls.len);
+    try testing.expect(unit.decls[1] == .bind_entity);
+    try testing.expectEqual(@as(usize, 0), unit.decls[1].bind_entity.names.len);
+    try testing.expectEqual(@as(usize, 1), unit.decls[1].bind_entity.common_blocks.len);
+    try testing.expectEqualStrings("com", unit.decls[1].bind_entity.common_blocks[0]);
+}
+
+test "parseProgramWithDiagnostics reports missing bind(c) procedure parentheses in interface body" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module test_bind_c_parens\n" ++
+        "  interface\n" ++
+        "    subroutine sub bind(c)\n" ++
+        "    end subroutine sub\n" ++
+        "  end interface\n" ++
+        "end module test_bind_c_parens\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var diag_bag = parse_diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    try testing.expectError(error.UnexpectedToken, parseProgramWithDiagnostics(arena.allocator(), lines, &diag_bag));
+
+    try testing.expect(diag_bag.count() >= 2);
+    const first = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(first);
+    const second = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(second);
+    try testing.expect(std.mem.indexOf(u8, first.message, "Missing required parentheses") != null);
+    try testing.expect(std.mem.indexOf(u8, second.message, "Expecting END INTERFACE") != null);
+}
+
 test "parseProgram keeps split TYPEI assignment after execution begins" {
     const testing = std.testing;
     const allocator = testing.allocator;

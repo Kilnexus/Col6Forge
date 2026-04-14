@@ -322,6 +322,30 @@ test "parseDecl handles bare OPTIONAL declaration" {
     }
 }
 
+test "parseDecl handles bare VALUE declaration" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "      VALUE :: B\n";
+    const lines = try fixed_form.normalizeFixedForm(allocator, source);
+    defer fixed_form.freeLogicalLines(allocator, lines);
+    const tokens = try lexer.lexLogicalLine(allocator, lines[0]);
+    defer allocator.free(tokens);
+    var lp = LineParser.init(lines[0], tokens);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const decl_node = try parseDecl(&lp, arena.allocator());
+
+    switch (decl_node) {
+        .value => |value_decl| {
+            try testing.expectEqual(@as(usize, 1), value_decl.names.len);
+            try testing.expectEqualStrings("B", value_decl.names[0]);
+        },
+        else => return error.UnexpectedToken,
+    }
+}
+
 test "parseDecl handles complex parameter declaration initializer with slash array constructor" {
     const testing = std.testing;
     const allocator = testing.allocator;

@@ -4,7 +4,7 @@ const catalog = @import("../../../common/error_catalog.zig");
 const context = @import("../context.zig");
 const constants = @import("../resolve_const.zig");
 const resolve_expr = @import("../resolve_expr.zig");
-const symbols_mod = @import("../resolve_symbols.zig");
+const resolve_symbols = @import("../resolve_symbols.zig");
 const bind_c_shared = @import("bind_c_shared.zig");
 const decl_diag = @import("../resolve_decls_diag_helpers.zig");
 
@@ -59,6 +59,22 @@ fn validateTypeDeclBindCContext(self: *context.Context, decl: ast.TypeDecl) !voi
         return error.UnexpectedTypeDecl;
     }
 
+    if (decl.pointer) {
+        emitCurrentDeclDiagnostic(self, "cannot have both the POINTER and BIND(C) attributes");
+        return error.UnexpectedTypeDecl;
+    }
+
+    if (decl.type_kind == .derived) {
+        const derived_name = decl.derived_type_name orelse return;
+        const derived = resolve_symbols.lookupDerivedType(self, derived_name) orelse return;
+        if (!derived.bind_c) {
+            emitDeclSourceDiagnostic(self, derived.source, "must have the BIND attribute");
+            emitCurrentDeclDiagnostic(self, "is not C interoperable");
+            return error.UnexpectedTypeDecl;
+        }
+        return;
+    }
+
     if (decl.type_kind != .character) return;
     for (decl.items) |item| {
         if (bind_c_shared.characterDeclaratorHasLengthOne(item)) continue;
@@ -96,9 +112,43 @@ fn bindEntityNameIsProcedure(self: *context.Context, name: []const u8) bool {
         const result_name = self.unit.result_name orelse self.unit.name;
         if (std.ascii.eqlIgnoreCase(self.unit.name, name) or std.ascii.eqlIgnoreCase(result_name, name)) return true;
     }
-    return symbols_mod.lookupKnownProcedureSig(self, name) != null;
+    for (self.unit.decls) |decl| {
+        switch (decl) {
+            .procedure => |procedure_decl| {
+                for (procedure_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            .interface_block => |interface_block| {
+                for (interface_block.procedure_headers) |proc_header| {
+                    if (std.ascii.eqlIgnoreCase(proc_header.name, name)) return true;
+                }
+                for (interface_block.module_procedures) |proc_name| {
+                    if (std.ascii.eqlIgnoreCase(proc_name, name)) return true;
+                }
+                for (interface_block.specific_procedures) |proc_name| {
+                    if (std.ascii.eqlIgnoreCase(proc_name, name)) return true;
+                }
+                for (interface_block.procedures) |proc_name| {
+                    if (std.ascii.eqlIgnoreCase(proc_name, name)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
 }
 
 fn emitCurrentDeclDiagnostic(self: *context.Context, message: []const u8) void {
     decl_diag.emitCurrentDeclSimpleDiagnostic(self, catalog.semantic.unexpected_type_decl.code, message);
+}
+
+fn emitDeclSourceDiagnostic(self: *context.Context, source: ast.DeclSource, message: []const u8) void {
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.unexpected_type_decl.code,
+        message,
+        source.text,
+    );
 }

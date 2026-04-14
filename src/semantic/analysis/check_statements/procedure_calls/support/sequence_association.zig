@@ -90,7 +90,7 @@ pub fn sequenceAssociationAvailableElements(self: *context.Context, expr: *ast.E
         .identifier => |name| {
             const idx = resolve_symbols.findSymbolIndex(self, name) orelse return null;
             const dims = self.symbols.items[idx].dims;
-            if (dims.len == 0) return null;
+            if (dims.len == 0) return scalarCharacterSequenceElementCount(self, expr);
             return arrayElementCountForDims(self, dims) orelse unknown_sequence_association_elements;
         },
         .call_or_subscript => |call| {
@@ -123,8 +123,27 @@ pub fn sequenceAssociationAvailableElements(self: *context.Context, expr: *ast.E
             const offset = linearSubscriptOffset(self, component.dims, comp.args) orelse return unknown_sequence_association_elements;
             return total -% offset;
         },
-        else => return null,
+        else => return scalarCharacterSequenceElementCount(self, expr),
     }
+}
+
+fn scalarCharacterSequenceElementCount(self: *context.Context, expr: *ast.Expr) ?usize {
+    resolve_expr.resolveExpr(self, expr) catch return null;
+    if (resolve_expr.exprRank(self, expr) != 0) return null;
+    const spec = resolve_expr.exprTypeSpec(self, expr) catch return null;
+    if (spec.lowered_kind != .character) return null;
+
+    return switch (spec.char_len_kind) {
+        .constant => spec.char_len orelse 1,
+        .none => spec.char_len orelse 1,
+        .assumed, .deferred => blk: {
+            const value = constants.evalConst(self, expr) catch break :blk null;
+            break :blk switch (value orelse break :blk null) {
+                .string => |bytes| std.unicode.utf8CountCodepoints(bytes) catch bytes.len,
+                else => null,
+            };
+        },
+    };
 }
 
 pub fn componentInfoForExpr(

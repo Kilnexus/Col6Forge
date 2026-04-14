@@ -30,7 +30,7 @@ pub fn isDeclarationStart(lp: LineParser) bool {
     if (type_specs.isDoubleComplexTypeStart(lp)) return true;
     if (type_specs.isDoublePrecisionTypeStart(lp)) return true;
     if (type_specs.isDerivedTypeDeclStart(lp)) return true;
-    return lp.isKeywordSplit("DIMENSION") or lp.isKeywordSplit("ALLOCATABLE") or lp.isKeywordSplit("POINTER") or lp.isKeywordSplit("PARAMETER") or lp.isKeywordSplit("COMMON") or lp.isKeywordSplit("EQUIVALENCE") or lp.isKeywordSplit("IMPLICIT") or lp.isKeywordSplit("EXTERNAL") or lp.isKeywordSplit("INTRINSIC") or lp.isKeywordSplit("SAVE") or lp.isKeywordSplit("PROCEDURE") or lp.isKeywordSplit("IMPORT") or lp.isKeywordSplit("INTENT") or lp.isKeywordSplit("OPTIONAL") or lp.isKeywordSplit("BIND");
+    return lp.isKeywordSplit("DIMENSION") or lp.isKeywordSplit("ALLOCATABLE") or lp.isKeywordSplit("POINTER") or lp.isKeywordSplit("PARAMETER") or lp.isKeywordSplit("COMMON") or lp.isKeywordSplit("EQUIVALENCE") or lp.isKeywordSplit("IMPLICIT") or lp.isKeywordSplit("EXTERNAL") or lp.isKeywordSplit("INTRINSIC") or lp.isKeywordSplit("SAVE") or lp.isKeywordSplit("PROCEDURE") or lp.isKeywordSplit("IMPORT") or lp.isKeywordSplit("INTENT") or lp.isKeywordSplit("OPTIONAL") or lp.isKeywordSplit("VALUE") or lp.isKeywordSplit("BIND");
 }
 
 pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
@@ -58,6 +58,11 @@ pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
         _ = lp.consumeKeyword("OPTIONAL");
         _ = declarators.consumeDoubleColon(lp);
         return .{ .optional = .{ .names = try declarators.parseNameList(lp, arena) } };
+    }
+    if (lp.isKeywordSplit("VALUE")) {
+        _ = lp.consumeKeyword("VALUE");
+        _ = declarators.consumeDoubleColon(lp);
+        return .{ .value = .{ .names = try declarators.parseNameList(lp, arena) } };
     }
     if (lp.isKeywordSplit("IMPLICIT")) {
         _ = lp.consumeKeyword("IMPLICIT");

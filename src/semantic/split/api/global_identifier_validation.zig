@@ -44,6 +44,8 @@ pub fn validateProgram(
         while (j < entities.items.len) : (j += 1) {
             const other = entities.items[j];
             if (!sameGlobalIdentifier(current, other)) continue;
+            if (sameCollectedEntity(current, other)) continue;
+            if (isInterfaceDefinitionMirror(current, other)) continue;
             if (first_conflicts[i] == null) first_conflicts[i] = j;
             if (first_conflicts[j] == null) first_conflicts[j] = i;
             if (current.owner_name != null and other.owner_name != null and !std.ascii.eqlIgnoreCase(current.owner_name.?, other.owner_name.?)) {
@@ -117,6 +119,7 @@ fn appendUnitEntities(
     }
 
     for (unit.decls, 0..) |decl, decl_idx| {
+        if (decl_idx < unit.prelude_decl_count) continue;
         const decl_source = if (decl_idx < unit.decl_sources.len) unit.decl_sources[decl_idx] else ast.DeclSource{};
         switch (decl) {
             .type_decl => |type_decl| {
@@ -202,6 +205,34 @@ fn sameGlobalIdentifier(a: GlobalEntity, b: GlobalEntity) bool {
     const a_name = a.bind_label orelse a.name;
     const b_name = b.bind_label orelse b.name;
     return std.ascii.eqlIgnoreCase(a_name, b_name);
+}
+
+fn sameCollectedEntity(a: GlobalEntity, b: GlobalEntity) bool {
+    if (a.kind != b.kind) return false;
+    if (!sameOptionalName(a.owner_name, b.owner_name)) return false;
+    if (!std.ascii.eqlIgnoreCase(a.name, b.name)) return false;
+    if (!sameOptionalName(a.bind_label, b.bind_label)) return false;
+    return sameSource(a.source, b.source);
+}
+
+fn isInterfaceDefinitionMirror(a: GlobalEntity, b: GlobalEntity) bool {
+    if (a.kind != .procedure or b.kind != .procedure) return false;
+    if (a.unit_kind != b.unit_kind) return false;
+    const a_is_iface = a.interface_header;
+    const b_is_iface = b.interface_header;
+    if (a_is_iface == b_is_iface) return false;
+    return true;
+}
+
+fn sameOptionalName(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null and b == null) return true;
+    if (a == null or b == null) return false;
+    return std.ascii.eqlIgnoreCase(a.?, b.?);
+}
+
+fn sameSource(a: ast.DeclSource, b: ast.DeclSource) bool {
+    if (a.line != b.line or a.column != b.column) return false;
+    return std.mem.eql(u8, a.text, b.text);
 }
 
 fn emitConflictDiagnostic(

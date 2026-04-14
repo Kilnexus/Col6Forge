@@ -114,6 +114,7 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
         .import => {},
         .intent => {},
         .optional => {},
+        .value => {},
         .interface_block => |interface_block| {
             try interfaces.validateExplicitInterfaceBlock(self, interface_block);
         },
@@ -441,6 +442,10 @@ fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDef) !
         if (!self.usesExplicitDiagnosticBag()) return err;
         if (first_error == null) first_error = err;
     }
+    if (validateBindCInteroperableComponents(self, derived)) |err| {
+        if (!self.usesExplicitDiagnosticBag()) return err;
+        if (first_error == null) first_error = err;
+    }
 
     for (derived.components, 0..) |type_decl, component_idx| {
         if (type_decl.type_kind != .derived) continue;
@@ -516,6 +521,63 @@ fn validateBindCCharacterComponents(
     }
 
     return null;
+}
+
+fn validateBindCInteroperableComponents(
+    self: *context.Context,
+    derived: ast.DerivedTypeDef,
+) ?anyerror {
+    if (!derived.bind_c) return null;
+
+    var first_error: ?anyerror = null;
+    var header_reported = false;
+
+    for (derived.components, 0..) |type_decl, component_idx| {
+        const source = if (component_idx < derived.component_sources.len)
+            derived.component_sources[component_idx]
+        else
+            self.current_decl_source orelse ast.DeclSource{};
+
+        if (type_decl.pointer) {
+            if (!header_reported) {
+                emitBindCDerivedTypeHeaderDiagnostic(self);
+                header_reported = true;
+            }
+            setSourceDiagnostic(self, source, "cannot have the POINTER attribute");
+            if (!self.usesExplicitDiagnosticBag()) return error.UnexpectedTypeDecl;
+            if (first_error == null) first_error = error.UnexpectedTypeDecl;
+        }
+
+        if (type_decl.allocatable) {
+            if (!header_reported) {
+                emitBindCDerivedTypeHeaderDiagnostic(self);
+                header_reported = true;
+            }
+            setSourceDiagnostic(self, source, "cannot have the ALLOCATABLE attribute");
+            if (!self.usesExplicitDiagnosticBag()) return error.UnexpectedTypeDecl;
+            if (first_error == null) first_error = error.UnexpectedTypeDecl;
+        }
+
+        if (type_decl.type_kind != .derived) continue;
+        const derived_name = type_decl.derived_type_name orelse continue;
+        const nested = symbols_mod.lookupDerivedType(self, derived_name) orelse continue;
+        if (nested.bind_c) continue;
+
+        if (!header_reported) {
+            emitBindCDerivedTypeHeaderDiagnostic(self);
+            header_reported = true;
+        }
+        setSourceDiagnostic(self, nested.source, "must have the BIND attribute");
+        if (!self.usesExplicitDiagnosticBag()) return error.UnexpectedTypeDecl;
+        if (first_error == null) first_error = error.UnexpectedTypeDecl;
+    }
+
+    return first_error;
+}
+
+fn emitBindCDerivedTypeHeaderDiagnostic(self: *context.Context) void {
+    const source = self.current_decl_source orelse ast.DeclSource{};
+    setSourceDiagnostic(self, source, "BIND(C) derived type has non-interoperable component");
 }
 
 fn validateDerivedProcedureComponents(

@@ -723,11 +723,12 @@ fn declsEquivalentForImport(a: Decl, b: Decl) bool {
             break :blk std.ascii.eqlIgnoreCase(interface_block.name.?, b.interface_block.name.?);
         },
         .parameter => |parameter| namesEqualParamAssigns(parameter.assigns, b.parameter.assigns),
-        .import, .external, .intrinsic, .optional => |list| namesEqualStrings(list.names, switch (b) {
+        .import, .external, .intrinsic, .optional, .value => |list| namesEqualStrings(list.names, switch (b) {
             .import => |other| other.names,
             .external => |other| other.names,
             .intrinsic => |other| other.names,
             .optional => |other| other.names,
+            .value => |other| other.names,
             else => unreachable,
         }),
         .intent => |intent_decl| namesEqualStrings(intent_decl.names, b.intent.names),

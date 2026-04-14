@@ -23,6 +23,7 @@ pub const Decl = union(enum) {
     import: NameListDecl,
     intent: IntentDecl,
     optional: NameListDecl,
+    value: NameListDecl,
     dimension: DimensionDecl,
     parameter: ParameterDecl,
     common: CommonDecl,

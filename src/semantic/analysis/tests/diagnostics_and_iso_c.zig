@@ -354,6 +354,144 @@ test "bind(c) interface in implicit main rejects character array result" {
     try testing.expect(std.mem.indexOf(u8, got.message, "cannot be an array") != null);
 }
 
+test "bind(c) function rejects non-character array result" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module x\n" ++
+        "  use iso_c_binding\n" ++
+        "contains\n" ++
+        "  function bar() bind(c)\n" ++
+        "    integer(c_int) :: bar(5)\n" ++
+        "  end function bar\n" ++
+        "end module x\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var known_function_type_specs = std.StringHashMap(symbols.TypeSpec).init(arena.allocator());
+    var known_procedure_sigs = std.StringHashMap(context.Context.ProcedureSig).init(arena.allocator());
+    var known_host_parameters = std.StringHashMap(symbols.Symbol).init(arena.allocator());
+    var known_host_derived_types = std.StringHashMap(context.Context.DerivedTypeInfo).init(arena.allocator());
+    var known_host_interface_sources = std.StringHashMap(ast.DeclSource).init(arena.allocator());
+    var known_host_abstract_interfaces = std.StringHashMap(void).init(arena.allocator());
+
+    diag.clear();
+    var unit = program.units[1];
+    var analyzer_instance = UnitAnalyzer.init(
+        arena.allocator(),
+        &unit,
+        &.{} ,
+        &known_function_type_specs,
+        &known_procedure_sigs,
+        &known_host_parameters,
+        &known_host_derived_types,
+        &known_host_interface_sources,
+        &known_host_abstract_interfaces,
+        null,
+        .{},
+    );
+    try testing.expectError(error.InvalidCharLen, analyzer_instance.analyze());
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "cannot be an array") != null);
+}
+
+test "bind(c) function accepts character c_char shorthand scalar result" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "function return_char2(i) result(output) bind(c,name='return_char2')\n" ++
+        "  use iso_c_binding\n" ++
+        "  implicit none\n" ++
+        "  integer(c_int) :: i\n" ++
+        "  character(c_char) :: j\n" ++
+        "  character(c_char) :: output\n" ++
+        "  j = achar(i)\n" ++
+        "  output = j\n" ++
+        "end function return_char2\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expectEqual(@as(usize, 1), sem.units.len);
+    try testing.expect(diag.take() == null);
+}
+
+test "global bind(c) validation ignores prelude-mirrored bind entity" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module bind_c_implicit_vars\n" ++
+        "bind(c) :: j\n" ++
+        "contains\n" ++
+        "  subroutine sub0(i) bind(c)\n" ++
+        "    i = 0\n" ++
+        "  end subroutine sub0\n" ++
+        "end module bind_c_implicit_vars\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expectEqual(@as(usize, 2), sem.units.len);
+    try testing.expect(diag.take() == null);
+}
+
+test "global bind(c) validation allows interface mirror for procedure definition" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module liter_cb_mod\n" ++
+        "use iso_c_binding\n" ++
+        "contains\n" ++
+        "  function liter_cb(link_info) bind(c)\n" ++
+        "    use iso_c_binding\n" ++
+        "    implicit none\n" ++
+        "    integer(c_int) :: liter_cb\n" ++
+        "    type, bind(c) :: info_t\n" ++
+        "      integer(c_int) :: type\n" ++
+        "    end type info_t\n" ++
+        "    type(info_t) :: link_info\n" ++
+        "    liter_cb = 0\n" ++
+        "  end function liter_cb\n" ++
+        "end module liter_cb_mod\n" ++
+        "program main\n" ++
+        "  use iso_c_binding\n" ++
+        "  interface\n" ++
+        "    function liter_cb(link_info) bind(c)\n" ++
+        "      use iso_c_binding\n" ++
+        "      implicit none\n" ++
+        "      integer(c_int) :: liter_cb\n" ++
+        "      type, bind(c) :: info_t\n" ++
+        "        integer(c_int) :: type\n" ++
+        "      end type info_t\n" ++
+        "      type(info_t) :: link_info\n" ++
+        "    end function liter_cb\n" ++
+        "  end interface\n" ++
+        "end program main\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expectEqual(@as(usize, 3), sem.units.len);
+    try testing.expect(diag.take() == null);
+}
+
 
 test "use iso_c_binding full import provides builtin derived types and constants to declarations" {
     const testing = std.testing;

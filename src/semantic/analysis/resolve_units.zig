@@ -189,7 +189,7 @@ fn shouldSkipMirroredHostDecl(ctx: *context.Context, decl: ast.Decl, decl_idx: u
     if (ctx.unit.owner_name == null) return false;
     if (decl_idx >= ctx.unit.prelude_decl_count) return false;
     return switch (decl) {
-        .type_decl, .parameter => true,
+        .type_decl, .parameter, .bind_entity => true,
         .derived_type_def => |derived| symbols_mod.hasKnownHostDerivedType(ctx, derived.name),
         else => false,
     };

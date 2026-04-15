@@ -802,6 +802,41 @@ test "emitModuleToWriter lowers procedure pointer assignment followed by procedu
     try testing.expect(std.mem.indexOf(u8, output, "call void %t") != null);
 }
 
+test "emitModuleToWriter keeps dummy procedure arguments as indirect calls" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "integer function apply(fn, i)\n" ++
+        "  integer fn, i\n" ++
+        "  apply = fn(i) + 1\n" ++
+        "end function apply\n" ++
+        "integer function inc(i)\n" ++
+        "  integer i\n" ++
+        "  inc = i + 1\n" ++
+        "end function inc\n" ++
+        "program test\n" ++
+        "  print *, apply(inc, 5)\n" ++
+        "end program test\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem_prog = try split_api.analyzeProgram(arena.allocator(), program);
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try emitModuleToWriter(&writer, allocator, program, sem_prog, "dummy_proc_actual_indirect.f", .{});
+
+    const output = buffer.items;
+    try testing.expect(std.mem.indexOf(u8, output, "define i32 @apply_(ptr %arg0, ptr %arg1)") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "call i32 %arg0(") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "call i32 @inc_(") == null);
+}
+
 test "emitModuleToWriter lowers zero-argument type-bound function calls from used modules without crashing" {
     const testing = std.testing;
     const allocator = testing.allocator;

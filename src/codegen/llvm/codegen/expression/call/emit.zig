@@ -175,7 +175,7 @@ pub fn procedureDesignatorPointer(ctx: *Context, name: []const u8) !?ValueRef {
     };
     if (sym.is_pointer) return null;
     if (!(sym.kind == .function or sym.kind == .subroutine or sym.is_external or known_sig != null)) return null;
-    if (sym.storage == .dummy and sym.is_external) {
+    if (sym.storage == .dummy and (sym.kind == .function or sym.kind == .subroutine or sym.is_external)) {
         return try ctx.getPointer(name);
     }
     if (try procedureDefinedIRName(ctx, name, sym)) |ir_name| {
@@ -196,14 +196,14 @@ pub fn callableProcedurePointer(
     name: []const u8,
     sym: ast.sema.Symbol,
 ) !?ValueRef {
+    if (sym.storage == .dummy and (sym.kind == .function or sym.kind == .subroutine)) {
+        return try ctx.getPointer(name);
+    }
     if (sym.is_pointer) {
         const slot_ptr = try ctx.getPointer(name);
         const fn_ptr_name = try ctx.nextTemp();
         try builder.load(fn_ptr_name, .ptr, slot_ptr);
         return .{ .name = fn_ptr_name, .ty = .ptr, .is_ptr = false };
-    }
-    if (sym.storage == .dummy and sym.is_external) {
-        return try ctx.getPointer(name);
     }
     return null;
 }

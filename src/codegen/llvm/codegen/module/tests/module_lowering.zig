@@ -762,6 +762,46 @@ test "emitModuleToWriter lowers module and contained procedure pointer targets" 
     try testing.expect(std.mem.indexOf(u8, output, "ptr @proc_test__f_") != null);
 }
 
+test "emitModuleToWriter lowers procedure pointer assignment followed by procedure pointer call" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program test\n" ++
+        "  implicit none\n" ++
+        "  integer :: i\n" ++
+        "  real :: s(4)\n" ++
+        "  procedure(f), pointer :: pf\n" ++
+        "  pf => f\n" ++
+        "  do i = 1, 4\n" ++
+        "    call pf(real(i), s(i))\n" ++
+        "  end do\n" ++
+        "contains\n" ++
+        "  pure subroutine f(x, y)\n" ++
+        "    real, intent(in) :: x\n" ++
+        "    real, intent(out) :: y\n" ++
+        "    y = sin(x)\n" ++
+        "  end subroutine f\n" ++
+        "end program test\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem_prog = try split_api.analyzeProgram(arena.allocator(), program);
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try emitModuleToWriter(&writer, allocator, program, sem_prog, "proc_ptr_call_after_assign.f90", .{});
+
+    const output = buffer.items;
+    try testing.expect(std.mem.indexOf(u8, output, "store ptr @proc_test__f_") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "load ptr, ptr %t0") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "call void %t") != null);
+}
+
 test "emitModuleToWriter lowers zero-argument type-bound function calls from used modules without crashing" {
     const testing = std.testing;
     const allocator = testing.allocator;

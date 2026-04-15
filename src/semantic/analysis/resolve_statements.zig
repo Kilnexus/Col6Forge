@@ -73,7 +73,9 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
                 return;
             }
             const idx = try symbols_mod.ensureSymbol(self, call.name);
-            self.symbols.items[idx].is_external = true;
+            if (shouldMarkCallTargetAsExternal(self.symbols.items[idx])) {
+                self.symbols.items[idx].is_external = true;
+            }
             for (call.args) |arg| {
                 switch (arg) {
                     .expr => |actual| try expressions.resolveExpr(self, actual.value),
@@ -618,6 +620,14 @@ fn isoCBindingConstantNames() []const []const u8 {
         "c_null_ptr",
         "c_null_funptr",
     };
+}
+
+fn shouldMarkCallTargetAsExternal(sym: symbols.Symbol) bool {
+    if (sym.is_external or sym.is_intrinsic) return false;
+    if (sym.is_pointer) return false;
+    if (sym.storage == .dummy) return false;
+    if (sym.kind == .function or sym.kind == .subroutine) return false;
+    return true;
 }
 
 fn unitAlreadyHasImportedUseDecl(self: *context.Context, module_name: []const u8, local_name: []const u8) bool {

@@ -190,6 +190,24 @@ pub fn procedureDesignatorPointer(ctx: *Context, name: []const u8) !?ValueRef {
     return .{ .name = ptr_name, .ty = .ptr, .is_ptr = true };
 }
 
+pub fn callableProcedurePointer(
+    ctx: *Context,
+    builder: anytype,
+    name: []const u8,
+    sym: ast.sema.Symbol,
+) !?ValueRef {
+    if (sym.is_pointer) {
+        const slot_ptr = try ctx.getPointer(name);
+        const fn_ptr_name = try ctx.nextTemp();
+        try builder.load(fn_ptr_name, .ptr, slot_ptr);
+        return .{ .name = fn_ptr_name, .ty = .ptr, .is_ptr = false };
+    }
+    if (sym.storage == .dummy and sym.is_external) {
+        return try ctx.getPointer(name);
+    }
+    return null;
+}
+
 fn emitArgPointerDetailed(ctx: *Context, builder: anytype, expr: *Expr) !ArgPointerResult {
     if (try resolveArrayActual(ctx, builder, expr)) |actual| {
         return .{ .ptr = actual.base_ptr, .owned_heap_ptr = actual.owned_heap_ptr, .descriptor_actual = actual };

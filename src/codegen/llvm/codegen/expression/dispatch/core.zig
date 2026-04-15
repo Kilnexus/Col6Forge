@@ -319,8 +319,7 @@ fn emitExprImpl(ctx: *Context, builder: anytype, expr: *Expr, subst_depth: usize
                 const plan = (try character.emitCharacterValuePlanImpl(ctx, builder, expr, subst_depth)) orelse return error.NonConstantCharacterLength;
                 return .{ .name = plan.ptr.name, .ty = .ptr, .is_ptr = false };
             }
-            if (sym.storage == .dummy) {
-                const fn_ptr = try ctx.getPointer(call_or_sub.name);
+            if (try call.callableProcedurePointer(ctx, builder, call_or_sub.name, sym)) |fn_ptr| {
                 return call.emitIndirectCall(ctx, builder, fn_ptr, ret_ty, call_or_sub.args, false);
             }
             const fn_name = try resolution.ensureExternalDeclForCall(ctx, call_or_sub.name, ret_ty, call_or_sub.args, false);

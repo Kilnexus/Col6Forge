@@ -7,4 +7,5 @@ pub const emitCharacterCall = emit.emitCharacterCall;
 pub const emitIndirectCharacterCall = emit.emitIndirectCharacterCall;
 pub const emitArgPointer = emit.emitArgPointer;
 pub const procedureDesignatorPointer = emit.procedureDesignatorPointer;
+pub const callableProcedurePointer = emit.callableProcedurePointer;
 pub const isCharacterActualArg = array_actuals.isCharacterActualArg;

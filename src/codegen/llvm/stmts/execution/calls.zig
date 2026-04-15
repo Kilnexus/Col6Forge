@@ -72,8 +72,7 @@ pub fn emitCall(ctx: *Context, builder: anytype, call: ast.CallStmt) EmitError!v
         if (sig.elemental and try emitElementalSubroutineCall(ctx, builder, call.name, args, sig)) return;
     }
     if (ctx.findSymbol(call.name)) |sym| {
-        if (sym.storage == .dummy and sym.is_external) {
-            const fn_ptr = try ctx.getPointer(call.name);
+        if (try expr_call.callableProcedurePointer(ctx, builder, call.name, sym)) |fn_ptr| {
             _ = try expr.emitIndirectCall(ctx, builder, fn_ptr, .void, args, true);
             return;
         }
@@ -234,8 +233,7 @@ pub fn emitCallValue(ctx: *Context, builder: anytype, call: ast.CallStmt, ret_ty
     defer ctx.setCurrentSource(prev_source);
     const args = try collectCallExprArgs(ctx.allocator, call);
     if (ctx.findSymbol(call.name)) |sym| {
-        if (sym.storage == .dummy and sym.is_external) {
-            const fn_ptr = try ctx.getPointer(call.name);
+        if (try expr_call.callableProcedurePointer(ctx, builder, call.name, sym)) |fn_ptr| {
             return expr.emitIndirectCall(ctx, builder, fn_ptr, ret_ty, args, false);
         }
     }

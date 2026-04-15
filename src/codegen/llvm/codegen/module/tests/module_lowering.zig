@@ -682,6 +682,86 @@ test "emitModuleToWriter lowers intrinsic procedure actuals through wrappers" {
     try testing.expect(std.mem.indexOf(u8, output, "ptr @__cf_intrinsic_conjg") != null);
 }
 
+test "emitModuleToWriter lowers intrinsic SIN procedure pointer targets through wrappers" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "contains\n" ++
+        "  function f()\n" ++
+        "    intrinsic :: sin\n" ++
+        "    abstract interface\n" ++
+        "      pure real function sin_interf(x)\n" ++
+        "        real, intent(in) :: x\n" ++
+        "      end function sin_interf\n" ++
+        "    end interface\n" ++
+        "    procedure(sin_interf), pointer :: f\n" ++
+        "    f => sin\n" ++
+        "  end function f\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem_prog = try split_api.analyzeProgram(arena.allocator(), program);
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try emitModuleToWriter(&writer, allocator, program, sem_prog, "proc_ptr_sin_wrapper.f90", .{});
+
+    const output = buffer.items;
+    try testing.expect(std.mem.indexOf(u8, output, "define float @__cf_intrinsic_sin") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "ptr @__cf_intrinsic_sin") != null);
+}
+
+test "emitModuleToWriter lowers module and contained procedure pointer targets" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module myfortran_binding\n" ++
+        "  implicit none\n" ++
+        "  procedure(error_stop), pointer :: error_handler\n" ++
+        "contains\n" ++
+        "  logical function myfortran_shutdown()\n" ++
+        "    call error_handler()\n" ++
+        "  end function myfortran_shutdown\n" ++
+        "  subroutine error_stop()\n" ++
+        "  end subroutine error_stop\n" ++
+        "end module myfortran_binding\n" ++
+        "program test\n" ++
+        "  use myfortran_binding\n" ++
+        "  procedure(f), pointer :: pf\n" ++
+        "  pf => f\n" ++
+        "  error_handler => error_stop\n" ++
+        "contains\n" ++
+        "  pure subroutine f(x, y)\n" ++
+        "    real, intent(in) :: x\n" ++
+        "    real, intent(out) :: y\n" ++
+        "    y = sin(x)\n" ++
+        "  end subroutine f\n" ++
+        "end program test\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem_prog = try split_api.analyzeProgram(arena.allocator(), program);
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try emitModuleToWriter(&writer, allocator, program, sem_prog, "proc_ptr_targets.f90", .{});
+
+    const output = buffer.items;
+    try testing.expect(std.mem.indexOf(u8, output, "ptr @mod_myfortran_binding__error_stop_") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "ptr @proc_test__f_") != null);
+}
+
 test "emitModuleToWriter lowers zero-argument type-bound function calls from used modules without crashing" {
     const testing = std.testing;
     const allocator = testing.allocator;

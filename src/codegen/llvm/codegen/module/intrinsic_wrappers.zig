@@ -11,9 +11,10 @@ pub fn emitIntrinsicWrappers(
     while (it.next()) |entry| {
         switch (entry.value_ptr.*) {
             .iabs => try emitIabsWrapper(builder, entry.key_ptr.*, options),
-            .dcos => try emitDoubleUnaryWrapper(builder, entry.key_ptr.*, "cos", options),
-            .dcosh => try emitDoubleUnaryWrapper(builder, entry.key_ptr.*, "cosh", options),
-            .dexp => try emitDoubleUnaryWrapper(builder, entry.key_ptr.*, "exp", options),
+            .sin => try emitUnaryFloatWrapper(builder, entry.key_ptr.*, .f32, "sinf", options),
+            .dcos => try emitUnaryFloatWrapper(builder, entry.key_ptr.*, .f64, "cos", options),
+            .dcosh => try emitUnaryFloatWrapper(builder, entry.key_ptr.*, .f64, "cosh", options),
+            .dexp => try emitUnaryFloatWrapper(builder, entry.key_ptr.*, .f64, "exp", options),
             .conjg => try emitConjgWrapper(builder, entry.key_ptr.*, options),
         }
     }
@@ -38,17 +39,23 @@ fn emitIabsWrapper(builder: anytype, name: []const u8, options: context.CodegenO
     try builder.functionEnd();
 }
 
-fn emitDoubleUnaryWrapper(builder: anytype, name: []const u8, callee_name: []const u8, options: context.CodegenOptions) !void {
+fn emitUnaryFloatWrapper(
+    builder: anytype,
+    name: []const u8,
+    float_ty: llvm_types.IRType,
+    callee_name: []const u8,
+    options: context.CodegenOptions,
+) !void {
     _ = options;
-    try builder.defineStartWithRet(.f64, name);
+    try builder.defineStartWithRet(float_ty, name);
     try builder.defineArgPtr("%arg0", true);
     try builder.defineEnd();
     try builder.entryLabel();
     const arg_ptr = context.ValueRef{ .name = "%arg0", .ty = .ptr, .is_ptr = true };
-    try builder.load("%t0", .f64, arg_ptr);
-    const arg = context.ValueRef{ .name = "%t0", .ty = .f64, .is_ptr = false };
-    try builder.callTyped("%t1", .f64, callee_name, &.{arg});
-    try builder.retValue(.f64, "%t1");
+    try builder.load("%t0", float_ty, arg_ptr);
+    const arg = context.ValueRef{ .name = "%t0", .ty = float_ty, .is_ptr = false };
+    try builder.callTyped("%t1", float_ty, callee_name, &.{arg});
+    try builder.retValue(float_ty, "%t1");
     try builder.functionEnd();
 }
 

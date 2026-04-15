@@ -131,6 +131,7 @@ pub const DerivedBindingInfo = struct {
 
 pub const IntrinsicWrapperKind = enum {
     iabs,
+    sin,
     dcos,
     dcosh,
     dexp,

@@ -512,6 +512,14 @@ pub const Context = struct {
             }
             return wrapper;
         }
+        if (std.ascii.eqlIgnoreCase(name, "SIN")) {
+            const wrapper = "__cf_intrinsic_sin";
+            if (!self.intrinsic_wrappers.contains(wrapper)) {
+                _ = try self.ensureDeclRaw("sinf", .f32, &[_]IRType{.f32}, false);
+                try self.intrinsic_wrappers.put(wrapper, .sin);
+            }
+            return wrapper;
+        }
         if (std.ascii.eqlIgnoreCase(name, "DCOS")) {
             const wrapper = "__cf_intrinsic_dcos";
             if (!self.intrinsic_wrappers.contains(wrapper)) {

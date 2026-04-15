@@ -37,7 +37,7 @@ pub fn installFunctionLocals(
         if (sym.is_external) continue;
         if (sym.is_intrinsic) continue;
         if (sym.kind == .parameter and !shouldMaterializeParameterArrayLocal(sym)) continue;
-        if (sym.kind == .subroutine) continue;
+        if (sym.kind == .subroutine and !sym.is_pointer) continue;
         if (sym.kind == .function and !sym.is_pointer and !is_return_symbol and ctx.unit.kind != .function) continue;
         if (is_return_symbol and options.uses_hidden_result_ptr) continue;
         if (ctx.locals.contains(sym.name)) continue;

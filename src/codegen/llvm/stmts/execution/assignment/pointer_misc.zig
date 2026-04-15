@@ -155,15 +155,15 @@ pub fn targetExprSymbol(ctx: *Context, expr_node: *ast.Expr) ?ast.sema.Symbol {
 fn emitPointerValue(ctx: *Context, builder: anytype, expr_node: *ast.Expr) EmitError!ValueRef {
     return switch (expr_node.*) {
         .identifier => |name| blk: {
+            if (try expr_call.procedureDesignatorPointer(ctx, name)) |proc_ptr| {
+                break :blk .{ .name = proc_ptr.name, .ty = .ptr, .is_ptr = false };
+            }
             const sym = ctx.findSymbol(name) orelse return error.UnknownSymbol;
             if (sym.is_pointer) {
                 const slot = try ctx.getPointer(name);
                 const tmp = try ctx.nextTemp();
                 try builder.load(tmp, .ptr, slot);
                 break :blk .{ .name = tmp, .ty = .ptr, .is_ptr = false };
-            }
-            if (try expr_call.procedureDesignatorPointer(ctx, name)) |proc_ptr| {
-                break :blk .{ .name = proc_ptr.name, .ty = .ptr, .is_ptr = false };
             }
             break :blk try expr.emitLValue(ctx, builder, expr_node);
         },
@@ -230,6 +230,11 @@ fn emitPointerValue(ctx: *Context, builder: anytype, expr_node: *ast.Expr) EmitE
         .call_or_subscript => |call| blk: {
             if (std.ascii.eqlIgnoreCase(call.name, "null")) {
                 break :blk .{ .name = "null", .ty = .ptr, .is_ptr = false };
+            }
+            if (call.args.len == 0) {
+                if (try expr_call.procedureDesignatorPointer(ctx, call.name)) |proc_ptr| {
+                    break :blk .{ .name = proc_ptr.name, .ty = .ptr, .is_ptr = false };
+                }
             }
             var kind = ctx.ref_kinds.get(@as(usize, @intFromPtr(expr_node))) orelse .unknown;
             if (kind == .unknown) {

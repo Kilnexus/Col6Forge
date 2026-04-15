@@ -164,8 +164,9 @@ pub fn procedureDesignatorPointer(ctx: *Context, name: []const u8) !?ValueRef {
         return .{ .name = ptr_name, .ty = .ptr, .is_ptr = true };
     }
 
+    const known_sig = ctx.lookupKnownProcedureSig(name);
     const sym = ctx.findSymbol(name) orelse {
-        if (ctx.lookupKnownProcedureSig(name) == null) return null;
+        if (known_sig == null) return null;
         if (try procedureDefinedIRName(ctx, name, null)) |ir_name| {
             const ptr_name = try std.fmt.allocPrint(ctx.allocator, "@{s}", .{ir_name});
             return .{ .name = ptr_name, .ty = .ptr, .is_ptr = true };
@@ -173,7 +174,7 @@ pub fn procedureDesignatorPointer(ctx: *Context, name: []const u8) !?ValueRef {
         return null;
     };
     if (sym.is_pointer) return null;
-    if (!(sym.kind == .function or sym.kind == .subroutine or sym.is_external)) return null;
+    if (!(sym.kind == .function or sym.kind == .subroutine or sym.is_external or known_sig != null)) return null;
     if (sym.storage == .dummy and sym.is_external) {
         return try ctx.getPointer(name);
     }
@@ -341,14 +342,6 @@ fn procedureDefinedIRName(
     const plain = try ctx.mangleName(name);
     if (ctx.defined.contains(plain) or ctx.decls.contains(plain)) return plain;
 
-    const owner_name = ctx.unit.owner_name orelse switch (ctx.unit.kind) {
-        .program, .subroutine, .function => ctx.unit.name,
-        else => return null,
-    };
-    const owner_kind = ctx.unit.owner_kind orelse switch (ctx.unit.kind) {
-        .module => ast.LexicalOwnerKind.module,
-        else => ast.LexicalOwnerKind.procedure,
-    };
     const proc_kind = if (sym_opt) |sym|
         switch (sym.kind) {
             .function => ast.ProgramUnitKind.function,
@@ -358,6 +351,21 @@ fn procedureDefinedIRName(
         sig.kind
     else
         ast.ProgramUnitKind.subroutine;
+
+    if (try visibleQualifiedProcedureIRName(ctx, name, sym_opt, proc_kind)) |qualified| return qualified;
+    if (try uniqueDefinedProcedureIRNameBySuffix(ctx, name)) |mangled| return mangled;
+    if (sym_opt) |sym| {
+        if (hostAssociatedProcedureIRName(ctx, name, proc_kind, sym)) |host_ir| return host_ir;
+    }
+
+    const owner_name = ctx.unit.owner_name orelse switch (ctx.unit.kind) {
+        .program, .subroutine, .function => ctx.unit.name,
+        else => return null,
+    };
+    const owner_kind = ctx.unit.owner_kind orelse switch (ctx.unit.kind) {
+        .module => ast.LexicalOwnerKind.module,
+        else => ast.LexicalOwnerKind.procedure,
+    };
     const owned = try utils.mangleProcedureUnitName(ctx.allocator, .{
         .kind = proc_kind,
         .name = name,
@@ -367,8 +375,142 @@ fn procedureDefinedIRName(
         .decls = &.{},
         .stmts = &.{},
     });
-    if (ctx.defined.contains(owned) or ctx.decls.contains(owned)) return owned;
+    if (ctx.defined.contains(owned) or ctx.decls.contains(owned) or sym_opt != null) return owned;
     return null;
+}
+
+fn visibleQualifiedProcedureIRName(
+    ctx: *Context,
+    name: []const u8,
+    sym_opt: ?ast.sema.Symbol,
+    proc_kind: ast.ProgramUnitKind,
+) !?[]const u8 {
+    var match: ?[]const u8 = null;
+    const lexical_owner_name = ctx.unit.owner_name orelse if (ctx.unit.kind == .program or ctx.unit.kind == .subroutine or ctx.unit.kind == .function)
+        ctx.unit.name
+    else
+        null;
+    var it = ctx.known_procedure_sigs.iterator();
+    while (it.next()) |entry| {
+        const qualified = entry.key_ptr.*;
+        const sep = std.mem.lastIndexOf(u8, qualified, "::") orelse continue;
+        if (!std.ascii.eqlIgnoreCase(qualified[sep + 2 ..], name)) continue;
+
+        const owner_name = qualified[0..sep];
+        const owner_kinds = ownerKindsForVisibleProcedure(owner_name, lexical_owner_name, sym_opt);
+        for (owner_kinds) |owner_kind| {
+            const candidate = try utils.mangleProcedureUnitName(ctx.allocator, .{
+                .kind = proc_kind,
+                .name = name,
+                .owner_name = owner_name,
+                .owner_kind = owner_kind,
+                .args = &.{},
+                .decls = &.{},
+                .stmts = &.{},
+            });
+            const is_known_ir = ctx.defined.contains(candidate) or ctx.decls.contains(candidate);
+            if (match) |existing| {
+                if (!std.mem.eql(u8, existing, candidate)) {
+                    if (isKnownPreferredVisibleProcedureCandidate(owner_name, lexical_owner_name, sym_opt)) return null;
+                    continue;
+                }
+            } else {
+                match = candidate;
+            }
+            if (is_known_ir) return candidate;
+        }
+    }
+    return match;
+}
+
+fn ownerKindsForVisibleProcedure(
+    owner_name: []const u8,
+    lexical_owner_name: ?[]const u8,
+    sym_opt: ?ast.sema.Symbol,
+) []const ast.LexicalOwnerKind {
+    if (sym_opt) |sym| {
+        if (sym.is_host_associated) {
+            if (sym.host_owner_name) |host_owner| {
+                if (std.ascii.eqlIgnoreCase(host_owner, owner_name)) return &.{.module};
+            }
+        }
+    }
+    if (lexical_owner_name) |lexical_owner| {
+        if (std.ascii.eqlIgnoreCase(lexical_owner, owner_name)) return &.{.procedure};
+    }
+    return &.{ .module, .procedure };
+}
+
+fn isKnownPreferredVisibleProcedureCandidate(
+    owner_name: []const u8,
+    lexical_owner_name: ?[]const u8,
+    sym_opt: ?ast.sema.Symbol,
+) bool {
+    if (sym_opt) |sym| {
+        if (sym.is_host_associated) {
+            if (sym.host_owner_name) |host_owner| {
+                if (std.ascii.eqlIgnoreCase(host_owner, owner_name)) return true;
+            }
+        }
+    }
+    if (lexical_owner_name) |lexical_owner| {
+        if (std.ascii.eqlIgnoreCase(lexical_owner, owner_name)) return true;
+    }
+    return false;
+}
+
+fn uniqueDefinedProcedureIRNameBySuffix(ctx: *Context, name: []const u8) !?[]const u8 {
+    const lowered = try utils.lowerName(ctx.allocator, name);
+    const owned_suffix = try std.fmt.allocPrint(ctx.allocator, "__{s}_", .{lowered});
+    const plain_suffix = try std.fmt.allocPrint(ctx.allocator, "{s}_", .{lowered});
+
+    var match: ?[]const u8 = null;
+    var defined_it = ctx.defined.iterator();
+    while (defined_it.next()) |entry| {
+        const candidate = entry.key_ptr.*;
+        if (!matchesProcedureSuffix(candidate, plain_suffix, owned_suffix)) continue;
+        if (match) |existing| {
+            if (!std.mem.eql(u8, existing, candidate)) return null;
+        } else {
+            match = candidate;
+        }
+    }
+
+    var decl_it = ctx.decls.iterator();
+    while (decl_it.next()) |entry| {
+        const candidate = entry.key_ptr.*;
+        if (!matchesProcedureSuffix(candidate, plain_suffix, owned_suffix)) continue;
+        if (match) |existing| {
+            if (!std.mem.eql(u8, existing, candidate)) return null;
+        } else {
+            match = candidate;
+        }
+    }
+
+    return match;
+}
+
+fn matchesProcedureSuffix(candidate: []const u8, plain_suffix: []const u8, owned_suffix: []const u8) bool {
+    return std.mem.eql(u8, candidate, plain_suffix) or std.mem.endsWith(u8, candidate, owned_suffix);
+}
+
+fn hostAssociatedProcedureIRName(
+    ctx: *Context,
+    name: []const u8,
+    proc_kind: ast.ProgramUnitKind,
+    sym: ast.sema.Symbol,
+) ?[]const u8 {
+    if (!sym.is_host_associated) return null;
+    const owner_name = sym.host_owner_name orelse return null;
+    return utils.mangleProcedureUnitName(ctx.allocator, .{
+        .kind = proc_kind,
+        .name = name,
+        .owner_name = owner_name,
+        .owner_kind = .module,
+        .args = &.{},
+        .decls = &.{},
+        .stmts = &.{},
+    }) catch null;
 }
 
 fn procedureReturnIRType(ctx: *Context, name: []const u8, sym: ast.sema.Symbol) IRType {

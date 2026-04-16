@@ -81,7 +81,10 @@ pub fn lookupProcedureDeclaratorSig(self: *context.Context, name: []const u8) ?c
                     .arg_count = 0,
                     .result_type_spec = procedureDeclaratorTypeSpec(self, proc_type),
                 },
-                else => null,
+                .none => .{
+                    .kind = .subroutine,
+                    .arg_count = 0,
+                },
             };
         }
     }

@@ -395,32 +395,35 @@ pub fn checkProcedurePointerAssignmentCompatibility(
     try rejectArrayPassedObjectProcedureComponentPointerAssignment(self, target_expr);
     const target_sig = procedurePointerExprSig(self, target_expr) orelse return;
     const value_sig = procedurePointerAssignmentValueSig(self, value_expr) orelse return;
+    const target_uses_type_spec_interface = procedurePointerAssignmentUsesTypeSpecInterface(self, target_expr);
     if (target_sig.kind != value_sig.kind) {
-        if (procedurePointerAssignmentUsesTypeSpecInterface(self, target_expr)) {
+        if (target_uses_type_spec_interface) {
             return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "is invalid in procedure pointer assignment");
         }
         return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, procedureKindMismatchMessage(target_sig.kind));
     }
-    if (target_sig.arg_count != value_sig.arg_count or target_sig.alt_return_count != value_sig.alt_return_count) {
-        return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "wrong number of arguments");
-    }
+    if (!target_uses_type_spec_interface) {
+        if (target_sig.arg_count != value_sig.arg_count or target_sig.alt_return_count != value_sig.alt_return_count) {
+            return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "wrong number of arguments");
+        }
 
-    const count = @min(target_sig.args.len, value_sig.args.len);
-    var idx: usize = 0;
-    while (idx < count) : (idx += 1) {
-        const expected = target_sig.args[idx];
-        const actual = value_sig.args[idx];
-        if (expected.is_procedure != actual.is_procedure) {
-            return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Interface mismatch in procedure pointer assignment");
-        }
-        if (expected.optional != actual.optional) {
-            return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Interface mismatch in procedure pointer assignment");
-        }
-        if (expected.intent != null and actual.intent != null and expected.intent.? != actual.intent.?) {
-            return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Interface mismatch in procedure pointer assignment");
-        }
-        if (!expected.is_procedure and procedureDummyDataArgMismatchMessage(self, expected, actual, deps) != null) {
-            return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Interface mismatch in procedure pointer assignment");
+        const count = @min(target_sig.args.len, value_sig.args.len);
+        var idx: usize = 0;
+        while (idx < count) : (idx += 1) {
+            const expected = target_sig.args[idx];
+            const actual = value_sig.args[idx];
+            if (expected.is_procedure != actual.is_procedure) {
+                return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Interface mismatch in procedure pointer assignment");
+            }
+            if (expected.optional != actual.optional) {
+                return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Interface mismatch in procedure pointer assignment");
+            }
+            if (expected.intent != null and actual.intent != null and expected.intent.? != actual.intent.?) {
+                return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Interface mismatch in procedure pointer assignment");
+            }
+            if (!expected.is_procedure and procedureDummyDataArgMismatchMessage(self, expected, actual, deps) != null) {
+                return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Interface mismatch in procedure pointer assignment");
+            }
         }
     }
     if (target_sig.result_rank != value_sig.result_rank) {

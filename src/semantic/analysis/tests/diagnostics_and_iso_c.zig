@@ -167,6 +167,74 @@ test "module procedure explicit interface body does not conflict with module con
     try testing.expect(diag.take() == null);
 }
 
+test "anonymous subroutine interface matching function name still conflicts" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "function foo(x)\n" ++
+        "  real :: x\n" ++
+        "  interface\n" ++
+        "    subroutine foo(i)\n" ++
+        "      integer :: i\n" ++
+        "    end subroutine\n" ++
+        "  end interface\n" ++
+        "end function foo\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = split_api.analyzeProgram(arena.allocator(), program) catch {};
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "attribute conflicts with") != null);
+}
+
+test "procedure pointer assignment with type-spec interface does not overconstrain intrinsic arity" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "implicit none\n" ++
+        "procedure(integer), pointer :: p2\n" ++
+        "p2 => iabs\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expect(diag.take() == null);
+}
+
+test "procedure pointer assignment rejects function for procedure() target" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "implicit none\n" ++
+        "procedure(), pointer :: p4\n" ++
+        "procedure(integer), pointer :: p2\n" ++
+        "p4 => p2\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = split_api.analyzeProgram(arena.allocator(), program) catch {};
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "is not a subroutine") != null);
+}
+
 test "explicit interface import can reference host derived type" {
     const testing = std.testing;
     const allocator = testing.allocator;

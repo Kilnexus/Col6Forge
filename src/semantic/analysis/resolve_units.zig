@@ -307,6 +307,7 @@ fn currentFunctionResultInterfaceHeader(
 ) bool {
     if (ctx.unit.kind != .function) return false;
     if (interface_block.name != null) return false;
+    if (proc_header.kind != .function) return false;
     if (!std.ascii.eqlIgnoreCase(proc_header.name, ctx.unit.name)) return false;
     return proc_header.result_name == null or std.ascii.eqlIgnoreCase(proc_header.result_name.?, ctx.unit.name);
 }

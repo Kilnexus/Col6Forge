@@ -183,7 +183,7 @@ pub fn procedureDesignatorPointer(ctx: *Context, name: []const u8) !?ValueRef {
         const ptr_name = try std.fmt.allocPrint(ctx.allocator, "@{s}", .{ir_name});
         return .{ .name = ptr_name, .ty = .ptr, .is_ptr = true };
     }
-    if (!sym.is_external) return null;
+    if (!sym.is_external and known_sig == null) return null;
 
     const ret_ty = procedureReturnIRType(ctx, name, sym);
     const mangled = try ctx.ensureDecl(name, ret_ty);
@@ -396,9 +396,6 @@ fn procedureDefinedIRName(
         .stmts = &.{},
     });
     if (ctx.defined.contains(owned) or ctx.decls.contains(owned)) return owned;
-    if (sym_opt) |sym| {
-        if (!sym.is_external) return owned;
-    }
     return null;
 }
 
@@ -447,7 +444,7 @@ fn visibleQualifiedProcedureIRName(
             if (is_known_ir) return candidate;
         }
     }
-    return match;
+    return null;
 }
 
 fn ownerKindsForVisibleProcedure(

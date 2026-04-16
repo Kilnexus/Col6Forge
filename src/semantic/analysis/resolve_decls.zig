@@ -9,6 +9,7 @@ const constants = @import("resolve_const.zig");
 const resolve_expr = @import("resolve_expr.zig");
 const type_kind_selector = @import("../type_kind_selector.zig");
 const procedure_interfaces = @import("check_statements/procedure_interfaces.zig");
+const common_entity_queries = @import("common_entity_queries.zig");
 const decl_diag = @import("resolve_decls_diag_helpers.zig");
 const decl_initializers = @import("resolve_decls_initializers.zig");
 
@@ -69,11 +70,41 @@ pub fn applyProcedureDecl(self: *context.Context, decl: ast.ProcedureDecl) !void
         return error.DuplicateDeclaration;
     }
     for (decl.items) |item| {
+        if (common_entity_queries.currentUnitDeclaresCommonEntity(self.unit, item.name)) {
+            const source = self.current_decl_source orelse ast.DeclSource{};
+            self.setDiagnosticStructured(
+                if (source.line == 0) 1 else source.line,
+                if (source.column == 0) 1 else source.column,
+                catalog.semantic.duplicate_declaration.code,
+                "PROCEDURE attribute conflicts with COMMON attribute",
+                source.text,
+                "conflicting declaration here",
+                &.{.{ .text = "A COMMON block entity cannot also be declared with the PROCEDURE attribute." }},
+                &.{.{ .text = "Remove the PROCEDURE declaration or take the entity out of the COMMON block." }},
+                &.{},
+            );
+            return error.DuplicateDeclaration;
+        }
         const resolved = try resolveProcedureDeclarator(self, decl.interface, item.name);
         try applyDeclarator(self, resolved.type_spec, item, .local, resolved.explicit_type, false, decl.pointer, false);
 
         const idx = symbols_mod.findSymbolIndex(self, item.name) orelse return error.UnknownSymbol;
         var sym = &self.symbols.items[idx];
+        if (sym.storage == .common) {
+            const source = self.current_decl_source orelse ast.DeclSource{};
+            self.setDiagnosticStructured(
+                if (source.line == 0) 1 else source.line,
+                if (source.column == 0) 1 else source.column,
+                catalog.semantic.duplicate_declaration.code,
+                "PROCEDURE attribute conflicts with COMMON attribute",
+                source.text,
+                "conflicting declaration here",
+                &.{.{ .text = "A COMMON block entity cannot also be declared with the PROCEDURE attribute." }},
+                &.{.{ .text = "Remove the PROCEDURE declaration or take the entity out of the COMMON block." }},
+                &.{},
+            );
+            return error.DuplicateDeclaration;
+        }
         try validateKnownFunctionResultDeclaration(self, sym.*, false);
         if (resolved.kind) |kind| {
             sym.kind = kind;

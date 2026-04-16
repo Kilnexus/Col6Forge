@@ -6,6 +6,7 @@ const symbols = @import("../symbol/mod.zig");
 const context = @import("context.zig");
 const constants = @import("resolve_const.zig");
 const decls = @import("resolve_decls.zig");
+const common_entity_queries = @import("common_entity_queries.zig");
 const select_type_char_clause = @import("select_type_char_clause.zig");
 const expressions = @import("resolve_expr.zig");
 const symbols_mod = @import("resolve_symbols.zig");
@@ -71,6 +72,21 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
                     }
                 }
                 return;
+            }
+            if (common_entity_queries.currentUnitDeclaresCommonEntity(self.unit, call.name)) {
+                const source = if (call.source.line != 0) call.source else ast.SourceRef{};
+                self.setDiagnosticStructured(
+                    if (source.line == 0) 1 else source.line,
+                    if (source.column == 0) 1 else source.column,
+                    catalog.semantic.duplicate_declaration.code,
+                    "PROCEDURE attribute conflicts with COMMON attribute",
+                    source.text,
+                    "invalid procedure reference here",
+                    &.{.{ .text = "A COMMON block entity cannot be referenced as a procedure." }},
+                    &.{.{ .text = "Rename the COMMON entity or stop using it as a procedure target." }},
+                    &.{},
+                );
+                return error.DuplicateDeclaration;
             }
             const idx = try symbols_mod.ensureSymbol(self, call.name);
             if (shouldMarkCallTargetAsExternal(self.symbols.items[idx])) {
@@ -626,6 +642,7 @@ fn shouldMarkCallTargetAsExternal(sym: symbols.Symbol) bool {
     if (sym.is_external or sym.is_intrinsic) return false;
     if (sym.is_pointer) return false;
     if (sym.storage == .dummy) return false;
+    if (sym.storage == .common) return false;
     if (sym.kind == .function or sym.kind == .subroutine) return false;
     return true;
 }

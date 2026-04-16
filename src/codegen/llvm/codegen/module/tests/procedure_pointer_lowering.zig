@@ -158,6 +158,38 @@ test "emitModuleToWriter lowers interface-only external procedure pointer target
     try testing.expect(std.mem.indexOf(u8, output, "@proc_test__prc_is_allowed_") == null);
 }
 
+test "emitModuleToWriter keeps interface-only external procedure targets external in unnamed program" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "  procedure(prc_is_allowed), pointer :: fptr\n" ++
+        "  interface\n" ++
+        "     function prc_is_allowed(flv, hel, col) result(is_allowed)\n" ++
+        "       logical :: is_allowed\n" ++
+        "       integer, intent(in) :: flv, hel, col\n" ++
+        "     end function prc_is_allowed\n" ++
+        "  end interface\n" ++
+        "  fptr => prc_is_allowed\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem_prog = try split_api.analyzeProgram(arena.allocator(), program);
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try emitModuleToWriter(&writer, allocator, program, sem_prog, "proc_ptr_interface_external_unnamed.f90", .{});
+
+    const output = buffer.items;
+    try testing.expect(std.mem.indexOf(u8, output, "store ptr @prc_is_allowed_") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "@proc___col6forge_program1__prc_is_allowed_") == null);
+}
+
 test "emitModuleToWriter calls use-associated module procedures through qualified IR names" {
     const testing = std.testing;
     const allocator = testing.allocator;

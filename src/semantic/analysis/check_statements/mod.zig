@@ -31,6 +31,19 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
     switch (node) {
         .assignment => |assign| {
             if (procedure_calls.isCurrentUnitAmbiguousResultRef(self, assign.target)) return error.DuplicateDeclaration;
+            if (procedure_calls.procedurePointerExprSig(self, assign.target) != null and
+                expr_semantics.isPointerTarget(self, assign.target))
+            {
+                const source = self.sourceForExpr(assign.target) orelse ast.SourceRef{};
+                self.setDiagnostic(
+                    if (source.line == 0) 1 else source.line,
+                    if (source.column == 0) 1 else source.column,
+                    catalog.semantic.assignment_type_mismatch.code,
+                    "Illegal assignment",
+                    source.text,
+                );
+                return error.AssignmentTypeMismatch;
+            }
             const target_ty = try expr_semantics.checkExprType(self, assign.target, .{
                 .dummyArgTypeCompatible = dummyArgTypeCompatible,
             });
@@ -61,9 +74,22 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             _ = try expr_semantics.checkExprType(self, assign.target, .{
                 .dummyArgTypeCompatible = dummyArgTypeCompatible,
             });
-            _ = try expr_semantics.checkExprType(self, assign.value, .{
-                .dummyArgTypeCompatible = dummyArgTypeCompatible,
-            });
+            const procedure_pointer_target = procedure_calls.procedurePointerExprSig(self, assign.target) != null;
+            if (procedure_pointer_target and assign.value.* == .call_or_subscript) {
+                for (assign.value.call_or_subscript.args) |arg| {
+                    _ = expr_semantics.checkExprType(self, arg, .{
+                        .dummyArgTypeCompatible = dummyArgTypeCompatible,
+                    }) catch |err| {
+                        if (!self.usesExplicitDiagnosticBag()) return err;
+                        self.recordSemanticError(err);
+                        continue;
+                    };
+                }
+            } else {
+                _ = try expr_semantics.checkExprType(self, assign.value, .{
+                    .dummyArgTypeCompatible = dummyArgTypeCompatible,
+                });
+            }
             try abstract_expr_use.rejectNonpolymorphicAbstractExprUse(self, assign.target, error.AssignmentTypeMismatch);
             try abstract_expr_use.rejectNonpolymorphicAbstractExprUse(self, assign.value, error.AssignmentTypeMismatch);
             if (expr_semantics.exprUsesNonDefinableAlias(self, assign.target)) {
@@ -99,7 +125,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 );
                 return error.AssignmentTypeMismatch;
             }
-            if (procedure_calls.procedurePointerExprSig(self, assign.target) != null) {
+            if (procedure_pointer_target) {
                 try procedure_calls.validateProcedurePointerAssignmentValue(self, assign.value);
             } else if (!expr_semantics.isPointerValuedExpr(self, assign.value) and !expr_semantics.isAddressableDataTargetExpr(self, assign.value)) {
                 const source = self.sourceForExpr(assign.value) orelse self.sourceForExpr(assign.target) orelse ast.SourceRef{};

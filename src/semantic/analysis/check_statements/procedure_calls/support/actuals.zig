@@ -6,6 +6,7 @@ const procedure_pass = @import("../../../../../common/procedure_pass.zig");
 const free_form = @import("../../../../../frontend/free_form.zig");
 const parser = @import("../../../../../frontend/parser/mod.zig");
 const symbols = @import("../../../../symbol/mod.zig");
+const intrinsic_signature = @import("../../../../intrinsic_signature.zig");
 const procedure_inference = @import("../../../../split/api/procedure_inference.zig");
 const context = @import("../../../context.zig");
 const constants = @import("../../../resolve_const.zig");
@@ -262,7 +263,7 @@ pub fn procedurePointerExprSig(
     expr_node: *ast.Expr,
 ) ?context.Context.ProcedureSig {
     return switch (expr_node.*) {
-        .identifier => |name| resolve_symbols.lookupKnownProcedureSig(self, name) orelse lookupProcedureDeclaratorSig(self, name),
+        .identifier => |name| lookupProcedureDeclaratorSig(self, name) orelse resolve_symbols.lookupKnownProcedureSig(self, name),
         .component => |comp| blk: {
             if (comp.has_parens) break :blk null;
             const base_spec = resolve_expr.exprTypeSpec(self, comp.base) catch break :blk null;
@@ -280,6 +281,34 @@ pub fn procedurePointerExprSig(
             };
         },
         else => null,
+    };
+}
+
+pub fn procedurePointerAssignmentValueSig(
+    self: *context.Context,
+    expr_node: *ast.Expr,
+) ?context.Context.ProcedureSig {
+    return switch (expr_node.*) {
+        .identifier => |name| procedurePointerExprSig(self, expr_node) orelse intrinsicProcedurePointerSig(self, name),
+        else => procedurePointerExprSig(self, expr_node),
+    };
+}
+
+fn intrinsicProcedurePointerSig(
+    self: *context.Context,
+    name: []const u8,
+) ?context.Context.ProcedureSig {
+    if (!resolve_symbols.isIntrinsicName(name)) return null;
+    const arity = leaf_helpers.lookupIntrinsicArity(self, name) orelse return null;
+    const default_result = symbols.TypeSpec.fromResolvedKind(.real, .real, null);
+    const result_spec = resolve_symbols.lookupKnownFunctionResolvedSpec(self, name) orelse
+        (intrinsic_signature.inferResultType(name, default_result, &.{}) catch return null);
+    return .{
+        .kind = .function,
+        .arg_count = arity.min,
+        .alt_return_count = 0,
+        .args = &.{},
+        .result_type_spec = result_spec,
     };
 }
 

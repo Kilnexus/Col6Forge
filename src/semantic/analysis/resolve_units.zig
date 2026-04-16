@@ -272,11 +272,13 @@ fn findExplicitInterfaceDeclSource(ctx: *context.Context, target_name: []const u
         if (decl != .interface_block) continue;
         for (decl.interface_block.procedures) |procedure_name| {
             if (!std.ascii.eqlIgnoreCase(procedure_name, target_name)) continue;
+            if (currentFunctionResultInterfaceName(ctx, decl.interface_block, procedure_name)) continue;
             if (decl_idx < ctx.unit.decl_sources.len) return ctx.unit.decl_sources[decl_idx];
             return null;
         }
         for (decl.interface_block.procedure_headers) |proc_header| {
             if (!std.ascii.eqlIgnoreCase(proc_header.name, target_name)) continue;
+            if (currentFunctionResultInterfaceHeader(ctx, decl.interface_block, proc_header)) continue;
             if (decl_idx < ctx.unit.decl_sources.len) return ctx.unit.decl_sources[decl_idx];
             return null;
         }
@@ -286,6 +288,27 @@ fn findExplicitInterfaceDeclSource(ctx: *context.Context, target_name: []const u
         if (std.ascii.eqlIgnoreCase(entry.key_ptr.*, target_name)) return entry.value_ptr.*;
     }
     return null;
+}
+
+fn currentFunctionResultInterfaceName(
+    ctx: *context.Context,
+    interface_block: ast.InterfaceBlock,
+    procedure_name: []const u8,
+) bool {
+    if (ctx.unit.kind != .function) return false;
+    if (interface_block.name != null) return false;
+    return std.ascii.eqlIgnoreCase(procedure_name, ctx.unit.name);
+}
+
+fn currentFunctionResultInterfaceHeader(
+    ctx: *context.Context,
+    interface_block: ast.InterfaceBlock,
+    proc_header: ast.InterfaceProcedure,
+) bool {
+    if (ctx.unit.kind != .function) return false;
+    if (interface_block.name != null) return false;
+    if (!std.ascii.eqlIgnoreCase(proc_header.name, ctx.unit.name)) return false;
+    return proc_header.result_name == null or std.ascii.eqlIgnoreCase(proc_header.result_name.?, ctx.unit.name);
 }
 
 fn clearStmtResolutionCaches(ctx: *context.Context) void {

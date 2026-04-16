@@ -282,7 +282,8 @@ fn emitExprImpl(ctx: *Context, builder: anytype, expr: *Expr, subst_depth: usize
                 }
             }
             if (kind != .call) return error.AmbiguousCallOrSubscript;
-            if (ctx.lookupKnownProcedureSig(call_or_sub.name)) |proc_sig| {
+            const known_proc_sig = ctx.lookupKnownProcedureSig(call_or_sub.name);
+            if (known_proc_sig) |proc_sig| {
                 if (proc_sig.result_rank != 0) return error.UnsupportedArrayActual;
             }
             if (isStructureConstructorCall(ctx, sym, call_or_sub)) {
@@ -313,8 +314,25 @@ fn emitExprImpl(ctx: *Context, builder: anytype, expr: *Expr, subst_depth: usize
             if (sym.is_intrinsic) {
                 return intrinsics.emitIntrinsicCall(ctx, builder, call_or_sub.name, call_or_sub.args);
             }
-            const ret_ty = if (sym.kind == .function and sym.is_pointer) ir.IRType.ptr else ctx.typeFromKind(sym.loweredKind());
-            const is_character_function = sym.kind == .function and sym.isCharacter();
+            const ret_ty: ir.IRType = if (known_proc_sig) |proc_sig|
+                switch (proc_sig.kind) {
+                    .function => blk: {
+                        if (proc_sig.is_pointer or proc_sig.result_rank != 0 or proc_sig.result_allocatable) break :blk .ptr;
+                        if (proc_sig.result_type_spec) |spec| {
+                            break :blk if (spec.lowered_kind == .derived or spec.lowered_kind == .character) .ptr else ctx.typeFromKind(spec.lowered_kind);
+                        }
+                        break :blk ctx.typeFromKind(sym.loweredKind());
+                    },
+                    else => .void,
+                }
+            else if (sym.kind == .function and sym.is_pointer)
+                .ptr
+            else
+                ctx.typeFromKind(sym.loweredKind());
+            const is_character_function = if (known_proc_sig) |proc_sig|
+                proc_sig.kind == .function and proc_sig.result_type_spec != null and proc_sig.result_type_spec.?.lowered_kind == .character
+            else
+                sym.kind == .function and sym.isCharacter();
             if (is_character_function) {
                 const plan = (try character.emitCharacterValuePlanImpl(ctx, builder, expr, subst_depth)) orelse return error.NonConstantCharacterLength;
                 return .{ .name = plan.ptr.name, .ty = .ptr, .is_ptr = false };

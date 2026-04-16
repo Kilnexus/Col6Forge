@@ -413,6 +413,10 @@ fn visibleQualifiedProcedureIRName(
         ctx.unit.name
     else
         null;
+    const lexical_owner_kind = ctx.unit.owner_kind orelse if (ctx.unit.kind == .program or ctx.unit.kind == .subroutine or ctx.unit.kind == .function)
+        ast.LexicalOwnerKind.procedure
+    else
+        null;
     var it = ctx.known_procedure_sigs.iterator();
     while (it.next()) |entry| {
         const qualified = entry.key_ptr.*;
@@ -420,7 +424,7 @@ fn visibleQualifiedProcedureIRName(
         if (!std.ascii.eqlIgnoreCase(qualified[sep + 2 ..], name)) continue;
 
         const owner_name = qualified[0..sep];
-        const owner_kinds = ownerKindsForVisibleProcedure(owner_name, lexical_owner_name, sym_opt);
+        const owner_kinds = ownerKindsForVisibleProcedure(owner_name, lexical_owner_name, lexical_owner_kind, sym_opt);
         for (owner_kinds) |owner_kind| {
             const candidate = try utils.mangleProcedureUnitName(ctx.allocator, .{
                 .kind = proc_kind,
@@ -449,6 +453,7 @@ fn visibleQualifiedProcedureIRName(
 fn ownerKindsForVisibleProcedure(
     owner_name: []const u8,
     lexical_owner_name: ?[]const u8,
+    lexical_owner_kind: ?ast.LexicalOwnerKind,
     sym_opt: ?ast.sema.Symbol,
 ) []const ast.LexicalOwnerKind {
     if (sym_opt) |sym| {
@@ -459,7 +464,10 @@ fn ownerKindsForVisibleProcedure(
         }
     }
     if (lexical_owner_name) |lexical_owner| {
-        if (std.ascii.eqlIgnoreCase(lexical_owner, owner_name)) return &.{.procedure};
+        if (std.ascii.eqlIgnoreCase(lexical_owner, owner_name)) {
+            if (lexical_owner_kind) |kind| return &.{kind};
+            return &.{.procedure};
+        }
     }
     return &.{ .module, .procedure };
 }

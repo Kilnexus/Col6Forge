@@ -5,6 +5,7 @@ const llvm_types = @import("../../../types.zig");
 const context = @import("../../context/mod.zig");
 const utils = @import("../../utils.zig");
 const procedure_pass = @import("../../../../../common/procedure_pass.zig");
+const procedure_name_resolution = @import("../procedure_name_resolution.zig");
 const type_specs = @import("../../../../../common/type_specs.zig");
 const type_kind_selector = @import("../../../../../semantic/type_kind_selector.zig");
 const ast_nodes = @import("../../../../../ast/nodes.zig");
@@ -242,6 +243,12 @@ pub fn ensureExternalDeclForCall(
     args: []*Expr,
     has_character_result: bool,
 ) ![]const u8 {
+    if (resolveVisibleProcedureCallTarget(ctx, name)) |resolved| {
+        return ensureExternalDeclForResolvedCall(ctx, resolved.lookup_name, resolved.ir_name, ret_ty, args, has_character_result);
+    }
+    if (try procedure_name_resolution.uniqueProcedureIRNameBySuffix(ctx, name)) |resolved_ir| {
+        return ensureExternalDeclForResolvedCall(ctx, name, resolved_ir, ret_ty, args, has_character_result);
+    }
     const mangled = try ctx.mangleName(name);
     return ensureExternalDeclForResolvedCall(ctx, name, mangled, ret_ty, args, has_character_result);
 }
@@ -369,6 +376,47 @@ fn lookupInterfaceProcedureSig(ctx: *Context, proc_name: []const u8, owner_name:
         if (ctx.lookupKnownProcedureSig(qualified)) |sig| return sig;
     }
     return ctx.lookupKnownProcedureSig(proc_name);
+}
+
+const VisibleProcedureCallTarget = struct {
+    lookup_name: []const u8,
+    ir_name: []const u8,
+};
+
+fn resolveVisibleProcedureCallTarget(ctx: *Context, name: []const u8) ?VisibleProcedureCallTarget {
+    const sym = ctx.findSymbol(name) orelse return null;
+    const owner_name = sym.host_owner_name orelse return null;
+
+    const qualified = std.fmt.allocPrint(ctx.allocator, "{s}::{s}", .{ owner_name, name }) catch return null;
+    if (ctx.lookupKnownProcedureSig(qualified) == null) return null;
+
+    const module_ir = utils.mangleProcedureUnitName(ctx.allocator, .{
+        .kind = if (sym.kind == .function) .function else .subroutine,
+        .name = name,
+        .owner_name = owner_name,
+        .owner_kind = .module,
+        .args = &.{},
+        .decls = &.{},
+        .stmts = &.{},
+    }) catch return null;
+    if (ctx.defined.contains(module_ir) or ctx.decls.contains(module_ir)) {
+        return .{ .lookup_name = qualified, .ir_name = module_ir };
+    }
+
+    const proc_ir = utils.mangleProcedureUnitName(ctx.allocator, .{
+        .kind = if (sym.kind == .function) .function else .subroutine,
+        .name = name,
+        .owner_name = owner_name,
+        .owner_kind = .procedure,
+        .args = &.{},
+        .decls = &.{},
+        .stmts = &.{},
+    }) catch return null;
+    if (ctx.defined.contains(proc_ir) or ctx.decls.contains(proc_ir)) {
+        return .{ .lookup_name = qualified, .ir_name = proc_ir };
+    }
+
+    return null;
 }
 
 fn promoteNumericKind(left: ast.TypeKind, right: ast.TypeKind) ast.TypeKind {

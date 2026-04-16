@@ -8,6 +8,7 @@ const dispatch = @import("../dispatch/mod.zig");
 const resolution = @import("../dispatch/resolution.zig");
 const casting = @import("../casting.zig");
 const utils = @import("../../utils.zig");
+const procedure_name_resolution = @import("../procedure_name_resolution.zig");
 
 const Expr = shared.Expr;
 const IRType = shared.IRType;
@@ -200,6 +201,7 @@ pub fn callableProcedurePointer(
         return try ctx.getPointer(name);
     }
     if (sym.is_pointer) {
+        if (!ctx.locals.contains(name)) return null;
         const slot_ptr = try ctx.getPointer(name);
         const fn_ptr_name = try ctx.nextTemp();
         try builder.load(fn_ptr_name, .ptr, slot_ptr);
@@ -371,7 +373,7 @@ fn procedureDefinedIRName(
         ast.ProgramUnitKind.subroutine;
 
     if (try visibleQualifiedProcedureIRName(ctx, name, sym_opt, proc_kind)) |qualified| return qualified;
-    if (try uniqueDefinedProcedureIRNameBySuffix(ctx, name)) |mangled| return mangled;
+    if (try procedure_name_resolution.uniqueProcedureIRNameBySuffix(ctx, name)) |mangled| return mangled;
     if (sym_opt) |sym| {
         if (hostAssociatedProcedureIRName(ctx, name, proc_kind, sym)) |host_ir| return host_ir;
     }
@@ -393,7 +395,10 @@ fn procedureDefinedIRName(
         .decls = &.{},
         .stmts = &.{},
     });
-    if (ctx.defined.contains(owned) or ctx.decls.contains(owned) or sym_opt != null) return owned;
+    if (ctx.defined.contains(owned) or ctx.decls.contains(owned)) return owned;
+    if (sym_opt) |sym| {
+        if (!sym.is_external) return owned;
+    }
     return null;
 }
 
@@ -475,41 +480,6 @@ fn isKnownPreferredVisibleProcedureCandidate(
         if (std.ascii.eqlIgnoreCase(lexical_owner, owner_name)) return true;
     }
     return false;
-}
-
-fn uniqueDefinedProcedureIRNameBySuffix(ctx: *Context, name: []const u8) !?[]const u8 {
-    const lowered = try utils.lowerName(ctx.allocator, name);
-    const owned_suffix = try std.fmt.allocPrint(ctx.allocator, "__{s}_", .{lowered});
-    const plain_suffix = try std.fmt.allocPrint(ctx.allocator, "{s}_", .{lowered});
-
-    var match: ?[]const u8 = null;
-    var defined_it = ctx.defined.iterator();
-    while (defined_it.next()) |entry| {
-        const candidate = entry.key_ptr.*;
-        if (!matchesProcedureSuffix(candidate, plain_suffix, owned_suffix)) continue;
-        if (match) |existing| {
-            if (!std.mem.eql(u8, existing, candidate)) return null;
-        } else {
-            match = candidate;
-        }
-    }
-
-    var decl_it = ctx.decls.iterator();
-    while (decl_it.next()) |entry| {
-        const candidate = entry.key_ptr.*;
-        if (!matchesProcedureSuffix(candidate, plain_suffix, owned_suffix)) continue;
-        if (match) |existing| {
-            if (!std.mem.eql(u8, existing, candidate)) return null;
-        } else {
-            match = candidate;
-        }
-    }
-
-    return match;
-}
-
-fn matchesProcedureSuffix(candidate: []const u8, plain_suffix: []const u8, owned_suffix: []const u8) bool {
-    return std.mem.eql(u8, candidate, plain_suffix) or std.mem.endsWith(u8, candidate, owned_suffix);
 }
 
 fn hostAssociatedProcedureIRName(

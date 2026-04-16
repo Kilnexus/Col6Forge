@@ -21,6 +21,14 @@ pub fn emitAssignmentTargetPtr(ctx: *Context, builder: anytype, target: *ast.Exp
             return expr.emitLinearSubscriptPtr(ctx, builder, call);
         }
     }
+    if (target.* == .component) {
+        const comp = target.component;
+        const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
+        const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse return error.UnknownSymbol;
+        if (!component.procedure and (component.pointer or component.allocatable) and component.dims.len == 0 and !comp.has_parens and comp.args.len == 0) {
+            return expr_memory.emitLoadedComponentDataPtr(ctx, builder, comp);
+        }
+    }
     return expr.emitLValue(ctx, builder, target);
 }
 
@@ -231,11 +239,6 @@ fn emitPointerValue(ctx: *Context, builder: anytype, expr_node: *ast.Expr) EmitE
             if (std.ascii.eqlIgnoreCase(call.name, "null")) {
                 break :blk .{ .name = "null", .ty = .ptr, .is_ptr = false };
             }
-            if (call.args.len == 0) {
-                if (try expr_call.procedureDesignatorPointer(ctx, call.name)) |proc_ptr| {
-                    break :blk .{ .name = proc_ptr.name, .ty = .ptr, .is_ptr = false };
-                }
-            }
             var kind = ctx.ref_kinds.get(@as(usize, @intFromPtr(expr_node))) orelse .unknown;
             if (kind == .unknown) {
                 if (ctx.findSymbol(call.name)) |sym| {
@@ -244,6 +247,11 @@ fn emitPointerValue(ctx: *Context, builder: anytype, expr_node: *ast.Expr) EmitE
                     } else if (sym.is_external or sym.is_intrinsic or sym.kind == .function) {
                         kind = .call;
                     }
+                }
+            }
+            if (call.args.len == 0 and kind != .call) {
+                if (try expr_call.procedureDesignatorPointer(ctx, call.name)) |proc_ptr| {
+                    break :blk .{ .name = proc_ptr.name, .ty = .ptr, .is_ptr = false };
                 }
             }
             if (kind == .subscript) {

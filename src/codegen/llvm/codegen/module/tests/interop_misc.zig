@@ -327,6 +327,40 @@ test "emitModuleToWriter lowers pointer array element assignment after c_f_point
     try emitModuleToWriter(&writer, allocator, program, sem_prog, "pointer_array_assign_after_c_f_pointer.f90", .{});
 }
 
+test "emitModuleToWriter lowers scalar assignment through pointer component target" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        \\module m
+        \\  implicit none
+        \\  type :: t
+        \\    logical, pointer :: lval
+        \\  end type t
+        \\contains
+        \\  subroutine s(x, v)
+        \\    type(t), intent(inout) :: x
+        \\    logical, intent(in) :: v
+        \\    allocate(x%lval)
+        \\    x%lval = v
+        \\  end subroutine s
+        \\end module m
+    ;
+
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem_prog = try split_api.analyzeProgram(arena.allocator(), program);
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try emitModuleToWriter(&writer, allocator, program, sem_prog, "pointer_component_scalar_assign.f90", .{});
+}
+
 test "emitModuleToWriter lowers pointer array element arithmetic without prior association" {
     const testing = std.testing;
     const allocator = testing.allocator;

@@ -313,7 +313,7 @@ fn emitExprImpl(ctx: *Context, builder: anytype, expr: *Expr, subst_depth: usize
             if (sym.is_intrinsic) {
                 return intrinsics.emitIntrinsicCall(ctx, builder, call_or_sub.name, call_or_sub.args);
             }
-            const ret_ty = if (sym.is_pointer) ir.IRType.ptr else ctx.typeFromKind(sym.loweredKind());
+            const ret_ty = if (sym.kind == .function and sym.is_pointer) ir.IRType.ptr else ctx.typeFromKind(sym.loweredKind());
             const is_character_function = sym.kind == .function and sym.isCharacter();
             if (is_character_function) {
                 const plan = (try character.emitCharacterValuePlanImpl(ctx, builder, expr, subst_depth)) orelse return error.NonConstantCharacterLength;

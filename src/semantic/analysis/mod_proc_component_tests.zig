@@ -149,6 +149,49 @@ test "derived procedure component PASS requires explicit interface and polymorph
     try testing.expect(std.mem.indexOf(u8, got.message, "NOPASS or explicit interface required") != null);
 }
 
+test "derived procedure component default PASS uses current module explicit interface" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module test\n" ++
+        "  implicit none\n" ++
+        "  type :: output\n" ++
+        "    real(8) :: dummy\n" ++
+        "  end type output\n" ++
+        "  type :: tester\n" ++
+        "    procedure(proc1), pointer :: ptr => null()\n" ++
+        "  end type tester\n" ++
+        "  abstract interface\n" ++
+        "    function proc1(self) result(uc)\n" ++
+        "      import :: tester, output\n" ++
+        "      class(tester), intent(in) :: self\n" ++
+        "      class(output), allocatable :: uc\n" ++
+        "    end function proc1\n" ++
+        "  end interface\n" ++
+        "end module test\n" ++
+        "module test1\n" ++
+        "  type :: output\n" ++
+        "  end type\n" ++
+        "  abstract interface\n" ++
+        "    function proc1() result(uc)\n" ++
+        "      import :: output\n" ++
+        "      class(output), allocatable :: uc\n" ++
+        "    end function proc1\n" ++
+        "  end interface\n" ++
+        "end module test1\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expect(diag.take() == null);
+}
+
 test "write rejects derived type with procedure pointer component" {
     const testing = std.testing;
     const allocator = testing.allocator;

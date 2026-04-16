@@ -5,6 +5,7 @@ const whole_array = @import("whole_array.zig");
 const flatten_mod = @import("flatten/mod.zig");
 const character_mod = @import("character.zig");
 const common = @import("../../../codegen/common.zig");
+const llvm_types = @import("../../../types.zig");
 const expr = @import("../../../codegen/expression/mod.zig");
 const expr_dispatch = @import("../../../codegen/expression/dispatch/mod.zig");
 
@@ -82,10 +83,7 @@ pub fn emitAssignment(ctx: *Context, builder: anytype, assign: ast.Assignment) E
     }
     const target_ptr = try pointer_misc.emitAssignmentTargetPtr(ctx, builder, assign.target);
     const value = try expr.emitExpr(ctx, builder, assign.value);
-    const target_ty = if (pointer_misc.targetExprSymbol(ctx, assign.target)) |sym|
-        common.symbolElementIRType(sym, ctx.options.target_layout)
-    else
-        try expr.exprType(ctx, assign.target);
+    const target_ty = try assignmentTargetIRType(ctx, assign.target);
     const coerced = try expr.coerce(ctx, builder, value, target_ty);
     try builder.store(coerced, target_ptr);
 }
@@ -139,6 +137,24 @@ pub fn constI64(ctx: *Context, value: i64) ValueRef {
 
 pub fn charLenForExpr(ctx: *Context, expr_node: *ast.Expr) ?usize {
     return character_mod.charLenForExpr(ctx, expr_node);
+}
+
+fn assignmentTargetIRType(ctx: *Context, target: *ast.Expr) EmitError!@import("../../../../ir.zig").IRType {
+    if (pointer_misc.targetExprSymbol(ctx, target)) |sym| {
+        return common.symbolElementIRType(sym, ctx.options.target_layout);
+    }
+    if (target.* == .component) {
+        const comp = target.component;
+        const base_name = ctx.derivedTypeNameForExpr(comp.base) orelse return error.UnknownSymbol;
+        const component = ctx.lookupDerivedComponentLayout(base_name, comp.name) orelse return error.UnknownSymbol;
+        if (!component.procedure and (component.pointer or component.allocatable)) {
+            return if (component.type_spec.lowered_kind == .logical)
+                llvm_types.defaultIntegerType(ctx.options.target_layout)
+            else
+                llvm_types.typeFromKindWithLayout(component.type_spec.lowered_kind, ctx.options.target_layout);
+        }
+    }
+    return expr.exprType(ctx, target);
 }
 
 fn lowerArraySectionSubstringExpr(ctx: *Context, expr_node: *ast.Expr) EmitError!?*ast.Expr {

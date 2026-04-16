@@ -250,6 +250,15 @@ pub const Context = struct {
     }
 
     pub fn lookupKnownProcedureSig(self: *const Context, name: []const u8) ?input.sema.KnownProcedureSig {
+        var key_buf: [256]u8 = undefined;
+        if (std.fmt.bufPrint(&key_buf, "{s}::{s}", .{ self.unit.name, name })) |qualified| {
+            if (self.known_procedure_sigs.get(qualified)) |sig| return sig;
+        } else |_| {}
+        if (self.unit.owner_name) |owner_name| {
+            if (std.fmt.bufPrint(&key_buf, "{s}::{s}", .{ owner_name, name })) |qualified| {
+                if (self.known_procedure_sigs.get(qualified)) |sig| return sig;
+            } else |_| {}
+        }
         if (self.known_procedure_sigs.get(name)) |sig| return sig;
         var match: ?input.sema.KnownProcedureSig = null;
         var it = self.known_procedure_sigs.iterator();

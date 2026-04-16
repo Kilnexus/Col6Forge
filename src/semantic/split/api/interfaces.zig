@@ -62,8 +62,7 @@ pub fn installExplicitInterfaceProcedures(
                         continue;
                     }
                 }
-                const proc_key = try symbol_lookup.lowerDup(arena, proc_header.name);
-                try known_procedure_sigs.put(proc_key, .{
+                const proc_sig: context.Context.ProcedureSig = .{
                     .kind = proc_header.kind,
                     .arg_count = proc_header.args.len,
                     .alt_return_count = proc_header.alt_return_dummy_count,
@@ -77,11 +76,18 @@ pub fn installExplicitInterfaceProcedures(
                     .result_allocatable = if (proc_header.kind == .function) infer.interfaceProcedureResultAttrs(proc_header).allocatable else false,
                     .result_contiguous = if (proc_header.kind == .function) infer.interfaceProcedureResultAttrs(proc_header).contiguous else false,
                     .result_procedure_pointer = if (proc_header.kind == .function) infer.interfaceProcedureResultAttrs(proc_header).procedure_pointer else false,
-                });
+                };
+                const proc_key = try symbol_lookup.lowerDup(arena, proc_header.name);
+                try known_procedure_sigs.put(proc_key, proc_sig);
+                const owner_name = unit.owner_name orelse unit.name;
+                const qualified_proc_key = try std.fmt.allocPrint(arena, "{s}::{s}", .{ owner_name, proc_header.name });
+                try known_procedure_sigs.put(qualified_proc_key, proc_sig);
                 if (proc_header.kind != .function) continue;
                 const result_type = infer.interfaceProcedureResultTypeSpec(unit, proc_header) orelse continue;
                 const type_key = try symbol_lookup.lowerDup(arena, proc_header.name);
                 try known_function_type_specs.put(type_key, result_type);
+                const qualified_type_key = try std.fmt.allocPrint(arena, "{s}::{s}", .{ owner_name, proc_header.name });
+                try known_function_type_specs.put(qualified_type_key, result_type);
             }
         }
     }

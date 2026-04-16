@@ -36,6 +36,7 @@ pub fn collectPreludeState(
     }
     for (program.units) |unit| {
         try installExplicitInterfaceProcedureSigs(scratch, known_procedure_sigs, unit);
+        try installProcedureDeclaratorAliases(scratch, known_procedure_sigs, unit);
         if (unit.kind == .module) continue;
         const mangled = try utils.mangleProcedureUnitName(scratch, unit);
         try defined.put(mangled, {});
@@ -110,7 +111,7 @@ fn installExplicitInterfaceProcedureSigs(
     for (unit.decls) |decl| {
         if (decl != .interface_block) continue;
         for (decl.interface_block.procedure_headers) |proc_header| {
-            try known_procedure_sigs.put(proc_header.name, .{
+            const sig: input.sema.KnownProcedureSig = .{
                 .name = proc_header.name,
                 .kind = proc_header.kind,
                 .arg_count = proc_header.args.len,
@@ -143,9 +144,50 @@ fn installExplicitInterfaceProcedureSigs(
                     procedure_inference.interfaceProcedureResultAttrs(proc_header).procedure_pointer
                 else
                     false,
-            });
+            };
+            try known_procedure_sigs.put(proc_header.name, sig);
+            const qualified = try std.fmt.allocPrint(arena, "{s}::{s}", .{ unit.name, proc_header.name });
+            try known_procedure_sigs.put(qualified, sig);
         }
     }
+}
+
+fn installProcedureDeclaratorAliases(
+    arena: std.mem.Allocator,
+    known_procedure_sigs: *context.CaseInsensitiveStringHashMap(input.sema.KnownProcedureSig),
+    unit: input.ProgramUnit,
+) !void {
+    for (unit.decls) |decl| {
+        if (decl != .procedure) continue;
+        const iface_name = switch (decl.procedure.interface) {
+            .name => |name| name,
+            else => continue,
+        };
+        const sig = lookupUnitScopedKnownProcedureSig(known_procedure_sigs, unit, iface_name) orelse continue;
+        for (decl.procedure.items) |item| {
+            var alias_sig = sig;
+            alias_sig.name = item.name;
+            const qualified = try std.fmt.allocPrint(arena, "{s}::{s}", .{ unit.name, item.name });
+            try known_procedure_sigs.put(qualified, alias_sig);
+        }
+    }
+}
+
+fn lookupUnitScopedKnownProcedureSig(
+    known_procedure_sigs: *const context.CaseInsensitiveStringHashMap(input.sema.KnownProcedureSig),
+    unit: input.ProgramUnit,
+    name: []const u8,
+) ?input.sema.KnownProcedureSig {
+    var key_buf: [256]u8 = undefined;
+    if (std.fmt.bufPrint(&key_buf, "{s}::{s}", .{ unit.name, name })) |qualified| {
+        if (known_procedure_sigs.get(qualified)) |sig| return sig;
+    } else |_| {}
+    if (unit.owner_name) |owner_name| {
+        if (std.fmt.bufPrint(&key_buf, "{s}::{s}", .{ owner_name, name })) |qualified| {
+            if (known_procedure_sigs.get(qualified)) |sig| return sig;
+        } else |_| {}
+    }
+    return known_procedure_sigs.get(name);
 }
 
 fn findOwnerUnit(program: Program, owner_name: []const u8) ?input.ProgramUnit {

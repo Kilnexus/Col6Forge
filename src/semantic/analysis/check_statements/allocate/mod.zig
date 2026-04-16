@@ -13,6 +13,9 @@ pub fn checkAllocateStmt(self: *context.Context, allocate: ast.AllocateStmt, com
     try type_spec.checkAllocateRequiresTypeSpecOrSource(self, allocate);
     for (allocate.items) |item| {
         const target_info = try targets.resolveAllocateTargetInfo(self, item.target);
+        if (target_info.procedure) {
+            return targets.emitAllocateTargetConstraintDiagnostic(self, item.target, item.source, true);
+        }
         if (!target_info.allocatable and !target_info.pointer) {
             return targets.emitAllocateTargetConstraintDiagnostic(self, item.target, item.source, true);
         }

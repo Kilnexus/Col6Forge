@@ -91,7 +91,7 @@ const checkTypeBoundProcedureActual = actuals.checkTypeBoundProcedureActual;
 const typeBoundProcedureSig = actuals.typeBoundProcedureSig;
 const checkProcedureActualArg = actuals.checkProcedureActualArg;
 const checkProcedureActualSigCompatibility = actuals.checkProcedureActualSigCompatibility;
-const procedurePointerExprSig = actuals.procedurePointerExprSig;
+pub const procedurePointerExprSig = actuals.procedurePointerExprSig;
 const structureConstructorProcedureFormalArg = actuals.structureConstructorProcedureFormalArg;
 const declareVariantAdjustKind = actuals.declareVariantAdjustKind;
 const procedureComponentSig = actuals.procedureComponentSig;
@@ -155,6 +155,7 @@ const lookupProcedureDeclaratorSig = resolution.lookupProcedureDeclaratorSig;
 const resolvedProcedureSigForExprActuals = resolution.resolvedProcedureSigForExprActuals;
 const resolvedProcedureSigForCallActuals = resolution.resolvedProcedureSigForCallActuals;
 const resolvedProcedureSig = resolution.resolvedProcedureSig;
+const procedureDeclaratorUsesTypeSpecInterface = resolution.procedureDeclaratorUsesTypeSpecInterface;
 const shouldFallbackVisibleGenericToIntrinsicForExprActuals = resolution.shouldFallbackVisibleGenericToIntrinsicForExprActuals;
 const shouldFallbackVisibleGenericToIntrinsicForCallActuals = resolution.shouldFallbackVisibleGenericToIntrinsicForCallActuals;
 const exprActualsCouldMatchProcedureSig = resolution.exprActualsCouldMatchProcedureSig;
@@ -394,6 +395,9 @@ pub fn checkProcedurePointerAssignmentCompatibility(
     const target_sig = procedurePointerExprSig(self, target_expr) orelse return;
     const value_sig = procedurePointerExprSig(self, value_expr) orelse return;
     if (target_sig.kind != value_sig.kind) {
+        if (procedurePointerAssignmentUsesTypeSpecInterface(self, target_expr)) {
+            return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "is invalid in procedure pointer assignment");
+        }
         return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, procedureKindMismatchMessage(target_sig.kind));
     }
     if (target_sig.arg_count != value_sig.arg_count or target_sig.alt_return_count != value_sig.alt_return_count) {
@@ -426,6 +430,42 @@ pub fn checkProcedurePointerAssignmentCompatibility(
             return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Type mismatch in function result");
         }
     }
+}
+
+fn procedurePointerAssignmentUsesTypeSpecInterface(
+    self: *context.Context,
+    target_expr: *ast.Expr,
+) bool {
+    return switch (target_expr.*) {
+        .identifier => |name| procedureDeclaratorUsesTypeSpecInterface(self, name),
+        else => false,
+    };
+}
+
+pub fn validateProcedurePointerAssignmentValue(
+    self: *context.Context,
+    value_expr: *ast.Expr,
+) CheckError!void {
+    if (isNullPointerIntrinsic(value_expr)) return;
+    if (procedurePointerExprSig(self, value_expr) != null) return;
+    switch (value_expr.*) {
+        .identifier => |name| {
+            if (resolvedProcedureSig(self, name) != null) return;
+            if (procedure_interfaces.hasVisibleProcedureReference(self, name)) return;
+            if (resolve_symbols.isIntrinsicName(name)) return;
+        },
+        .call_or_subscript => |call| {
+            if (!resolve_symbols.isIntrinsicName(call.name)) {
+                if (resolvedProcedureSig(self, call.name) != null) return;
+                if (procedure_interfaces.hasVisibleProcedureReference(self, call.name)) return;
+            }
+            if (resolvedProcedureSig(self, call.name)) |sig| {
+                if (sig.result_procedure_pointer) return;
+            }
+        },
+        else => {},
+    }
+    return emitProcedureActualDiagnostic(self, value_expr, error.AssignmentTypeMismatch, "Invalid procedure pointer assignment");
 }
 
 pub fn checkStructureConstructorProcedureComponentActual(

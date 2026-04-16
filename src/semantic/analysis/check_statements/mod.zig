@@ -99,7 +99,9 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 );
                 return error.AssignmentTypeMismatch;
             }
-            if (!expr_semantics.isPointerValuedExpr(self, assign.value) and !expr_semantics.isAddressableDataTargetExpr(self, assign.value)) {
+            if (procedure_calls.procedurePointerExprSig(self, assign.target) != null) {
+                try procedure_calls.validateProcedurePointerAssignmentValue(self, assign.value);
+            } else if (!expr_semantics.isPointerValuedExpr(self, assign.value) and !expr_semantics.isAddressableDataTargetExpr(self, assign.value)) {
                 const source = self.sourceForExpr(assign.value) orelse self.sourceForExpr(assign.target) orelse ast.SourceRef{};
                 self.setDiagnostic(
                     if (source.line == 0) 1 else source.line,

@@ -821,3 +821,99 @@ test "ENTRY unit inherits entry source for duplicate global name diagnostics" {
     try testing.expect(second.line == 1 or second.line == 2);
 }
 
+test "procedure declarator reports assignment and call kind diagnostics in bag mode" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program bsp\n" ++
+        "  implicit none\n" ++
+        "  abstract interface\n" ++
+        "    subroutine up()\n" ++
+        "    end subroutine up\n" ++
+        "  end interface\n" ++
+        "  procedure(up), pointer :: pptr\n" ++
+        "  pptr => add\n" ++
+        "  print *, pptr()\n" ++
+        "contains\n" ++
+        "  pure function add(a, b)\n" ++
+        "    integer :: add\n" ++
+        "    integer, intent(in) :: a, b\n" ++
+        "    add = a + b\n" ++
+        "  end function add\n" ++
+        "end program bsp\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    _ = split_api.analyzeProgramWithKnownAndOptionsAndDiagnostics(
+        arena.allocator(),
+        program,
+        &.{},
+        &.{},
+        .{},
+        &diag_bag,
+    ) catch {};
+
+    try testing.expect(diag_bag.count() >= 2);
+    const first = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(first);
+    const second = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(second);
+
+    try testing.expectEqual(@as(usize, 8), first.line);
+    try testing.expect(std.mem.indexOf(u8, first.message, "actual argument is not a subroutine") != null);
+    try testing.expectEqual(@as(usize, 9), second.line);
+    try testing.expect(std.mem.indexOf(u8, second.message, "actual argument is not a function") != null);
+}
+
+test "procedure declaration rejects SAVE without POINTER" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "procedure(real), save :: noptr\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    try testing.expectEqual(@as(usize, 1), program.units.len);
+
+    var known_function_type_specs = std.StringHashMap(symbols.TypeSpec).init(arena.allocator());
+    var known_procedure_sigs = std.StringHashMap(context.Context.ProcedureSig).init(arena.allocator());
+    var known_host_parameters = std.StringHashMap(symbols.Symbol).init(arena.allocator());
+    var known_host_derived_types = std.StringHashMap(context.Context.DerivedTypeInfo).init(arena.allocator());
+    var known_host_interface_sources = std.StringHashMap(ast.DeclSource).init(arena.allocator());
+    var known_host_abstract_interfaces = std.StringHashMap(void).init(arena.allocator());
+
+    diag.clear();
+    var unit = program.units[0];
+    var analyzer_instance = UnitAnalyzer.init(
+        arena.allocator(),
+        &unit,
+        &.{},
+        &known_function_type_specs,
+        &known_procedure_sigs,
+        &known_host_parameters,
+        &known_host_derived_types,
+        &known_host_interface_sources,
+        &known_host_abstract_interfaces,
+        null,
+        .{},
+        false,
+    );
+    _ = analyzer_instance.analyze() catch {};
+
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    defer diag.releaseTaken(got);
+    try testing.expect(std.mem.indexOf(u8, got.message, "SAVE attribute conflicts with PROCEDURE attribute") != null);
+}
+

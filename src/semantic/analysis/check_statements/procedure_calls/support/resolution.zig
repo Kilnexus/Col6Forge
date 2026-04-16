@@ -18,6 +18,7 @@ const procedure_call_diagnostics = @import("../../procedure_call_diagnostics.zig
 const procedure_interfaces = @import("../../procedure_interfaces.zig");
 const sequence_association = @import("sequence_association.zig");
 const actuals = @import("actuals.zig");
+const type_kind_selector = @import("../../../../type_kind_selector.zig");
 
 pub const CheckError = anyerror;
 const DiagnosticSource = procedure_call_diagnostics.DiagnosticSource;
@@ -75,11 +76,48 @@ pub fn lookupProcedureDeclaratorSig(self: *context.Context, name: []const u8) ?c
             if (!std.ascii.eqlIgnoreCase(item.name, name)) continue;
             return switch (procedure_decl.interface) {
                 .name => |iface_name| resolve_symbols.lookupKnownProcedureSig(self, iface_name),
+                .type_spec => |proc_type| .{
+                    .kind = .function,
+                    .arg_count = 0,
+                    .result_type_spec = procedureDeclaratorTypeSpec(self, proc_type),
+                },
                 else => null,
             };
         }
     }
     return null;
+}
+
+pub fn procedureDeclaratorUsesTypeSpecInterface(self: *context.Context, name: []const u8) bool {
+    for (self.unit.decls) |decl| {
+        if (decl != .procedure) continue;
+        const procedure_decl = decl.procedure;
+        for (procedure_decl.items) |item| {
+            if (!std.ascii.eqlIgnoreCase(item.name, name)) continue;
+            return procedure_decl.interface == .type_spec;
+        }
+    }
+    return false;
+}
+
+fn procedureDeclaratorTypeSpec(
+    self: *context.Context,
+    proc_type: ast.ProcedureTypeSpec,
+) symbols.TypeSpec {
+    if (proc_type.type_kind == .derived) {
+        const base = if (proc_type.derived_type_name) |derived_name|
+            symbols.TypeSpec.fromDerived(derived_name)
+        else
+            symbols.TypeSpec.fromKind(.derived);
+        return base.withPolymorphic(proc_type.polymorphic).withAssumedType(proc_type.assumed_type);
+    }
+
+    var resolved = if (proc_type.kind_selector) |selector|
+        type_kind_selector.resolveSpecWithConst(proc_type.type_kind, selector, constants.evalConst(self, selector) catch null)
+    else
+        symbols.TypeSpec.fromResolvedKind(proc_type.type_kind, proc_type.type_kind, null);
+    resolved = resolved.withPolymorphic(proc_type.polymorphic).withAssumedType(proc_type.assumed_type);
+    return resolved;
 }
 
 pub fn resolvedProcedureSigForExprActuals(
@@ -88,13 +126,7 @@ pub fn resolvedProcedureSigForExprActuals(
     args: []*ast.Expr,
     comptime deps: anytype,
 ) !?context.Context.ProcedureSig {
-    const visible_generic_sig = procedure_interfaces.visibleSpecificInterfaceSig(self, name) orelse
-        procedure_interfaces.matchedVisibleGenericSigForExprArgs(self, name, args) orelse
-        procedure_interfaces.visibleSingleTargetGenericSig(self, name);
-    if (try shouldFallbackVisibleGenericToIntrinsicForExprActuals(self, name, visible_generic_sig, args, deps)) {
-        return resolve_symbols.lookupKnownProcedureSig(self, name);
-    }
-    return visible_generic_sig orelse resolve_symbols.lookupKnownProcedureSig(self, name);
+    return resolvedProcedureSigForActualsGeneric(self, name, args, deps, .expr);
 }
 
 pub fn resolvedProcedureSigForCallActuals(
@@ -103,19 +135,63 @@ pub fn resolvedProcedureSigForCallActuals(
     args: []const ast.CallArg,
     comptime deps: anytype,
 ) !?context.Context.ProcedureSig {
-    const visible_generic_sig = procedure_interfaces.visibleSpecificInterfaceSig(self, name) orelse
-        procedure_interfaces.matchedVisibleGenericSigForCallArgs(self, name, args) orelse
-        procedure_interfaces.visibleSingleTargetGenericSig(self, name);
-    if (try shouldFallbackVisibleGenericToIntrinsicForCallActuals(self, name, visible_generic_sig, args, deps)) {
-        return resolve_symbols.lookupKnownProcedureSig(self, name);
-    }
-    return visible_generic_sig orelse resolve_symbols.lookupKnownProcedureSig(self, name);
+    return resolvedProcedureSigForActualsGeneric(self, name, args, deps, .call);
 }
 
 pub fn resolvedProcedureSig(self: *context.Context, name: []const u8) ?context.Context.ProcedureSig {
-    return procedure_interfaces.visibleSpecificInterfaceSig(self, name) orelse
-        procedure_interfaces.visibleSingleTargetGenericSig(self, name) orelse
-        resolve_symbols.lookupKnownProcedureSig(self, name);
+    return resolveProcedureSigWithVisibleGeneric(
+        self,
+        name,
+        procedure_interfaces.visibleSpecificInterfaceSig(self, name) orelse
+            procedure_interfaces.visibleSingleTargetGenericSig(self, name),
+    );
+}
+
+fn resolveProcedureSigWithVisibleGeneric(
+    self: *context.Context,
+    name: []const u8,
+    visible_generic_sig: ?context.Context.ProcedureSig,
+) ?context.Context.ProcedureSig {
+    return visible_generic_sig orelse
+        resolve_symbols.lookupKnownProcedureSig(self, name) orelse
+        lookupProcedureDeclaratorSig(self, name);
+}
+
+fn resolveProcedureSigForActuals(
+    self: *context.Context,
+    name: []const u8,
+    visible_generic_sig: ?context.Context.ProcedureSig,
+    prefer_intrinsic: bool,
+) ?context.Context.ProcedureSig {
+    if (prefer_intrinsic) return resolve_symbols.lookupKnownProcedureSig(self, name);
+    return resolveProcedureSigWithVisibleGeneric(self, name, visible_generic_sig);
+}
+
+const ActualKind = enum {
+    expr,
+    call,
+};
+
+fn resolvedProcedureSigForActualsGeneric(
+    self: *context.Context,
+    name: []const u8,
+    args: anytype,
+    comptime deps: anytype,
+    comptime actual_kind: ActualKind,
+) !?context.Context.ProcedureSig {
+    const visible_generic_sig = switch (actual_kind) {
+        .expr => procedure_interfaces.visibleSpecificInterfaceSig(self, name) orelse
+            procedure_interfaces.matchedVisibleGenericSigForExprArgs(self, name, args) orelse
+            procedure_interfaces.visibleSingleTargetGenericSig(self, name),
+        .call => procedure_interfaces.visibleSpecificInterfaceSig(self, name) orelse
+            procedure_interfaces.matchedVisibleGenericSigForCallArgs(self, name, args) orelse
+            procedure_interfaces.visibleSingleTargetGenericSig(self, name),
+    };
+    const prefer_intrinsic = switch (actual_kind) {
+        .expr => try shouldFallbackVisibleGenericToIntrinsicForExprActuals(self, name, visible_generic_sig, args, deps),
+        .call => try shouldFallbackVisibleGenericToIntrinsicForCallActuals(self, name, visible_generic_sig, args, deps),
+    };
+    return resolveProcedureSigForActuals(self, name, visible_generic_sig, prefer_intrinsic);
 }
 
 fn shouldFallbackVisibleGenericToIntrinsicForExprActuals(

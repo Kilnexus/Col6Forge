@@ -53,6 +53,21 @@ fn characterExprLogicalLen(self: *context.Context, expr: *ast.Expr) ?usize {
 }
 
 pub fn applyProcedureDecl(self: *context.Context, decl: ast.ProcedureDecl) !void {
+    if (decl.save and !decl.pointer) {
+        const source = self.current_decl_source orelse ast.DeclSource{};
+        self.setDiagnosticStructured(
+            if (source.line == 0) 1 else source.line,
+            if (source.column == 0) 1 else source.column,
+            catalog.semantic.duplicate_declaration.code,
+            "SAVE attribute conflicts with PROCEDURE attribute",
+            source.text,
+            "conflicting declaration here",
+            &.{},
+            &.{},
+            &.{},
+        );
+        return error.DuplicateDeclaration;
+    }
     for (decl.items) |item| {
         const resolved = try resolveProcedureDeclarator(self, decl.interface, item.name);
         try applyDeclarator(self, resolved.type_spec, item, .local, resolved.explicit_type, false, decl.pointer, false);

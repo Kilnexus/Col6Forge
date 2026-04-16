@@ -12,6 +12,7 @@ pub const AllocateTargetInfo = struct {
     rank: usize,
     allocatable: bool = false,
     pointer: bool = false,
+    procedure: bool = false,
 };
 
 pub fn resolveAllocateTargetInfo(self: *context.Context, expr: *ast.Expr) CheckError!AllocateTargetInfo {
@@ -23,6 +24,7 @@ pub fn resolveAllocateTargetInfo(self: *context.Context, expr: *ast.Expr) CheckE
                 .rank = sym.dims.len,
                 .allocatable = sym.is_allocatable,
                 .pointer = sym.is_pointer,
+                .procedure = sym.kind == .function or sym.kind == .subroutine,
             };
         },
         .component => |comp| blk: {
@@ -34,6 +36,7 @@ pub fn resolveAllocateTargetInfo(self: *context.Context, expr: *ast.Expr) CheckE
                 .rank = component.dims.len,
                 .allocatable = component.allocatable,
                 .pointer = component.pointer,
+                .procedure = component.procedure,
             };
         },
         else => error.UnsupportedAllocateSyntax,
@@ -98,7 +101,10 @@ pub fn emitAllocateTargetConstraintDiagnostic(
         .integer, .real, .double_precision, .complex, .complex_double, .logical => true,
         else => false,
     };
-    const message = if (is_allocate)
+    const target_info = resolveAllocateTargetInfo(self, target) catch AllocateTargetInfo{ .rank = 0 };
+    const message = if (target_info.procedure)
+        "must be ALLOCATABLE"
+    else if (is_allocate)
         if (is_numeric) "must be ALLOCATABLE or a POINTER" else "neither a data pointer nor an allocatable"
     else if (is_numeric)
         "must be ALLOCATABLE or a POINTER"

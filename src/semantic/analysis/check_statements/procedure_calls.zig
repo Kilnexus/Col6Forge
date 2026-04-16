@@ -12,6 +12,7 @@ pub const checkTypeBoundProcedureComponent = support.checkTypeBoundProcedureComp
 pub const checkProcedureComponent = support.checkProcedureComponent;
 pub const isTypeBoundProcedurePointerResult = support.isTypeBoundProcedurePointerResult;
 pub const checkProcedurePointerAssignmentCompatibility = support.checkProcedurePointerAssignmentCompatibility;
+pub const validateProcedurePointerAssignmentValue = support.validateProcedurePointerAssignmentValue;
 pub const checkStructureConstructorProcedureComponentActual = support.checkStructureConstructorProcedureComponentActual;
 pub const countCallAltReturnArgs = support.countCallAltReturnArgs;
 pub const checkKnownProcedureCallArity = support.checkKnownProcedureCallArity;
@@ -33,6 +34,7 @@ pub const hasAmbiguousVisibleGenericInterface = support.hasAmbiguousVisibleGener
 pub const rejectDefinitelyNoncontiguousPointerAssociation = support.rejectDefinitelyNoncontiguousPointerAssociation;
 pub const procedureActualExprRank = support.procedureActualExprRank;
 pub const sequenceAssociationAvailableElements = support.sequenceAssociationAvailableElements;
+pub const procedurePointerExprSig = support.procedurePointerExprSig;
 
 test {
     _ = @import("procedure_calls/tests.zig");

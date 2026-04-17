@@ -16,11 +16,17 @@ pub fn inferProcedureArgSigsWithKnown(
     arena: std.mem.Allocator,
     unit: ast.ProgramUnit,
     known_procedure_sigs: ?*const std.StringHashMap(context.Context.ProcedureSig),
-) ![]const context.Context.ProcedureSig.ArgSig {
+) anyerror![]const context.Context.ProcedureSig.ArgSig {
     const out = try arena.alloc(context.Context.ProcedureSig.ArgSig, unit.args.len);
     for (unit.args, 0..) |arg_name, idx| {
         const decl_info = findDummyArgDeclInfo(unit, arg_name);
-        const declarator_sig = resolveProcedureDeclaratorKnownSig(known_procedure_sigs, decl_info.procedure_interface);
+        const declarator_sig = try resolveProcedureDeclaratorKnownSig(
+            arena,
+            unit,
+            known_procedure_sigs,
+            decl_info.procedure_interface,
+            null,
+        );
         const inferred_proc_kind = if (dummyArgCanInferProcedureFromUsage(decl_info))
             inferDummyArgProcedureKind(unit, arg_name)
         else
@@ -229,12 +235,18 @@ pub fn inferInterfaceProcedureArgSigs(
     arena: std.mem.Allocator,
     unit: ast.ProgramUnit,
     proc_header: ast.InterfaceProcedure,
-) ![]const context.Context.ProcedureSig.ArgSig {
+) anyerror![]const context.Context.ProcedureSig.ArgSig {
     const out = try arena.alloc(context.Context.ProcedureSig.ArgSig, proc_header.args.len);
     for (proc_header.args, 0..) |arg_name, idx| {
         const active_decls = if (proc_header.decls.len != 0) proc_header.decls else unit.decls;
         const decl_info = findDummyArgDeclInfoInDecls(active_decls, arg_name);
-        const declarator_sig = resolveProcedureDeclaratorKnownSig(null, decl_info.procedure_interface);
+        const declarator_sig = try resolveProcedureDeclaratorKnownSig(
+            arena,
+            unit,
+            null,
+            decl_info.procedure_interface,
+            proc_header.name,
+        );
         const inferred_proc_kind = if (dummyArgCanInferProcedureFromUsage(decl_info))
             inferDummyArgProcedureKindInStmts(unit.stmts, arg_name)
         else
@@ -325,14 +337,57 @@ pub fn inferInterfaceProcedureArgSigs(
 }
 
 fn resolveProcedureDeclaratorKnownSig(
+    arena: std.mem.Allocator,
+    unit: ast.ProgramUnit,
     known_procedure_sigs: ?*const std.StringHashMap(context.Context.ProcedureSig),
     procedure_interface: ast.ProcedureInterface,
-) ?context.Context.ProcedureSig {
-    const known = known_procedure_sigs orelse return null;
+    active_interface_name: ?[]const u8,
+) anyerror!?context.Context.ProcedureSig {
     return switch (procedure_interface) {
-        .name => |name| lookupKnownProcedureSigCaseInsensitive(known, name),
+        .name => |name| (if (known_procedure_sigs) |known|
+            lookupKnownProcedureSigCaseInsensitive(known, name)
+        else
+            null) orelse
+            (try localInterfaceProcedureSig(arena, unit, name, active_interface_name)),
         else => null,
     };
+}
+
+fn localInterfaceProcedureSig(
+    arena: std.mem.Allocator,
+    unit: ast.ProgramUnit,
+    name: []const u8,
+    active_interface_name: ?[]const u8,
+) anyerror!?context.Context.ProcedureSig {
+    const proc_header = findLocalInterfaceProcedure(unit.decls, name) orelse return null;
+    const args = if (active_interface_name != null and std.ascii.eqlIgnoreCase(active_interface_name.?, name))
+        &.{}
+    else
+        try inferInterfaceProcedureArgSigs(arena, unit, proc_header);
+    return .{
+        .kind = proc_header.kind,
+        .arg_count = proc_header.args.len,
+        .alt_return_count = proc_header.alt_return_dummy_count,
+        .args = args,
+        .pure = proc_header.pure,
+        .elemental = proc_header.elemental,
+        .result_rank = if (proc_header.kind == .function) interfaceProcedureResultRank(proc_header) else 0,
+        .result_type_spec = if (proc_header.kind == .function) interfaceProcedureResultTypeSpec(unit, proc_header) else null,
+        .result_shape_signature = if (proc_header.kind == .function) try interfaceProcedureResultShapeSignature(arena, proc_header) else &.{},
+        .result_allocatable = if (proc_header.kind == .function) interfaceProcedureResultAttrs(proc_header).allocatable else false,
+        .result_contiguous = if (proc_header.kind == .function) interfaceProcedureResultAttrs(proc_header).contiguous else false,
+        .result_procedure_pointer = if (proc_header.kind == .function) interfaceProcedureResultAttrs(proc_header).procedure_pointer else false,
+    };
+}
+
+fn findLocalInterfaceProcedure(decls: []const ast.Decl, name: []const u8) ?ast.InterfaceProcedure {
+    for (decls) |decl| {
+        if (decl != .interface_block) continue;
+        for (decl.interface_block.procedure_headers) |proc_header| {
+            if (std.ascii.eqlIgnoreCase(proc_header.name, name)) return proc_header;
+        }
+    }
+    return null;
 }
 
 fn lookupKnownProcedureSigCaseInsensitive(

@@ -116,6 +116,7 @@ pub fn parseKindSelectorExprInParens(lp: *LineParser, arena: std.mem.Allocator) 
 
 pub fn consumeDeclAttributes(lp: *LineParser, arena: std.mem.Allocator) !DeclAttributes {
     var attrs: DeclAttributes = .{};
+    var saw_attr = false;
 
     if (lp.consume(.comma)) {
         while (true) {
@@ -125,10 +126,14 @@ pub fn consumeDeclAttributes(lp: *LineParser, arena: std.mem.Allocator) !DeclAtt
 
             const attr_tok = lp.next();
             const attr_name = lp.tokenText(attr_tok);
+            saw_attr = true;
             if (context.eqNoCase(attr_name, "PARAMETER")) attrs.parameter = true;
             if (context.eqNoCase(attr_name, "SAVE")) attrs.save = true;
             if (context.eqNoCase(attr_name, "ALLOCATABLE")) attrs.allocatable = true;
-            if (context.eqNoCase(attr_name, "POINTER")) attrs.pointer = true;
+            if (context.eqNoCase(attr_name, "POINTER")) {
+                if (attrs.pointer) return error.DuplicateAttribute;
+                attrs.pointer = true;
+            }
             if (context.eqNoCase(attr_name, "OPTIONAL")) attrs.optional = true;
             if (context.eqNoCase(attr_name, "NOPASS")) attrs.nopass = true;
             if (context.eqNoCase(attr_name, "PRIVATE")) attrs.private = true;
@@ -176,6 +181,7 @@ pub fn consumeDeclAttributes(lp: *LineParser, arena: std.mem.Allocator) !DeclAtt
             if (consumeDoubleColon(lp)) return attrs;
             if (!lp.consume(.comma)) break;
         }
+        if (saw_attr and lp.peek() != null) return error.UnexpectedToken;
     }
 
     _ = consumeDoubleColon(lp);

@@ -403,7 +403,8 @@ pub const Parser = struct {
             if (!in_contains and decl.isDeclarationStart(body_lp)) {
                 const component_decl = decl.parseDecl(&body_lp, self.arena) catch |err| {
                     root_diagnostics.setParseDiagnosticFromStream(self.diag_bag, line, body_lp, err);
-                    return err;
+                    self.index += 1;
+                    continue;
                 };
                 if (component_decl == .type_decl) {
                     try components.append(component_decl.type_decl);

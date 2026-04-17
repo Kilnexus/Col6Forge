@@ -63,6 +63,16 @@ pub fn setParseDiagnosticForLine(
     column: usize,
     err: anyerror,
 ) void {
+    if (err == error.DuplicateAttribute) {
+        diag_bag.set(
+            line_no,
+            column,
+            catalog.parser.invalid_procedure_decl_syntax.code,
+            "Duplicate attribute",
+            line.text,
+        );
+        return;
+    }
     const info = catalog.parserInfoFor(err);
     const advice = parserAdviceFor(err);
     diag_bag.setDetailed(line_no, column, info.code, info.message, line.text, advice.notes, advice.helps);

@@ -572,6 +572,22 @@ fn validateBindCInteroperableComponents(
         if (first_error == null) first_error = error.UnexpectedTypeDecl;
     }
 
+    for (derived.procedure_components, 0..) |procedure_decl, component_idx| {
+        const source = if (component_idx < derived.procedure_component_sources.len)
+            derived.procedure_component_sources[component_idx]
+        else
+            self.current_decl_source orelse ast.DeclSource{};
+
+        if (!header_reported) {
+            emitBindCDerivedTypeHeaderDiagnostic(self);
+            header_reported = true;
+        }
+        _ = procedure_decl;
+        setSourceDiagnostic(self, source, "procedure pointer component cannot be a member of a BIND(C) derived type");
+        if (!self.usesExplicitDiagnosticBag()) return error.UnexpectedTypeDecl;
+        if (first_error == null) first_error = error.UnexpectedTypeDecl;
+    }
+
     return first_error;
 }
 
@@ -642,6 +658,11 @@ fn validateDerivedProcedureComponentInterface(
     procedure_decl: ast.ProcedureDecl,
     source: ast.DeclSource,
 ) ?anyerror {
+    if (procedure_decl.interface == .none and procedureComponentUsesBareProcedureKeyword(source.text)) {
+        setSourceDiagnostic(self, source, "Syntax error");
+        return error.UnexpectedTypeDecl;
+    }
+
     const iface_name = switch (procedure_decl.interface) {
         .name => |name| name,
         else => return null,
@@ -664,6 +685,16 @@ fn validateDerivedProcedureComponentInterface(
         return error.UnexpectedTypeDecl;
     }
     return null;
+}
+
+fn procedureComponentUsesBareProcedureKeyword(line_text: []const u8) bool {
+    const trimmed = std.mem.trimLeft(u8, line_text, " \t");
+    if (!std.ascii.startsWithIgnoreCase(trimmed, "procedure")) return false;
+    if (trimmed.len <= "procedure".len) return true;
+
+    var idx: usize = "procedure".len;
+    while (idx < trimmed.len and (trimmed[idx] == ' ' or trimmed[idx] == '\t')) : (idx += 1) {}
+    return idx >= trimmed.len or trimmed[idx] != '(';
 }
 
 fn validateDerivedProcedureComponentPassConstraints(

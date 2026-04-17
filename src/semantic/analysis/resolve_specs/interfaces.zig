@@ -55,6 +55,24 @@ pub fn validateExplicitInterfaceBlock(self: *context.Context, interface_block: a
             if (first_error == null) first_error = error.DuplicateDeclaration;
             continue;
         }
+        if (interface_block.abstract) {
+            if (symbols_mod.findSymbolIndex(self, proc_header.name)) |idx| {
+                const sym = self.symbols.items[idx];
+                if (sym.is_pointer) {
+                    self.setDiagnosticDetailed(
+                        if (proc_header.source.line == 0) 1 else proc_header.source.line,
+                        if (proc_header.source.column == 0) 1 else proc_header.source.column,
+                        catalog.semantic.duplicate_declaration.code,
+                        "PROCEDURE POINTER attribute conflicts with ABSTRACT attribute",
+                        proc_header.source.text,
+                        &.{.{ .text = "An ABSTRACT interface procedure name cannot reuse a visible POINTER object declaration of the same name." }},
+                        &.{.{ .text = "Rename the POINTER object or the ABSTRACT interface procedure." }},
+                    );
+                    if (first_error == null) first_error = error.DuplicateDeclaration;
+                    continue;
+                }
+            }
+        }
         if (interface_block.abstract and proc_header.bind_name != null) {
             setAbstractInterfaceBindNameDiagnostic(self, proc_header);
             if (first_error == null) first_error = error.DuplicateDeclaration;
@@ -185,6 +203,7 @@ fn validateVisiblePreludeGenericSpecificReuse(self: *context.Context, interface_
     if (interface_block.name == null) return null;
 
     for (interface_block.procedure_headers) |proc_header| {
+        if (interfaceProcedureDeclaresCurrentDummy(self, proc_header.name)) continue;
         var conflicting = std.array_list.Managed(ast.DeclSource).init(self.arena);
         appendPreludeInterfaceProcedureSources(self, &conflicting, proc_header.name) catch return error.OutOfMemory;
         if (conflicting.items.len == 0) continue;
@@ -192,6 +211,7 @@ fn validateVisiblePreludeGenericSpecificReuse(self: *context.Context, interface_
         return error.DuplicateDeclaration;
     }
     for (interface_block.specific_procedures, 0..) |procedure_name, idx| {
+        if (interfaceProcedureDeclaresCurrentDummy(self, procedure_name)) continue;
         var conflicting = std.array_list.Managed(ast.DeclSource).init(self.arena);
         appendPreludeInterfaceProcedureSources(self, &conflicting, procedure_name) catch return error.OutOfMemory;
         if (conflicting.items.len == 0) continue;
@@ -199,6 +219,7 @@ fn validateVisiblePreludeGenericSpecificReuse(self: *context.Context, interface_
         return error.DuplicateDeclaration;
     }
     for (interface_block.module_procedures, 0..) |procedure_name, idx| {
+        if (interfaceProcedureDeclaresCurrentDummy(self, procedure_name)) continue;
         var conflicting = std.array_list.Managed(ast.DeclSource).init(self.arena);
         appendPreludeInterfaceProcedureSources(self, &conflicting, procedure_name) catch return error.OutOfMemory;
         if (conflicting.items.len == 0) continue;
@@ -206,6 +227,7 @@ fn validateVisiblePreludeGenericSpecificReuse(self: *context.Context, interface_
         return error.DuplicateDeclaration;
     }
     for (interface_block.procedures, 0..) |procedure_name, idx| {
+        if (interfaceProcedureDeclaresCurrentDummy(self, procedure_name)) continue;
         var conflicting = std.array_list.Managed(ast.DeclSource).init(self.arena);
         appendPreludeInterfaceProcedureSources(self, &conflicting, procedure_name) catch return error.OutOfMemory;
         if (conflicting.items.len == 0) continue;

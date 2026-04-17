@@ -443,6 +443,54 @@ pub fn interfaceBlockHasProcedureHeader(interface_block: ast.InterfaceBlock, nam
     return false;
 }
 
+pub fn abstractInterfaceNameBlocksVariableUse(self: *context.Context, name: []const u8) bool {
+    for (self.unit.decls) |decl| {
+        switch (decl) {
+            .interface_block => |interface_block| {
+                if (!interface_block.abstract) continue;
+                for (interface_block.procedure_headers) |proc_header| {
+                    if (std.ascii.eqlIgnoreCase(proc_header.name, name)) return true;
+                }
+            },
+            .type_decl => |type_decl| {
+                for (type_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return false;
+                }
+            },
+            .procedure => |procedure_decl| {
+                for (procedure_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return false;
+                }
+            },
+            .dimension => |dimension_decl| {
+                for (dimension_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return false;
+                }
+            },
+            .parameter => |parameter_decl| {
+                for (parameter_decl.assigns) |assign| {
+                    if (std.ascii.eqlIgnoreCase(assign.name, name)) return false;
+                }
+            },
+            .common => |common_decl| {
+                for (common_decl.blocks) |block| {
+                    for (block.items) |item| {
+                        if (std.ascii.eqlIgnoreCase(item.name, name)) return false;
+                    }
+                }
+            },
+            .bind_entity => |bind_decl| {
+                for (bind_decl.names) |bind_name| {
+                    if (std.ascii.eqlIgnoreCase(bind_name, name)) return false;
+                }
+            },
+            else => {},
+        }
+    }
+    if (!isAbstractInterfaceProcedure(self, name)) return false;
+    return resolve_symbols.findSymbolIndex(self, name) == null;
+}
+
 fn lookupGenericSpecificSig(
     self: *context.Context,
     proc_name: []const u8,

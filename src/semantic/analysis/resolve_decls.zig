@@ -27,6 +27,19 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
     for (decl.items) |item| {
         var effective_type = resolved_type;
         var effective_item = item;
+        if (decl.pointer and procedure_interfaces.isAbstractInterfaceProcedure(self, item.name)) {
+            const source = self.current_decl_source orelse ast.DeclSource{};
+            self.setDiagnosticDetailed(
+                if (source.line == 0) 1 else source.line,
+                if (source.column == 0) 1 else source.column,
+                catalog.semantic.duplicate_declaration.code,
+                "PROCEDURE POINTER attribute conflicts with ABSTRACT attribute",
+                source.text,
+                &.{.{ .text = "This name is already bound to an ABSTRACT interface procedure in the current scope." }},
+                &.{.{ .text = "Rename the data pointer object or use a different explicit interface name." }},
+            );
+            return error.DuplicateDeclaration;
+        }
         if (decl.type_kind == .character and decl.kind_selector == null) {
             if (try decl_initializers.isoCBindingCharacterKindShorthandType(self, item.char_len)) |shorthand_type| {
                 effective_type = shorthand_type;
@@ -86,6 +99,28 @@ pub fn applyProcedureDecl(self: *context.Context, decl: ast.ProcedureDecl) !void
             return error.DuplicateDeclaration;
         }
         const resolved = try resolveProcedureDeclarator(self, decl.interface, item.name);
+        if (decl.pointer) {
+            if (resolved.sig) |sig| {
+                if (sig.elemental) {
+                    const source = self.current_decl_source orelse ast.DeclSource{};
+                    const message = std.fmt.allocPrint(
+                        self.arena,
+                        "Procedure pointer '{s}' at .1. shall not be elemental",
+                        .{item.name},
+                    ) catch "Procedure pointer shall not be elemental";
+                    self.setDiagnosticDetailed(
+                        if (source.line == 0) 1 else source.line,
+                        if (source.column == 0) 1 else source.column,
+                        catalog.semantic.duplicate_declaration.code,
+                        message,
+                        source.text,
+                        &.{.{ .text = "An ELEMENTAL procedure cannot be the declared interface of a procedure pointer object." }},
+                        &.{.{ .text = "Use a non-ELEMENTAL explicit interface for this procedure pointer declaration." }},
+                    );
+                    return error.DuplicateDeclaration;
+                }
+            }
+        }
         try applyDeclarator(self, resolved.type_spec, item, .local, resolved.explicit_type, false, decl.pointer, false);
 
         const idx = symbols_mod.findSymbolIndex(self, item.name) orelse return error.UnknownSymbol;
@@ -766,6 +801,8 @@ const ResolvedProcedureDecl = struct {
     type_spec: symbols.TypeSpec,
     explicit_type: bool,
     kind: ?symbols.SymbolKind = null,
+    sig: ?context.Context.ProcedureSig = null,
+    interface_name: ?[]const u8 = null,
 };
 
 fn resolveProcedureDeclarator(
@@ -794,11 +831,14 @@ fn resolveProcedureDeclarator(
                     .type_spec = type_spec,
                     .explicit_type = sig.kind == .function,
                     .kind = kind,
+                    .sig = sig,
+                    .interface_name = name,
                 };
             }
             break :blk .{
                 .type_spec = symbols_mod.implicitTypeSpec(self, item_name),
                 .explicit_type = false,
+                .interface_name = name,
             };
         },
         .type_spec => |type_spec| .{

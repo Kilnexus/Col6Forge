@@ -71,6 +71,17 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             try rejectStaticShapeMismatch(self, assign.target, assign.value);
         },
         .pointer_assignment => |assign| {
+            if (pointerAssignmentTargetIsAbstractInterfaceName(self, assign.target)) {
+                const source = self.sourceForExpr(assign.target) orelse ast.SourceRef{};
+                self.setDiagnostic(
+                    if (source.line == 0) 1 else source.line,
+                    if (source.column == 0) 1 else source.column,
+                    catalog.semantic.assignment_type_mismatch.code,
+                    "is not a variable",
+                    source.text,
+                );
+                return error.AssignmentTypeMismatch;
+            }
             _ = try expr_semantics.checkExprType(self, assign.target, .{
                 .dummyArgTypeCompatible = dummyArgTypeCompatible,
             });
@@ -465,6 +476,14 @@ fn rejectStaticShapeMismatch(
     for (target_shape, value_shape) |expected, actual| {
         if (expected != actual) return emitExprConstraint(self, value, "Different shape");
     }
+}
+
+fn pointerAssignmentTargetIsAbstractInterfaceName(self: *context.Context, expr: *ast.Expr) bool {
+    const name = switch (expr.*) {
+        .identifier => |ident| ident,
+        else => return false,
+    };
+    return procedure_interfaces.abstractInterfaceNameBlocksVariableUse(self, name);
 }
 
 fn dummyArgTypeCompatible(

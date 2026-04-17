@@ -4,7 +4,10 @@ const fixed_form = @import("../../frontend/fixed_form.zig");
 const free_form = @import("../../frontend/free_form.zig");
 const parser = @import("../../frontend/parser/mod.zig");
 const api = @import("../split/api/mod.zig");
+const analyze_api = @import("../split/api/analyze.zig");
+const analysis_context = @import("../analysis/context.zig");
 const diagnostic = @import("../diagnostic.zig");
+const symbols = @import("../symbol/mod.zig");
 const function_type = @import("../split/function_type.zig");
 
 test "inferProcedureArgSigs captures descriptor-bearing dummy arrays" {
@@ -730,4 +733,100 @@ test "analyzeProgram accepts module procedure call with named kind parameter ali
 
     try api.analyzeProgramWithKnownAndOptionsAndDiagnostics(arena.allocator(), program, &.{}, &.{}, .{}, &diag_bag);
     try testing.expect(diag_bag.take() == null);
+}
+
+test "inferProgramProcedures preserves contained procedure actual signatures for proc_ptr_55 style calls" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module julienne_test_description_m\n" ++
+        "  implicit none\n" ++
+        "  abstract interface\n" ++
+        "    logical function test_function_i(arg)\n" ++
+        "      integer, intent(in) :: arg\n" ++
+        "    end function\n" ++
+        "  end interface\n" ++
+        "  type test_description_t\n" ++
+        "    procedure(test_function_i), pointer, nopass :: test_function_\n" ++
+        "  end type\n" ++
+        "contains\n" ++
+        "  type(test_description_t) function new_test_description(test_function)\n" ++
+        "    procedure(test_function_i), intent(in), pointer :: test_function\n" ++
+        "    new_test_description%test_function_ => test_function\n" ++
+        "  end function\n" ++
+        "end module\n" ++
+        "use julienne_test_description_m\n" ++
+        "implicit none\n" ++
+        "type(test_description_t) test_description\n" ++
+        "test_description = new_test_description(test1)\n" ++
+        "test_description = new_test_description(test2)\n" ++
+        "test_description = new_test_description(test3)\n" ++
+        "test_description = new_test_description(test4)\n" ++
+        "test_description = new_test_description(test5)\n" ++
+        "contains\n" ++
+        "  logical function test1(arg)\n" ++
+        "    integer, intent(in) :: arg\n" ++
+        "  end function\n" ++
+        "  real function test2(arg)\n" ++
+        "    integer, intent(in) :: arg\n" ++
+        "  end function\n" ++
+        "  logical function test3()\n" ++
+        "  end function\n" ++
+        "  logical function test4(arg)\n" ++
+        "    integer, intent(in) :: arg(:)\n" ++
+        "  end function\n" ++
+        "  function test5(arg) result(res)\n" ++
+        "    integer, intent(in) :: arg\n" ++
+        "    logical :: res(2)\n" ++
+        "  end function\n" ++
+        "end\n";
+
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    var known_function_type_specs = std.StringHashMap(symbols.TypeSpec).init(arena.allocator());
+    var known_procedure_sigs = std.StringHashMap(analysis_context.Context.ProcedureSig).init(arena.allocator());
+    try analyze_api.seedKnownProcedures(arena.allocator(), &.{}, &.{}, &known_function_type_specs, &known_procedure_sigs);
+    try analyze_api.inferProgramProcedures(arena.allocator(), program, &known_function_type_specs, &known_procedure_sigs);
+
+    const test1 = known_procedure_sigs.get("test1") orelse return error.TestExpectedEqual;
+    const test2 = known_procedure_sigs.get("test2") orelse return error.TestExpectedEqual;
+    const test3 = known_procedure_sigs.get("test3") orelse return error.TestExpectedEqual;
+    const test4 = known_procedure_sigs.get("test4") orelse return error.TestExpectedEqual;
+    const test5 = known_procedure_sigs.get("test5") orelse return error.TestExpectedEqual;
+
+    try testing.expectEqual(ast.ProgramUnitKind.function, test1.kind);
+    try testing.expectEqual(ast.TypeKind.logical, test1.result_type_spec.?.lowered_kind);
+    try testing.expectEqual(@as(usize, 1), test1.arg_count);
+    try testing.expectEqual(@as(usize, 1), test1.args.len);
+    try testing.expectEqual(@as(usize, 0), test1.args[0].rank);
+
+    try testing.expectEqual(ast.ProgramUnitKind.function, test2.kind);
+    try testing.expectEqual(ast.TypeKind.real, test2.result_type_spec.?.lowered_kind);
+    try testing.expectEqual(@as(usize, 1), test2.arg_count);
+    try testing.expectEqual(@as(usize, 1), test2.args.len);
+    try testing.expectEqual(@as(usize, 0), test2.args[0].rank);
+
+    try testing.expectEqual(ast.ProgramUnitKind.function, test3.kind);
+    try testing.expectEqual(ast.TypeKind.logical, test3.result_type_spec.?.lowered_kind);
+    try testing.expectEqual(@as(usize, 0), test3.arg_count);
+    try testing.expectEqual(@as(usize, 0), test3.args.len);
+
+    try testing.expectEqual(ast.ProgramUnitKind.function, test4.kind);
+    try testing.expectEqual(ast.TypeKind.logical, test4.result_type_spec.?.lowered_kind);
+    try testing.expectEqual(@as(usize, 1), test4.arg_count);
+    try testing.expectEqual(@as(usize, 1), test4.args.len);
+    try testing.expectEqual(@as(usize, 1), test4.args[0].rank);
+
+    try testing.expectEqual(ast.ProgramUnitKind.function, test5.kind);
+    try testing.expectEqual(ast.TypeKind.logical, test5.result_type_spec.?.lowered_kind);
+    try testing.expectEqual(@as(usize, 1), test5.arg_count);
+    try testing.expectEqual(@as(usize, 1), test5.args.len);
+    try testing.expectEqual(@as(usize, 0), test5.args[0].rank);
+    try testing.expectEqual(@as(usize, 1), test5.result_rank);
 }

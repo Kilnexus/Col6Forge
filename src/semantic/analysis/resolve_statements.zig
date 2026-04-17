@@ -10,6 +10,7 @@ const common_entity_queries = @import("common_entity_queries.zig");
 const select_type_char_clause = @import("select_type_char_clause.zig");
 const expressions = @import("resolve_expr.zig");
 const symbols_mod = @import("resolve_symbols.zig");
+const procedure_interfaces = @import("check_statements/procedure_interfaces.zig");
 
 const ResolveError = expressions.ResolveError;
 
@@ -38,7 +39,9 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
             try expressions.resolveExpr(self, assign.value);
         },
         .pointer_assignment => |assign| {
-            try expressions.resolveExpr(self, assign.target);
+            if (!pointerAssignmentTargetUsesAbstractInterfaceName(self, assign.target)) {
+                try expressions.resolveExpr(self, assign.target);
+            }
             try expressions.resolveExpr(self, assign.value);
         },
         .nullify => |nullify| {
@@ -253,6 +256,13 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
             }
         },
     }
+}
+
+fn pointerAssignmentTargetUsesAbstractInterfaceName(self: *context.Context, expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .identifier => |name| procedure_interfaces.abstractInterfaceNameBlocksVariableUse(self, name),
+        else => false,
+    };
 }
 
 fn resolveAssociateBlock(self: *context.Context, associate: ast.AssociateBlock) ResolveError!void {

@@ -395,6 +395,18 @@ pub fn checkProcedurePointerAssignmentCompatibility(
     try rejectArrayPassedObjectProcedureComponentPointerAssignment(self, target_expr);
     const target_sig = procedurePointerExprSig(self, target_expr) orelse return;
     const value_sig = procedurePointerAssignmentValueSig(self, value_expr) orelse return;
+    if (value_sig.elemental and !procedurePointerAssignmentValueIsIntrinsic(value_expr)) {
+        const proc_name = procedurePointerAssignmentValueName(value_expr) orelse "procedure";
+        const message = std.fmt.allocPrint(
+            self.arena,
+            "Nonintrinsic elemental procedure '{s}' is invalid in procedure pointer assignment",
+            .{proc_name},
+        ) catch "Nonintrinsic elemental procedure is invalid in procedure pointer assignment";
+        return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, message);
+    }
+    if (target_sig.pure and !value_sig.pure and !procedurePointerAssignmentValueIsIntrinsic(value_expr)) {
+        return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Mismatch in PURE attribute");
+    }
     const target_uses_type_spec_interface = procedurePointerAssignmentUsesTypeSpecInterface(self, target_expr);
     if (target_sig.kind != value_sig.kind) {
         if (target_uses_type_spec_interface) {
@@ -434,6 +446,19 @@ pub fn checkProcedurePointerAssignmentCompatibility(
             return emitProcedureActualDiagnostic(self, value_expr, error.InvalidArgumentCount, "Type mismatch in function result");
         }
     }
+}
+
+fn procedurePointerAssignmentValueName(expr: *ast.Expr) ?[]const u8 {
+    return switch (expr.*) {
+        .identifier => |name| name,
+        .call_or_subscript => |call| call.name,
+        else => null,
+    };
+}
+
+fn procedurePointerAssignmentValueIsIntrinsic(expr: *ast.Expr) bool {
+    const name = procedurePointerAssignmentValueName(expr) orelse return false;
+    return resolve_symbols.isIntrinsicName(name);
 }
 
 fn procedurePointerAssignmentUsesTypeSpecInterface(

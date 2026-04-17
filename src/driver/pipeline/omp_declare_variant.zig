@@ -16,7 +16,7 @@ const ScanEvent = union(enum) {
     declare_variant: Directive,
 };
 
-const DirectiveLine = struct {
+pub const DirectiveLine = struct {
     line: usize,
     raw_text: []const u8,
     payload_text: []const u8,
@@ -212,6 +212,7 @@ pub fn validateDeclareVariantCompatibility(
     if (first_error) |err| return err;
 }
 
+
 fn appendDirectiveAdjustArgs(
     arena: std.mem.Allocator,
     program: ast.Program,
@@ -238,6 +239,7 @@ fn appendDirectiveAdjustArgs(
         }
     }
 }
+
 
 fn validateDirective(
     arena: std.mem.Allocator,
@@ -583,7 +585,7 @@ fn findDeclSourceInDecls(decls: []const ast.Decl, sources: []const ast.DeclSourc
     return null;
 }
 
-fn addDirectiveDiagnostic(
+pub fn addDirectiveDiagnostic(
     diag_bag: *diag.Bag,
     input_path: []const u8,
     line: usize,
@@ -752,13 +754,13 @@ fn parseVariantName(text: []const u8) ?[]const u8 {
     return if (name.len == 0) null else name;
 }
 
-fn parseTopOwnerHeader(trimmed: []const u8) ?[]const u8 {
+pub fn parseTopOwnerHeader(trimmed: []const u8) ?[]const u8 {
     if (parseHeaderName(trimmed, "program")) |name| return name;
     if (parseHeaderName(trimmed, "module")) |name| return name;
     return null;
 }
 
-fn parseProcedureHeader(trimmed: []const u8) ?[]const u8 {
+pub fn parseProcedureHeader(trimmed: []const u8) ?[]const u8 {
     if (startsWithNoCase(trimmed, "end ")) return null;
     if (parseHeaderName(trimmed, "subroutine")) |name| return name;
     if (parseHeaderName(trimmed, "function")) |name| return name;
@@ -786,16 +788,16 @@ fn parseLeadingIdentifier(text: []const u8) ?[]const u8 {
     return text[0..len];
 }
 
-fn isEndProcedureLine(trimmed: []const u8) bool {
+pub fn isEndProcedureLine(trimmed: []const u8) bool {
     return startsWithNoCase(trimmed, "end subroutine") or startsWithNoCase(trimmed, "endsubroutine") or startsWithNoCase(trimmed, "end function") or startsWithNoCase(trimmed, "endfunction");
 }
 
-fn startsWithNoCase(text: []const u8, prefix: []const u8) bool {
+pub fn startsWithNoCase(text: []const u8, prefix: []const u8) bool {
     if (text.len < prefix.len) return false;
     return std.ascii.eqlIgnoreCase(text[0..prefix.len], prefix);
 }
 
-fn indexOfNoCase(text: []const u8, needle: []const u8) ?usize {
+pub fn indexOfNoCase(text: []const u8, needle: []const u8) ?usize {
     return indexOfNoCaseFrom(text, needle, 0);
 }
 
@@ -808,7 +810,7 @@ fn indexOfNoCaseFrom(text: []const u8, needle: []const u8, start: usize) ?usize 
     return null;
 }
 
-fn findMatchingParen(text: []const u8, open_idx: usize) ?usize {
+pub fn findMatchingParen(text: []const u8, open_idx: usize) ?usize {
     if (open_idx >= text.len or text[open_idx] != '(') return null;
     var depth: usize = 0;
     var idx = open_idx;
@@ -825,7 +827,7 @@ fn findMatchingParen(text: []const u8, open_idx: usize) ?usize {
     return null;
 }
 
-fn directivePayload(trimmed: []const u8) []const u8 {
+pub fn directivePayload(trimmed: []const u8) []const u8 {
     const no_comment = stripHarnessComment(trimmed);
     if (startsWithNoCase(no_comment, "!$omp&")) return std.mem.trim(u8, no_comment["!$omp&".len..], " \t");
     if (startsWithNoCase(no_comment, "!$omp")) return std.mem.trim(u8, no_comment["!$omp".len..], " \t");
@@ -838,7 +840,7 @@ fn stripHarnessComment(line: []const u8) []const u8 {
     return line;
 }
 
-fn joinDirectivePayload(arena: std.mem.Allocator, lines: []const DirectiveLine) ![]const u8 {
+pub fn joinDirectivePayload(arena: std.mem.Allocator, lines: []const DirectiveLine) ![]const u8 {
     var out = std.array_list.Managed(u8).init(arena);
     for (lines, 0..) |line, idx| {
         var payload = std.mem.trim(u8, line.payload_text, " \t");
@@ -859,7 +861,7 @@ fn findClauseLine(directive: Directive, clause_name: []const u8, body: []const u
     return directive.lines[directive.lines.len - 1];
 }
 
-fn containsCaseInsensitive(text: []const u8, needle: []const u8) bool {
+pub fn containsCaseInsensitive(text: []const u8, needle: []const u8) bool {
     return indexOfNoCase(text, needle) != null;
 }
 

@@ -125,3 +125,20 @@ test "runPipelineWithOptionsAndDiagnostics rejects bind(c) interface character a
     try testing.expect(std.mem.indexOf(u8, diag_info.message, "cannot be an array") != null);
 }
 
+test "runPipelineWithOptionsAndDiagnostics rejects procedure pointer in minimal omp clauses" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var diag_capture = PipelineDiagCapture.init(allocator);
+    defer diag_capture.deinit();
+    const diag_info = try diag_capture.expectError(
+        allocator,
+        "tests/gcc-tests/gfortran.dg/gomp/proc_ptr_2.f90",
+        .llvm,
+        .{},
+        error.InvalidArgumentType,
+    );
+    defer diag_capture.release(diag_info);
+    try testing.expect(std.mem.indexOf(u8, diag_info.message, "Procedure pointer") != null);
+}
+

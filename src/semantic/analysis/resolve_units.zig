@@ -15,6 +15,7 @@ const constants = @import("resolve_const.zig");
 const array_dim_queries = @import("array_dim_queries.zig");
 const bind_c_validation = @import("resolve_units_bind_c.zig");
 const bind_entities = @import("resolve_specs/bind_entities.zig");
+const generic_interface_ambiguity = @import("generic_interface_ambiguity.zig");
 const scope = @import("../scope.zig");
 const evaluator = @import("../evaluator.zig");
 
@@ -117,6 +118,10 @@ pub const Resolver = struct {
             ctx.setCurrentDeclIndex(null);
         }
         if (ctx.unit.owner_name != null) {
+            if (validateHostGenericSpecificAmbiguity(ctx)) |err| {
+                if (!ctx.usesExplicitDiagnosticBag()) return err;
+                if (first_stmt_error == null) first_stmt_error = err;
+            }
             if (findExplicitInterfaceDeclSource(ctx, ctx.unit.name)) |decl_source| {
                 const allow_module_match = ctx.unit.owner_kind == .module and ctx.unit.is_module_procedure;
                 if (!allow_module_match) {
@@ -193,6 +198,56 @@ fn shouldSkipMirroredHostDecl(ctx: *context.Context, decl: ast.Decl, decl_idx: u
         .derived_type_def => |derived| symbols_mod.hasKnownHostDerivedType(ctx, derived.name),
         else => false,
     };
+}
+
+fn validateHostGenericSpecificAmbiguity(ctx: *context.Context) ?anyerror {
+    if (ctx.unit.owner_name == null) return null;
+    const current_sig = symbols_mod.lookupKnownProcedureSig(ctx, ctx.unit.name) orelse return null;
+    const current_key = std.fmt.allocPrint(ctx.arena, "generic_specific::{s}", .{ctx.unit.name}) catch return error.OutOfMemory;
+    const current_interface_source = ctx.known_host_interface_sources.get(current_key) orelse return null;
+
+    var related = std.array_list.Managed(common_diag.DiagnosticSpan).init(ctx.arena);
+    var it = ctx.known_host_interface_sources.iterator();
+    while (it.next()) |entry| {
+        const peer_name = entry.key_ptr.*;
+        const peer_source = entry.value_ptr.*;
+        if (!std.mem.startsWith(u8, peer_name, "generic_specific::")) continue;
+        const bare_name = peer_name["generic_specific::".len..];
+        if (std.ascii.eqlIgnoreCase(bare_name, ctx.unit.name)) continue;
+        if (!declSourceSame(peer_source, current_interface_source)) continue;
+        const peer_sig = symbols_mod.lookupKnownProcedureSig(ctx, bare_name) orelse continue;
+        if (!generic_interface_ambiguity.genericSpecificAmbiguous(current_sig, peer_sig)) continue;
+        related.append(.{
+            .file_path = "",
+            .line = if (peer_source.line == 0) 1 else peer_source.line,
+            .column = if (peer_source.column == 0) 1 else peer_source.column,
+            .line_text = peer_source.text,
+            .label = "conflicting specific here",
+        }) catch return error.OutOfMemory;
+    }
+    if (related.items.len == 0) return null;
+
+    const source = ctx.unit.source;
+    ctx.setDiagnosticStructured(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.duplicate_declaration.code,
+        "Ambiguous interfaces",
+        source.text,
+        "ambiguous specific here",
+        &.{.{ .text = "generic interface specifics must be distinguishable by their required dummy arguments" }},
+        &.{.{ .text = "change one specific's required dummy argument characteristics or split the generic interface" }},
+        related.items,
+    );
+    return error.DuplicateDeclaration;
+}
+
+fn declSourceSame(a: ast.DeclSource, b: ast.DeclSource) bool {
+    return a.line == b.line and
+        a.column == b.column and
+        std.mem.eql(u8, a.text, b.text) and
+        ((a.owner_name == null and b.owner_name == null) or
+        (a.owner_name != null and b.owner_name != null and std.ascii.eqlIgnoreCase(a.owner_name.?, b.owner_name.?)));
 }
 
 fn unitScopeKind(kind: ast.ProgramUnitKind) scope.ScopeKind {

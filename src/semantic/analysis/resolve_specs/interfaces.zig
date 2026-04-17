@@ -11,6 +11,7 @@ const diagnostics = @import("interfaces/diagnostics.zig");
 const procedure_interfaces = @import("../check_statements/procedure_interfaces.zig");
 const split_api = @import("../../split/api/mod.zig");
 const helpers = @import("helpers.zig");
+const generic_interface_ambiguity = @import("../generic_interface_ambiguity.zig");
 
 const setAttributeConflictDiagnostic = helpers.setAttributeConflictDiagnostic;
 const setSourceDiagnostic = helpers.setSourceDiagnostic;
@@ -552,7 +553,7 @@ fn validateGenericInterfaceProcedures(self: *context.Context, interface_block: a
         var previous_idx: usize = 0;
         while (previous_idx < current_idx) : (previous_idx += 1) {
             if (genericSpecificSourceSame(specifics.items[previous_idx].source, specifics.items[current_idx].source)) continue;
-            if (!genericSpecificAmbiguous(specifics.items[previous_idx].sig, specifics.items[current_idx].sig)) continue;
+            if (!generic_interface_ambiguity.genericSpecificAmbiguous(specifics.items[previous_idx].sig, specifics.items[current_idx].sig)) continue;
             appendUniqueGenericSpecificSource(&conflicting, specifics.items[previous_idx].source) catch return error.OutOfMemory;
         }
         if (conflicting.items.len == 0) continue;
@@ -578,46 +579,6 @@ fn findUnitDerivedTypeDeclSource(self: *context.Context, target_name: []const u8
         return null;
     }
     return null;
-}
-
-fn genericSpecificAmbiguous(a: context.Context.ProcedureSig, b: context.Context.ProcedureSig) bool {
-    if (a.kind != b.kind) return false;
-    if (genericSpecificRequiredArgCount(a) != genericSpecificRequiredArgCount(b)) return false;
-
-    var a_idx: usize = 0;
-    var b_idx: usize = 0;
-    while (true) {
-        while (a_idx < a.args.len and a.args[a_idx].optional) : (a_idx += 1) {}
-        while (b_idx < b.args.len and b.args[b_idx].optional) : (b_idx += 1) {}
-        if (a_idx >= a.args.len or b_idx >= b.args.len) return a_idx >= a.args.len and b_idx >= b.args.len;
-
-        if (!genericSpecificArgEquivalent(a.args[a_idx], b.args[b_idx])) return false;
-        a_idx += 1;
-        b_idx += 1;
-    }
-}
-
-fn genericSpecificRequiredArgCount(sig: context.Context.ProcedureSig) usize {
-    var count: usize = 0;
-    for (sig.args) |arg| {
-        if (!arg.optional) count += 1;
-    }
-    return count;
-}
-
-fn genericSpecificArgEquivalent(a: context.Context.ProcedureSig.ArgSig, b: context.Context.ProcedureSig.ArgSig) bool {
-    if (a.is_procedure or b.is_procedure) return a.is_procedure and b.is_procedure;
-    if (a.rank != b.rank) return false;
-    if (a.pointer != b.pointer) return false;
-    if (a.allocatable != b.allocatable) return false;
-    if (a.type_spec.lowered_kind != b.type_spec.lowered_kind) return false;
-    if (a.type_spec.lowered_kind == .derived) {
-        if (a.type_spec.derived_type_name == null or b.type_spec.derived_type_name == null) {
-            return a.type_spec.derived_type_name == null and b.type_spec.derived_type_name == null;
-        }
-        return std.ascii.eqlIgnoreCase(a.type_spec.derived_type_name.?, b.type_spec.derived_type_name.?);
-    }
-    return true;
 }
 
 fn interfaceBlockProcedureUsesIntrinsicTypeName(proc_header: ast.InterfaceProcedure) bool {

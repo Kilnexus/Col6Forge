@@ -44,6 +44,22 @@ fn collectHostExplicitInterfaceSources(
     for (unit.decls, 0..) |decl, decl_idx| {
         if (decl != .interface_block) continue;
         const decl_source = if (decl_idx < unit.decl_sources.len) unit.decl_sources[decl_idx] else continue;
+        for (decl.interface_block.specific_procedures, 0..) |procedure_name, idx| {
+            const key = try symbol_lookup.lowerDup(arena, try std.fmt.allocPrint(arena, "generic_specific::{s}", .{procedure_name}));
+            const source = if (idx < decl.interface_block.specific_procedure_sources.len)
+                decl.interface_block.specific_procedure_sources[idx]
+            else
+                decl_source;
+            try out.put(key, source);
+        }
+        for (decl.interface_block.module_procedures, 0..) |procedure_name, idx| {
+            const key = try symbol_lookup.lowerDup(arena, try std.fmt.allocPrint(arena, "generic_specific::{s}", .{procedure_name}));
+            const source = if (idx < decl.interface_block.module_procedure_sources.len)
+                decl.interface_block.module_procedure_sources[idx]
+            else
+                decl_source;
+            try out.put(key, source);
+        }
         for (decl.interface_block.procedures) |procedure_name| {
             const key = try symbol_lookup.lowerDup(arena, procedure_name);
             try out.put(key, decl_source);

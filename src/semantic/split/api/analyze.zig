@@ -18,6 +18,7 @@ const symbol_lookup = @import("../symbol_lookup.zig");
 const host_context = @import("host_context.zig");
 const global_identifier_validation = @import("global_identifier_validation.zig");
 const interfaces = @import("interfaces.zig");
+const polymorphic_component_validation = @import("polymorphic_component_validation.zig");
 const procedure_inference = @import("procedure_inference.zig");
 const types = @import("types.zig");
 
@@ -83,6 +84,10 @@ pub fn analyzeProgramWithKnownAndOptionsAndDiagnostics(
     var active_host_owner: ?[]const u8 = null;
 
     try seedKnownProcedures(arena, known_fn_types, known_proc_sigs, &known_function_type_specs, &known_procedure_sigs);
+    var first_error: ?anyerror = null;
+    polymorphic_component_validation.validateProgram(mutable_program, diag_bag) catch |err| {
+        if (first_error == null) first_error = err;
+    };
     try validateProgramBindCInterfaces(
         arena,
         mutable_program,
@@ -101,7 +106,6 @@ pub fn analyzeProgramWithKnownAndOptionsAndDiagnostics(
     try global_identifier_validation.validateProgram(arena, mutable_program, diag_bag);
 
     var units = std.array_list.Managed(types.SemanticUnit).init(arena);
-    var first_error: ?anyerror = null;
     for (mutable_program.units) |*unit| {
         clearInactiveHostContext(
             &known_host_symbols,

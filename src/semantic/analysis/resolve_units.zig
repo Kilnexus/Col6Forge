@@ -381,9 +381,21 @@ fn maybeSetFunctionTypeDeclDiagnostic(ctx: *context.Context, type_decl: ast.Type
     const result_name = ctx.unit.result_name orelse ctx.unit.name;
     for (type_decl.items) |item| {
         if (!std.ascii.eqlIgnoreCase(item.name, result_name)) continue;
+        maybeRecoverUnexpectedFunctionResultTypeDecl(ctx, type_decl, item.name);
         const decl_source = ctx.current_decl_source orelse return;
         const line = if (decl_source.line == 0) 1 else decl_source.line;
         const column = if (decl_source.column == 0) 1 else decl_source.column;
+        if (type_decl.type_kind == .derived and type_decl.derived_type_name != null) {
+            ctx.setDiagnostic(
+                line,
+                column,
+                catalog.semantic.unexpected_type_decl.code,
+                "is not accessible",
+                decl_source.text,
+            );
+            return;
+        }
+        if (hasCustomCurrentDiagnostic(ctx)) return;
         const related_source = findExplicitInterfaceDeclSource(ctx, ctx.unit.name);
         if (related_source) |source| {
             const related = [_]common_diag.DiagnosticSpan{.{
@@ -423,6 +435,22 @@ fn maybeSetFunctionTypeDeclDiagnostic(ctx: *context.Context, type_decl: ast.Type
             );
         }
         return;
+    }
+}
+
+fn maybeRecoverUnexpectedFunctionResultTypeDecl(
+    ctx: *context.Context,
+    type_decl: ast.TypeDecl,
+    item_name: []const u8,
+) void {
+    if (ctx.unit.kind != .function) return;
+    const result_name = ctx.unit.result_name orelse ctx.unit.name;
+    if (!std.ascii.eqlIgnoreCase(item_name, result_name)) return;
+    const idx = symbols_mod.findSymbolIndex(ctx, item_name) orelse return;
+    var sym = &ctx.symbols.items[idx];
+    if (type_decl.type_kind == .derived and type_decl.polymorphic) {
+        sym.applyTypeSpec(symbols.TypeSpec.fromKind(.derived).withPolymorphic(true));
+        sym.type_explicit = true;
     }
 }
 
@@ -525,6 +553,10 @@ fn buildDerivedComponentInfo(
                 }
             }
             spec = spec.withPolymorphic(type_decl.polymorphic);
+            if (spec.lowered_kind == .derived and spec.polymorphic and !type_decl.allocatable and !type_decl.pointer) {
+                if (!ctx.usesExplicitDiagnosticBag()) return error.InvalidUnlimitedPolymorphicEntity;
+                continue;
+            }
             if (spec.lowered_kind == .character) {
                 if (item.char_len_deferred) {
                     spec = spec.withCharacterLength(.deferred, null);

@@ -24,6 +24,7 @@ pub const DeclarationAspect = enum {
 pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
     var resolved_type = try resolvedDeclTypeSpec(self, decl.type_kind, decl.derived_type_name, decl.kind_selector, decl.polymorphic, decl.assumed_type);
     resolved_type = resolved_type.withPolymorphic(decl.polymorphic).withAssumedType(decl.assumed_type);
+    var first_err: ?anyerror = null;
     for (decl.items) |item| {
         var effective_type = resolved_type;
         var effective_item = item;
@@ -48,6 +49,11 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
         }
         try applyDeclarator(self, effective_type, effective_item, .local, true, decl.allocatable, decl.pointer, decl.contiguous);
         const idx = symbols_mod.findSymbolIndex(self, item.name) orelse return error.UnknownSymbol;
+        validatePolymorphicTypeDecl(self, decl, effective_type, self.symbols.items[idx]) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
         if (decl.external) {
             self.symbols.items[idx].is_external = true;
             try validateExternalCharacterDeclarator(self, self.symbols.items[idx], item);
@@ -56,10 +62,52 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
         try decl_initializers.validateCharacterArrayConstructorInitializer(self, self.symbols.items[idx], item.init);
         try decl_initializers.validateDeclaratorInitializer(self, item.init);
     }
+    if (first_err) |err| return err;
 }
 
 pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Expr) !void {
     return decl_initializers.validateDeclaratorInitializer(self, init_expr);
+}
+
+fn validatePolymorphicTypeDecl(
+    self: *context.Context,
+    decl: ast.TypeDecl,
+    declared_type: symbols.TypeSpec,
+    sym: symbols.Symbol,
+) !void {
+    if (declared_type.lowered_kind != .derived or !declared_type.polymorphic) return;
+    if (self.unit.kind == .function) {
+        const result_name = self.unit.result_name orelse self.unit.name;
+        if (std.ascii.eqlIgnoreCase(sym.name, result_name)) return;
+    }
+    if (sym.storage == .dummy or sym.is_allocatable or sym.is_pointer) return;
+
+    const decl_source = self.current_decl_source orelse ast.DeclSource{};
+    const line = if (decl_source.line == 0) 1 else decl_source.line;
+    const column = if (decl_source.column == 0) 1 else decl_source.column;
+    if (decl.parameter) {
+        self.setDiagnosticDetailed(
+            line,
+            column,
+            catalog.semantic.invalid_unlimited_polymorphic_entity.code,
+            "cannot have the PARAMETER attribute",
+            decl_source.text,
+            &.{.{ .text = "A polymorphic entity may not be declared with the PARAMETER attribute." }},
+            &.{.{ .text = "Remove PARAMETER or make the entity nonpolymorphic." }},
+        );
+        return error.InvalidUnlimitedPolymorphicEntity;
+    }
+
+    self.setDiagnosticDetailed(
+        line,
+        column,
+        catalog.semantic.invalid_unlimited_polymorphic_entity.code,
+        "must be dummy, allocatable or pointer",
+        decl_source.text,
+        &.{.{ .text = "A polymorphic data entity must be a dummy argument, POINTER, or ALLOCATABLE object." }},
+        &.{.{ .text = "Add POINTER or ALLOCATABLE, or move this CLASS entity to a dummy argument list." }},
+    );
+    return error.InvalidUnlimitedPolymorphicEntity;
 }
 
 fn characterExprLogicalLen(self: *context.Context, expr: *ast.Expr) ?usize {
@@ -214,7 +262,7 @@ pub fn applyDeclarator(
     if (item.no_arg_check) {
         sym.no_arg_check = true;
     }
-    if (sym.loweredKind() == .derived and sym.type_spec.polymorphic and sym.storage != .dummy and !sym.is_allocatable and !sym.is_pointer) {
+    if (sym.loweredKind() == .derived and sym.type_spec.polymorphic and sym.type_spec.derived_type_name == null and sym.storage != .dummy and !sym.is_allocatable and !sym.is_pointer) {
         const decl_source = self.current_decl_source orelse ast.DeclSource{};
         self.setDiagnosticDetailed(
             if (decl_source.line == 0) 1 else decl_source.line,

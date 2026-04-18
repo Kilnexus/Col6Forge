@@ -60,10 +60,12 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             }
             try rejectCharacterLiteralAssignmentConversion(self, assign.value, target_spec, value_spec);
             try rejectMixedCharacterArrayConstructorLengths(self, assign.value, target_spec);
+            const defined_assignment_compatible = expr_semantics.isDefinedAssignmentCompatible(self, assign.target, assign.value, .{
+                .dummyArgTypeCompatible = dummyArgTypeCompatible,
+            });
+            try rejectInvalidPolymorphicIntrinsicAssignment(self, assign.target, target_spec, defined_assignment_compatible);
             if ((!intrinsicAssignmentTypeCompatible(self, target_ty, value_ty, target_spec, value_spec)) and
-                !expr_semantics.isDefinedAssignmentCompatible(self, assign.target, assign.value, .{
-                    .dummyArgTypeCompatible = dummyArgTypeCompatible,
-                }))
+                !defined_assignment_compatible)
             {
                 self.setCurrentSource(self.sourceForExpr(assign.value) orelse self.sourceForExpr(assign.target));
                 return error.AssignmentTypeMismatch;
@@ -543,6 +545,40 @@ fn intrinsicAssignmentTypeCompatible(
     }
 
     return true;
+}
+
+fn rejectInvalidPolymorphicIntrinsicAssignment(
+    self: *context.Context,
+    target: *ast.Expr,
+    target_spec: symbols.TypeSpec,
+    defined_assignment_compatible: bool,
+) CheckError!void {
+    if (defined_assignment_compatible) return;
+    if (target_spec.lowered_kind != .derived or !target_spec.polymorphic) return;
+    if (assignmentTargetAllowsPolymorphicIntrinsicAssignment(self, target)) return;
+    return emitExprConstraint(self, target, "Nonallocatable variable must not be polymorphic in intrinsic assignment");
+}
+
+fn assignmentTargetAllowsPolymorphicIntrinsicAssignment(
+    self: *context.Context,
+    target: *ast.Expr,
+) bool {
+    return switch (target.*) {
+        .identifier => |name| blk: {
+            const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;
+            const sym = self.symbols.items[idx];
+            break :blk sym.is_allocatable or sym.is_pointer;
+        },
+        .component => |comp| blk: {
+            if (comp.has_parens) break :blk false;
+            const base_spec = resolve_expr.exprTypeSpec(self, comp.base) catch break :blk false;
+            if (base_spec.lowered_kind != .derived) break :blk false;
+            const derived_name = base_spec.derived_type_name orelse break :blk false;
+            const component = resolve_symbols.lookupDerivedComponent(self, derived_name, comp.name) orelse break :blk false;
+            break :blk component.allocatable or component.pointer;
+        },
+        else => false,
+    };
 }
 
 fn rejectCharacterLiteralAssignmentConversion(

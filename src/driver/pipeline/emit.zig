@@ -69,6 +69,10 @@ pub fn emitLlvmModule(
     if (parse_had_diagnostics) {
         if (profile) |p| p.markFailure(.parse);
     }
+    omp_minimal_directives.validatePreSemanticDirectiveCompatibility(arena.allocator(), program, input_path, contents, diag_bag) catch |err| {
+        if (profile) |p| p.markFailure(.semantic);
+        return err;
+    };
 
     const declare_variant_adjust_args = try omp_declare_variant.collectDeclareVariantAdjustArgs(
         arena.allocator(),
@@ -208,6 +212,10 @@ pub fn emitLlvmModuleToWriter(
     if (parse_had_diagnostics) {
         if (profile) |p| p.markFailure(.parse);
     }
+    omp_minimal_directives.validatePreSemanticDirectiveCompatibility(arena.allocator(), program, input_path, contents, diag_bag) catch |err| {
+        if (profile) |p| p.markFailure(.semantic);
+        return err;
+    };
 
     var semantic_diag_bag = semantic.diagnostic.Bag.init(arena.allocator());
     defer semantic_diag_bag.deinit();

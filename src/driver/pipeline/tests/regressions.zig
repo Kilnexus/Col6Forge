@@ -142,3 +142,20 @@ test "runPipelineWithOptionsAndDiagnostics rejects procedure pointer in minimal 
     try testing.expect(std.mem.indexOf(u8, diag_info.message, "Procedure pointer") != null);
 }
 
+test "runPipelineWithOptionsAndDiagnostics rejects polymorphic arrays in minimal omp firstprivate" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var diag_capture = PipelineDiagCapture.init(allocator);
+    defer diag_capture.deinit();
+    const diag_info = try diag_capture.expectError(
+        allocator,
+        "tests/gcc-tests/gfortran.dg/gomp/class-firstprivate-1.f90",
+        .llvm,
+        .{},
+        error.InvalidArgumentType,
+    );
+    defer diag_capture.release(diag_info);
+    try testing.expect(std.mem.indexOf(u8, diag_info.message, "polymorphic arrays not yet supported for firstprivate") != null);
+}
+

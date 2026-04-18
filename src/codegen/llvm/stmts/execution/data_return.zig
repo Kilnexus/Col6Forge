@@ -119,6 +119,7 @@ pub fn emitDefaultReturn(ctx: *Context, builder: anytype) EmitError!void {
         const ret_ptr = ctx.locals.get(return_symbol_name) orelse return error.UnknownSymbol;
         if (sym.dims.len != 0 or ctx.abiUsesHiddenResultPtr(ret_ty)) {
             // Hidden-result ABI returns through the caller-provided pointer; function returns void.
+            try emitHiddenArrayResultFinalize(ctx, builder, return_symbol_name, sym, ret_ptr);
             try ctx.emitHeapTempFrees(builder);
             try builder.retVoid();
             return;
@@ -168,6 +169,42 @@ fn functionReturnSymbolName(unit: ast.ProgramUnit) []const u8 {
     if (unit.kind != .function) return unit.name;
     if (unit.result_name) |name| return name;
     return unit.name;
+}
+
+fn emitHiddenArrayResultFinalize(
+    ctx: *Context,
+    builder: anytype,
+    return_symbol_name: []const u8,
+    sym: ast.sema.Symbol,
+    ret_ptr: ValueRef,
+) EmitError!void {
+    const hidden = ctx.hidden_result_array_abi orelse return;
+    if (sym.dims.len == 0) return;
+    if (hidden.rank != sym.dims.len) return error.InvalidAbiState;
+
+    const result_data_ptr = if (sym.is_pointer) blk: {
+        const loaded_name = try ctx.nextTemp();
+        try builder.load(loaded_name, .ptr, ret_ptr);
+        break :blk ValueRef{ .name = loaded_name, .ty = .ptr, .is_ptr = false };
+    } else ret_ptr;
+    try builder.store(result_data_ptr, hidden.slot_ptr);
+
+    const desc = ctx.runtimeArrayDescriptor(return_symbol_name) orelse return error.InvalidAbiState;
+    for (0..desc.rank) |idx| {
+        const offset = try ctx.constI64(@intCast(idx));
+
+        const extent_name = try ctx.nextTemp();
+        try builder.load(extent_name, .i64, desc.extent_slots[idx]);
+        const extent_ptr_name = try ctx.nextTemp();
+        try builder.gep(extent_ptr_name, .i64, hidden.extent_base, offset);
+        try builder.store(.{ .name = extent_name, .ty = .i64, .is_ptr = false }, .{ .name = extent_ptr_name, .ty = .ptr, .is_ptr = true });
+
+        const multiplier_name = try ctx.nextTemp();
+        try builder.load(multiplier_name, .i64, desc.multiplier_slots[idx]);
+        const multiplier_ptr_name = try ctx.nextTemp();
+        try builder.gep(multiplier_ptr_name, .i64, hidden.multiplier_base, offset);
+        try builder.store(.{ .name = multiplier_name, .ty = .i64, .is_ptr = false }, .{ .name = multiplier_ptr_name, .ty = .ptr, .is_ptr = true });
+    }
 }
 
 pub fn unitHasAltReturn(unit: ast.ProgramUnit) bool {

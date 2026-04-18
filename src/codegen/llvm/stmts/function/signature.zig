@@ -22,6 +22,7 @@ pub const SignatureInfo = struct {
     is_character_function: bool,
     is_complex_sret_function: bool,
     is_array_result_function: bool,
+    uses_dynamic_array_result_abi: bool,
     func_name: []const u8,
 };
 
@@ -38,11 +39,13 @@ pub fn analyze(ctx: *Context) EmitError!SignatureInfo {
     var is_character_function = false;
     var is_complex_sret_function = false;
     var is_array_result_function = false;
+    var uses_dynamic_array_result_abi = false;
     var uses_hidden_result_ptr = false;
     if (ctx.unit.kind == .function) {
         const sym = ctx.findSymbol(return_symbol_name) orelse return error.UnknownSymbol;
         is_character_function = sym.isCharacter();
         is_array_result_function = sym.dims.len != 0;
+        uses_dynamic_array_result_abi = is_array_result_function and (sym.is_pointer or sym.is_allocatable);
         is_complex_sret_function = ctx.abiUsesHiddenResultPtr(ctx.typeFromKind(sym.loweredKind()));
         uses_hidden_result_ptr = is_character_function or is_complex_sret_function or is_array_result_function;
         if (!uses_hidden_result_ptr) {
@@ -63,6 +66,7 @@ pub fn analyze(ctx: *Context) EmitError!SignatureInfo {
         .is_character_function = is_character_function,
         .is_complex_sret_function = is_complex_sret_function,
         .is_array_result_function = is_array_result_function,
+        .uses_dynamic_array_result_abi = uses_dynamic_array_result_abi,
         .func_name = func_name,
     };
 }
@@ -84,6 +88,8 @@ pub fn emit(ctx: *Context, builder: anytype, info: SignatureInfo) EmitError!void
     defer descriptor_extent_args.deinit();
     var descriptor_multiplier_args = std.array_list.Managed([]const u8).init(ctx.allocator);
     defer descriptor_multiplier_args.deinit();
+    var result_descriptor_extent_arg: ?[]const u8 = null;
+    var result_descriptor_multiplier_arg: ?[]const u8 = null;
     var char_dummy_len_args = std.array_list.Managed([]const u8).init(ctx.allocator);
     defer char_dummy_len_args.deinit();
 
@@ -96,6 +102,17 @@ pub fn emit(ctx: *Context, builder: anytype, info: SignatureInfo) EmitError!void
         try builder.defineArgPtr(result_arg_name, next_arg_index == 0);
         try ptr_arg_names.append(result_arg_name);
         next_arg_index += 1;
+        if (info.uses_dynamic_array_result_abi) {
+            const extent_name = try utils.formatTempName(ctx.allocator, "arg", next_arg_index);
+            try builder.defineArgPtr(extent_name, next_arg_index == 0);
+            result_descriptor_extent_arg = extent_name;
+            next_arg_index += 1;
+
+            const multiplier_name = try utils.formatTempName(ctx.allocator, "arg", next_arg_index);
+            try builder.defineArgPtr(multiplier_name, next_arg_index == 0);
+            result_descriptor_multiplier_arg = multiplier_name;
+            next_arg_index += 1;
+        }
     }
 
     for (ctx.unit.args, 0..) |_, idx| {
@@ -147,9 +164,39 @@ pub fn emit(ctx: *Context, builder: anytype, info: SignatureInfo) EmitError!void
     if (has_hidden_result_arg) {
         const result_ptr_name = ptr_arg_names.items[0];
         const result_ptr = ValueRef{ .name = result_ptr_name, .ty = .ptr, .is_ptr = true };
-        try ctx.locals.put(info.return_symbol_name, result_ptr);
-        if (!std.ascii.eqlIgnoreCase(info.return_symbol_name, ctx.unit.name)) {
-            try ctx.locals.put(ctx.unit.name, result_ptr);
+        if (info.uses_dynamic_array_result_abi) {
+            const sym = ctx.findSymbol(info.return_symbol_name) orelse return error.UnknownSymbol;
+            const extent_name = result_descriptor_extent_arg orelse return error.InvalidAbiState;
+            const multiplier_name = result_descriptor_multiplier_arg orelse return error.InvalidAbiState;
+            ctx.hidden_result_array_abi = .{
+                .slot_ptr = result_ptr,
+                .extent_base = .{ .name = extent_name, .ty = .ptr, .is_ptr = true },
+                .multiplier_base = .{ .name = multiplier_name, .ty = .ptr, .is_ptr = true },
+                .rank = sym.dims.len,
+            };
+
+            if (sym.is_pointer) {
+                const slot_name = try ctx.nextTemp();
+                try builder.alloca(slot_name, .ptr);
+                const local_slot = ValueRef{ .name = slot_name, .ty = .ptr, .is_ptr = true };
+                try builder.store(.{ .name = "null", .ty = .ptr, .is_ptr = false }, local_slot);
+                try ctx.locals.put(info.return_symbol_name, local_slot);
+                if (!std.ascii.eqlIgnoreCase(info.return_symbol_name, ctx.unit.name)) {
+                    try ctx.locals.put(ctx.unit.name, local_slot);
+                }
+            } else {
+                const local_ptr = ValueRef{ .name = "null", .ty = .ptr, .is_ptr = true };
+                try ctx.locals.put(info.return_symbol_name, local_ptr);
+                if (!std.ascii.eqlIgnoreCase(info.return_symbol_name, ctx.unit.name)) {
+                    try ctx.locals.put(ctx.unit.name, local_ptr);
+                }
+            }
+            try locals_mod.installDeferredArrayDescriptorForSymbol(ctx, builder, sym);
+        } else {
+            try ctx.locals.put(info.return_symbol_name, result_ptr);
+            if (!std.ascii.eqlIgnoreCase(info.return_symbol_name, ctx.unit.name)) {
+                try ctx.locals.put(ctx.unit.name, result_ptr);
+            }
         }
     }
 

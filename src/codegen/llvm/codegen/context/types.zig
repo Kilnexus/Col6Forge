@@ -93,6 +93,13 @@ pub const RuntimeArrayDescriptor = struct {
     multiplier_slots: []ValueRef,
 };
 
+pub const HiddenResultArrayAbi = struct {
+    slot_ptr: ValueRef,
+    extent_base: ValueRef,
+    multiplier_base: ValueRef,
+    rank: usize,
+};
+
 pub const DerivedComponentLayout = struct {
     name: []const u8,
     type_spec: input.TypeSpec,

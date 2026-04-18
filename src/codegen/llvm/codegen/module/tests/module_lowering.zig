@@ -818,4 +818,90 @@ test "emitModuleToWriter lowers automatic character length from LEN(dummy)" {
     try testing.expect(std.mem.indexOf(u8, output, "alloca i8, i64") != null);
 }
 
+test "emitModuleToWriter supports pointer array function results in pointer assignment" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "implicit none\n" ++
+        "type TObjectList\n" ++
+        "end type\n" ++
+        "class(TObjectList), pointer :: arr(:)\n" ++
+        "arr => array_item()\n" ++
+        "contains\n" ++
+        "  function array_item() result(p)\n" ++
+        "    class(TObjectList), pointer :: p(:)\n" ++
+        "  end function array_item\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem_prog = try split_api.analyzeProgram(arena.allocator(), program);
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try emitModuleToWriter(&writer, allocator, program, sem_prog, "class_result_2.f90", .{});
+
+    const output = buffer.items;
+    try testing.expect(std.mem.indexOf(u8, output, "define void @array_item_") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "call void @array_item_") != null);
+}
+
+test "emitModuleToWriter supports allocatable class array results passed as array actuals" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module a_type_m\n" ++
+        "  implicit none\n" ++
+        "  type :: a_type_t\n" ++
+        "    real :: x\n" ++
+        "    real, allocatable :: y(:)\n" ++
+        "  endtype\n" ++
+        "contains\n" ++
+        "  subroutine assign_a_type(lhs, rhs)\n" ++
+        "    type(a_type_t), intent(inout) :: lhs\n" ++
+        "    type(a_type_t), intent(in)    :: rhs(:)\n" ++
+        "    lhs%x = rhs(1)%x + rhs(2)%x\n" ++
+        "  end subroutine\n" ++
+        "  function add_a_type(lhs, rhs) result(res)\n" ++
+        "    type(a_type_t), intent(in)  :: lhs\n" ++
+        "    type(a_type_t), intent(in)  :: rhs\n" ++
+        "    class(a_type_t), allocatable :: res(:)\n" ++
+        "    allocate (a_type_t :: res(2))\n" ++
+        "    allocate (res(1)%y(1))\n" ++
+        "    allocate (res(2)%y(1))\n" ++
+        "    res(1)%x = lhs%x\n" ++
+        "    res(2)%x = rhs%x\n" ++
+        "  end function\n" ++
+        "end module\n" ++
+        "program main\n" ++
+        "  use a_type_m\n" ++
+        "  implicit none\n" ++
+        "  type(a_type_t) :: a = a_type_t(1), b = a_type_t(2)\n" ++
+        "  call assign_a_type(a, add_a_type(a, b))\n" ++
+        "end program\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem_prog = try split_api.analyzeProgram(arena.allocator(), program);
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+    try emitModuleToWriter(&writer, allocator, program, sem_prog, "class_result_8.f90", .{});
+
+    const output = buffer.items;
+    try testing.expect(std.mem.indexOf(u8, output, "define void @a_type_m__add_a_type") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "call void @a_type_m__add_a_type") != null);
+    try testing.expect(std.mem.indexOf(u8, output, "call void @a_type_m__assign_a_type") != null);
+}
+
 

@@ -344,6 +344,10 @@ fn installDeferredArrayDescriptor(ctx: *Context, builder: anytype, sym: ast.sema
     try ctx.setRuntimeArrayDescriptor(sym.name, lower_slots, extent_slots, multiplier_slots);
 }
 
+pub fn installDeferredArrayDescriptorForSymbol(ctx: *Context, builder: anytype, sym: ast.sema.Symbol) EmitError!void {
+    return installDeferredArrayDescriptor(ctx, builder, sym);
+}
+
 fn constI64(ctx: *Context, value: i64) ValueRef {
     return .{ .name = ctx.intLiteral(value) catch unreachable, .ty = .i64, .is_ptr = false };
 }

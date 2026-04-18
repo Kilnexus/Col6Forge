@@ -528,7 +528,7 @@ fn emitStructureConstructorByTypeName(
         try builder.allocaArray(object_name, .i8, layout.size);
     }
     const object_ptr = ValueRef{ .name = object_name, .ty = .ptr, .is_ptr = true };
-    if (call_or_sub.args.len != layout.components.len) return error.InvalidArgumentCount;
+    if (call_or_sub.args.len > layout.components.len) return error.InvalidArgumentCount;
 
     var arg_idx: usize = 0;
     for (layout.components) |component| {
@@ -538,10 +538,34 @@ fn emitStructureConstructorByTypeName(
             try builder.gep(gep_name, .i8, object_ptr, try ctx.constI64(@intCast(component.offset)));
             component_ptr = .{ .name = gep_name, .ty = .ptr, .is_ptr = true };
         }
-        try emitStructureConstructorComponentStore(ctx, builder, component_ptr, component, call_or_sub.args[arg_idx]);
-        arg_idx += 1;
+        if (arg_idx < call_or_sub.args.len) {
+            try emitStructureConstructorComponentStore(ctx, builder, component_ptr, component, call_or_sub.args[arg_idx]);
+            arg_idx += 1;
+        } else {
+            try emitStructureConstructorMissingComponentInit(ctx, builder, component_ptr, component);
+        }
     }
     return .{ .name = object_ptr.name, .ty = .ptr, .is_ptr = false };
+}
+
+fn emitStructureConstructorMissingComponentInit(
+    ctx: *Context,
+    builder: anytype,
+    component_ptr: ValueRef,
+    component: context.DerivedComponentLayout,
+) EmitError!void {
+    if (!(component.pointer or component.allocatable or component.procedure)) return error.InvalidArgumentCount;
+    try builder.store(.{ .name = "null", .ty = .ptr, .is_ptr = true }, component_ptr);
+    if (component.type_spec.lowered_kind == .character and component.type_spec.char_len == null) {
+        const len_slot_name = try ctx.nextTemp();
+        try builder.gep(len_slot_name, .i8, component_ptr, constI64(ctx, @intCast(@sizeOf(usize))));
+        try builder.store(constI64(ctx, 0), .{ .name = len_slot_name, .ty = .ptr, .is_ptr = true });
+    }
+    for (0..component.dims.len) |idx| {
+        try storeStructureConstructorDescriptorSlot(ctx, builder, component_ptr, component, .lower, idx, constI64(ctx, 1));
+        try storeStructureConstructorDescriptorSlot(ctx, builder, component_ptr, component, .extent, idx, constI64(ctx, 0));
+        try storeStructureConstructorDescriptorSlot(ctx, builder, component_ptr, component, .multiplier, idx, constI64(ctx, if (idx == 0) 1 else 0));
+    }
 }
 
 fn emitStructureConstructorComponentStore(

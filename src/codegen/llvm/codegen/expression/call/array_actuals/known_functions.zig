@@ -27,6 +27,9 @@ pub fn analyzeKnownArrayFunctionActual(
     const sig = ctx.lookupKnownProcedureSig(call.name) orelse return null;
     if (sig.result_rank == 0) return null;
     const result_spec = sig.result_type_spec orelse return null;
+    if (sig.is_pointer or sig.result_allocatable) {
+        return try analyzeKnownDynamicArrayFunctionActual(ctx, builder, call, sig, result_spec, hooks);
+    }
 
     const extents = try materializeKnownArrayResultExtents(ctx, builder, sig, call.args, hooks) orelse return null;
     const result_storage = try knownArrayResultStorageInfo(ctx, result_spec, hooks);
@@ -61,6 +64,106 @@ pub fn analyzeKnownArrayFunctionActual(
         .address_scale = result_storage.address_scale,
         .storage = .materialized_temp,
         .owned_heap_ptr = result_ptr,
+        .contiguous = true,
+    });
+}
+
+fn analyzeKnownDynamicArrayFunctionActual(
+    ctx: *Context,
+    builder: anytype,
+    call: ast.CallOrSubscript,
+    sig: ast.sema.KnownProcedureSig,
+    result_spec: ast.TypeSpec,
+    comptime hooks: anytype,
+) !?ArrayActualPlan {
+    if (sig.result_rank == 0) return null;
+
+    const result_storage = try knownArrayResultStorageInfo(ctx, result_spec, hooks);
+    const result_slot_name = try ctx.nextTemp();
+    try builder.alloca(result_slot_name, .ptr);
+    const result_slot = ValueRef{ .name = result_slot_name, .ty = .ptr, .is_ptr = true };
+    try builder.store(.{ .name = "null", .ty = .ptr, .is_ptr = false }, result_slot);
+
+    const extent_base_name = try ctx.nextTemp();
+    if (sig.result_rank == 1) {
+        try builder.alloca(extent_base_name, .i64);
+    } else {
+        try builder.allocaArray(extent_base_name, .i64, sig.result_rank);
+    }
+    const extent_base = ValueRef{ .name = extent_base_name, .ty = .ptr, .is_ptr = true };
+
+    const multiplier_base_name = try ctx.nextTemp();
+    if (sig.result_rank == 1) {
+        try builder.alloca(multiplier_base_name, .i64);
+    } else {
+        try builder.allocaArray(multiplier_base_name, .i64, sig.result_rank);
+    }
+    const multiplier_base = ValueRef{ .name = multiplier_base_name, .ty = .ptr, .is_ptr = true };
+
+    for (0..sig.result_rank) |idx| {
+        const offset = hooks.i64Const(ctx, @intCast(idx));
+
+        const extent_ptr_name = try ctx.nextTemp();
+        try builder.gep(extent_ptr_name, .i64, extent_base, offset);
+        try builder.store(hooks.i64Const(ctx, 0), .{ .name = extent_ptr_name, .ty = .ptr, .is_ptr = true });
+
+        const multiplier_ptr_name = try ctx.nextTemp();
+        try builder.gep(multiplier_ptr_name, .i64, multiplier_base, offset);
+        try builder.store(hooks.i64Const(ctx, if (idx == 0) 1 else 0), .{ .name = multiplier_ptr_name, .ty = .ptr, .is_ptr = true });
+    }
+
+    var abi_args = std.array_list.Managed(ValueRef).init(ctx.allocator);
+    defer abi_args.deinit();
+    var owned_heap_args = std.array_list.Managed(ValueRef).init(ctx.allocator);
+    defer owned_heap_args.deinit();
+    try abi_args.append(result_slot);
+    try abi_args.append(extent_base);
+    try abi_args.append(multiplier_base);
+    try appendKnownArrayProcedureCallArgs(
+        ctx,
+        builder,
+        &abi_args,
+        &owned_heap_args,
+        call.args,
+        sig,
+        result_storage.abi_char_len,
+        hooks,
+    );
+
+    const fn_name = try resolution.ensureExternalDeclForCall(ctx, call.name, .ptr, call.args, result_storage.abi_char_len != null);
+    try builder.callTyped(null, .void, fn_name, abi_args.items);
+    try hooks.emitOwnedHeapArgFrees(ctx, builder, owned_heap_args.items);
+
+    const loaded_result_name = try ctx.nextTemp();
+    try builder.load(loaded_result_name, .ptr, result_slot);
+    const result_ptr = ValueRef{ .name = loaded_result_name, .ty = .ptr, .is_ptr = true };
+
+    const extents = try ctx.allocator.alloc(ValueRef, sig.result_rank);
+    const multipliers = try ctx.allocator.alloc(ValueRef, sig.result_rank);
+    for (0..sig.result_rank) |idx| {
+        const offset = hooks.i64Const(ctx, @intCast(idx));
+
+        const extent_ptr_name = try ctx.nextTemp();
+        try builder.gep(extent_ptr_name, .i64, extent_base, offset);
+        const extent_name = try ctx.nextTemp();
+        try builder.load(extent_name, .i64, .{ .name = extent_ptr_name, .ty = .ptr, .is_ptr = true });
+        extents[idx] = .{ .name = extent_name, .ty = .i64, .is_ptr = false };
+
+        const multiplier_ptr_name = try ctx.nextTemp();
+        try builder.gep(multiplier_ptr_name, .i64, multiplier_base, offset);
+        const multiplier_name = try ctx.nextTemp();
+        try builder.load(multiplier_name, .i64, .{ .name = multiplier_ptr_name, .ty = .ptr, .is_ptr = true });
+        multipliers[idx] = .{ .name = multiplier_name, .ty = .i64, .is_ptr = false };
+    }
+
+    return try validatedArrayActual(.{
+        .base_ptr = result_ptr,
+        .elem_ty = result_storage.elem_ty,
+        .extents = extents,
+        .multipliers = multipliers,
+        .address_scale = result_storage.address_scale,
+        .storage = .materialized_temp,
+        .owned_heap_ptr = if (sig.result_allocatable) result_ptr else null,
         .contiguous = true,
     });
 }

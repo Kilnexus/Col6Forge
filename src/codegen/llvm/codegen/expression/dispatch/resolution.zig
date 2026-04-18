@@ -514,6 +514,12 @@ fn buildAbiParamTypes(
         (proc_sig != null and usesHiddenArrayResultAbi(proc_sig.?));
     if (has_hidden_result_ptr) {
         try tys.append(.ptr);
+        if (proc_sig) |sig| {
+            if (sig.result_rank != 0 and (sig.is_pointer or sig.result_allocatable)) {
+                try tys.append(.ptr);
+                try tys.append(.ptr);
+            }
+        }
     }
     for (args, 0..) |_, idx| {
         try tys.append(.ptr);
@@ -536,7 +542,7 @@ fn buildAbiParamTypes(
 }
 
 fn usesHiddenArrayResultAbi(sig: ast.sema.KnownProcedureSig) bool {
-    return sig.result_rank != 0 and !sig.is_pointer and !sig.result_allocatable;
+    return sig.result_rank != 0;
 }
 
 fn formatParamSig(ctx: *Context, param_types: []const llvm_types.IRType) ![]const u8 {

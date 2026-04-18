@@ -33,6 +33,7 @@ pub const StatementFunctionSubst = types.StatementFunctionSubst;
 pub const BranchTarget = types.BranchTarget;
 pub const BranchWorkspace = types.BranchWorkspace;
 pub const RuntimeArrayDescriptor = types.RuntimeArrayDescriptor;
+pub const HiddenResultArrayAbi = types.HiddenResultArrayAbi;
 pub const DerivedComponentLayout = types.DerivedComponentLayout;
 pub const DerivedTypeLayout = types.DerivedTypeLayout;
 pub const DerivedBindingInfo = types.DerivedBindingInfo;
@@ -98,6 +99,7 @@ pub const Context = struct {
     char_arg_lens: CaseInsensitiveStringHashMap(ValueRef),
     managed_allocatables: CaseInsensitiveStringHashMap(void),
     runtime_array_descs: std.AutoHashMap(usize, RuntimeArrayDescriptor),
+    hidden_result_array_abi: ?HiddenResultArrayAbi,
     derived_type_layouts: CaseInsensitiveStringHashMap(DerivedTypeLayout),
     int_literal_cache: std.AutoHashMap(i64, []const u8),
     heap_temps_to_free: std.array_list.Managed(ValueRef),
@@ -157,6 +159,7 @@ pub const Context = struct {
             .char_arg_lens = CaseInsensitiveStringHashMap(ValueRef).initContext(allocator, .{}),
             .managed_allocatables = CaseInsensitiveStringHashMap(void).initContext(allocator, .{}),
             .runtime_array_descs = std.AutoHashMap(usize, RuntimeArrayDescriptor).init(allocator),
+            .hidden_result_array_abi = null,
             .derived_type_layouts = CaseInsensitiveStringHashMap(DerivedTypeLayout).initContext(allocator, .{}),
             .int_literal_cache = std.AutoHashMap(i64, []const u8).init(allocator),
             .heap_temps_to_free = std.array_list.Managed(ValueRef).init(allocator),

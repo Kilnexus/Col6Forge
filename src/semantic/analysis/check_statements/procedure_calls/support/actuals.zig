@@ -263,7 +263,11 @@ pub fn procedurePointerExprSig(
     expr_node: *ast.Expr,
 ) ?context.Context.ProcedureSig {
     return switch (expr_node.*) {
-        .identifier => |name| lookupProcedureDeclaratorSig(self, name) orelse resolve_symbols.lookupKnownProcedureSig(self, name),
+        .identifier => |name| blk: {
+            if (lookupProcedureDeclaratorSig(self, name)) |sig| break :blk sig;
+            if (currentFunctionResultDesignatorIsDataEntity(self, name)) break :blk null;
+            break :blk resolve_symbols.lookupKnownProcedureSig(self, name);
+        },
         .component => |comp| blk: {
             if (comp.has_parens) break :blk null;
             const base_spec = resolve_expr.exprTypeSpec(self, comp.base) catch break :blk null;
@@ -282,6 +286,19 @@ pub fn procedurePointerExprSig(
         },
         else => null,
     };
+}
+
+fn currentFunctionResultDesignatorIsDataEntity(self: *context.Context, name: []const u8) bool {
+    if (self.unit.kind != .function) return false;
+    const result_name = self.unit.result_name orelse self.unit.name;
+    if (!std.ascii.eqlIgnoreCase(name, result_name)) return false;
+    if (self.unit.result_name == null and std.ascii.eqlIgnoreCase(name, self.unit.name)) return true;
+    if (resolve_symbols.findSymbolIndex(self, name)) |idx| {
+        const sym = self.symbols.items[idx];
+        if (sym.kind == .variable) return true;
+        if (self.unit.result_name == null and std.ascii.eqlIgnoreCase(name, self.unit.name)) return true;
+    }
+    return false;
 }
 
 pub fn procedurePointerAssignmentValueSig(

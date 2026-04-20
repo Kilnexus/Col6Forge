@@ -2,16 +2,16 @@
 
 Auto-generated from the weekly performance workflow.
 
-- Latest run: `2026-04-14`
-- Commit: `3d030d5214fb73b93b79bf5caec908fb9492adbe`
+- Latest run: `2026-04-20`
+- Commit: `5b7181db24747b0444b6edc428b97501ccffc4e7`
 - Samples: iterations `3`, warmup `1`
 
 ## Latest Snapshot
 
 | Case | Median (ms) | Mean (ms) | Previous Median (ms) | Delta |
 | --- | ---: | ---: | ---: | ---: |
-| `blas:xblat3d` | 1289.000 | 1289.000 | 1286.000 | 0.23% |
-| `lapack:xlintstds` | 3558.000 | 3542.333 | 3509.000 | 1.40% |
+| `blas:xblat3d` | 1291.000 | 1307.667 | 1289.000 | 0.16% |
+| `lapack:xlintstds` | 3509.000 | 3508.667 | 3558.000 | -1.38% |
 
 ## Trend Charts (Last 12 Runs)
 
@@ -20,9 +20,9 @@ Auto-generated from the weekly performance workflow.
 ```mermaid
 xychart-beta
     title "blas:xblat3d median ms"
-    x-axis ["2026-03-13", "2026-03-16", "2026-03-23", "2026-03-23", "2026-03-30", "2026-04-06", "2026-04-13", "2026-04-14"]
+    x-axis ["2026-03-13", "2026-03-16", "2026-03-23", "2026-03-23", "2026-03-30", "2026-04-06", "2026-04-13", "2026-04-14", "2026-04-20"]
     y-axis "Median ms" 0 --> 1586
-    line [1252, 1256, 1281, 1282, 1270, 1321, 1286, 1289]
+    line [1252, 1256, 1281, 1282, 1270, 1321, 1286, 1289, 1291]
 ```
 
 ### `lapack:xlintstds`
@@ -30,9 +30,9 @@ xychart-beta
 ```mermaid
 xychart-beta
     title "lapack:xlintstds median ms"
-    x-axis ["2026-03-13", "2026-03-16", "2026-03-23", "2026-03-23", "2026-03-30", "2026-04-06", "2026-04-13", "2026-04-14"]
+    x-axis ["2026-03-13", "2026-03-16", "2026-03-23", "2026-03-23", "2026-03-30", "2026-04-06", "2026-04-13", "2026-04-14", "2026-04-20"]
     y-axis "Median ms" 0 --> 4270
-    line [3425, 3430, 3505, 3457, 3488, 3493, 3509, 3558]
+    line [3425, 3430, 3505, 3457, 3488, 3493, 3509, 3558, 3509]
 ```
 
 ## Recent History (Last 12 Runs)
@@ -47,3 +47,4 @@ xychart-beta
 | `2026-04-06` | `365f48763596e52f6b6c6c5f8b4752f1362509f8` | 1321.000 | 3493.000 |
 | `2026-04-13` | `522e82f19ec1d455c749d47ea7a0af580bde91cb` | 1286.000 | 3509.000 |
 | `2026-04-14` | `3d030d5214fb73b93b79bf5caec908fb9492adbe` | 1289.000 | 3558.000 |
+| `2026-04-20` | `5b7181db24747b0444b6edc428b97501ccffc4e7` | 1291.000 | 3509.000 |

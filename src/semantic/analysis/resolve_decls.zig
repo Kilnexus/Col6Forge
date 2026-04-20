@@ -12,6 +12,7 @@ const procedure_interfaces = @import("check_statements/procedure_interfaces.zig"
 const common_entity_queries = @import("common_entity_queries.zig");
 const decl_diag = @import("resolve_decls_diag_helpers.zig");
 const decl_initializers = @import("resolve_decls_initializers.zig");
+const polymorphic_decls = @import("resolve_decls_polymorphic.zig");
 
 const StorageClass = symbols.StorageClass;
 const CharacterLengthKind = symbols.CharacterLengthKind;
@@ -49,7 +50,7 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
         }
         try applyDeclarator(self, effective_type, effective_item, .local, true, decl.allocatable, decl.pointer, decl.contiguous);
         const idx = symbols_mod.findSymbolIndex(self, item.name) orelse return error.UnknownSymbol;
-        validatePolymorphicTypeDecl(self, decl, effective_type, self.symbols.items[idx]) catch |err| {
+        polymorphic_decls.validateTypeDecl(self, decl, effective_type, self.symbols.items[idx]) catch |err| {
             if (!self.usesExplicitDiagnosticBag()) return err;
             if (first_err == null) first_err = err;
             continue;
@@ -67,47 +68,6 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
 
 pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Expr) !void {
     return decl_initializers.validateDeclaratorInitializer(self, init_expr);
-}
-
-fn validatePolymorphicTypeDecl(
-    self: *context.Context,
-    decl: ast.TypeDecl,
-    declared_type: symbols.TypeSpec,
-    sym: symbols.Symbol,
-) !void {
-    if (declared_type.lowered_kind != .derived or !declared_type.polymorphic) return;
-    if (self.unit.kind == .function) {
-        const result_name = self.unit.result_name orelse self.unit.name;
-        if (std.ascii.eqlIgnoreCase(sym.name, result_name)) return;
-    }
-    if (sym.storage == .dummy or sym.is_allocatable or sym.is_pointer) return;
-
-    const decl_source = self.current_decl_source orelse ast.DeclSource{};
-    const line = if (decl_source.line == 0) 1 else decl_source.line;
-    const column = if (decl_source.column == 0) 1 else decl_source.column;
-    if (decl.parameter) {
-        self.setDiagnosticDetailed(
-            line,
-            column,
-            catalog.semantic.invalid_unlimited_polymorphic_entity.code,
-            "cannot have the PARAMETER attribute",
-            decl_source.text,
-            &.{.{ .text = "A polymorphic entity may not be declared with the PARAMETER attribute." }},
-            &.{.{ .text = "Remove PARAMETER or make the entity nonpolymorphic." }},
-        );
-        return error.InvalidUnlimitedPolymorphicEntity;
-    }
-
-    self.setDiagnosticDetailed(
-        line,
-        column,
-        catalog.semantic.invalid_unlimited_polymorphic_entity.code,
-        "must be dummy, allocatable or pointer",
-        decl_source.text,
-        &.{.{ .text = "A polymorphic data entity must be a dummy argument, POINTER, or ALLOCATABLE object." }},
-        &.{.{ .text = "Add POINTER or ALLOCATABLE, or move this CLASS entity to a dummy argument list." }},
-    );
-    return error.InvalidUnlimitedPolymorphicEntity;
 }
 
 fn characterExprLogicalLen(self: *context.Context, expr: *ast.Expr) ?usize {
@@ -264,6 +224,19 @@ pub fn applyDeclarator(
     }
     if (sym.loweredKind() == .derived and sym.type_spec.polymorphic and sym.type_spec.derived_type_name == null and sym.storage != .dummy and !sym.is_allocatable and !sym.is_pointer) {
         const decl_source = self.current_decl_source orelse ast.DeclSource{};
+        if (polymorphic_decls.hasSeparateParameterSpec(self, item.name)) {
+            self.setDiagnosticDetailed(
+                if (decl_source.line == 0) 1 else decl_source.line,
+                if (decl_source.column == 0) 1 else decl_source.column,
+                catalog.semantic.invalid_unlimited_polymorphic_entity.code,
+                "cannot have the PARAMETER attribute",
+                decl_source.text,
+                &.{.{ .text = "A polymorphic entity may not be declared with the PARAMETER attribute." }},
+                &.{.{ .text = "Remove PARAMETER or make the entity nonpolymorphic." }},
+            );
+            if (!self.usesExplicitDiagnosticBag()) return error.InvalidUnlimitedPolymorphicEntity;
+            return;
+        }
         self.setDiagnosticDetailed(
             if (decl_source.line == 0) 1 else decl_source.line,
             if (decl_source.column == 0) 1 else decl_source.column,

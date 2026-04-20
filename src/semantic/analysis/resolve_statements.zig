@@ -104,6 +104,7 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
         },
         .write => |write| {
             try expressions.resolveExpr(self, write.unit);
+            try resolveFormatSpecExpr(self, write.format);
             if (write.rec) |rec| {
                 try expressions.resolveExpr(self, rec);
             }
@@ -113,6 +114,7 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
         },
         .read => |read| {
             try expressions.resolveExpr(self, read.unit);
+            try resolveFormatSpecExpr(self, read.format);
             if (read.rec) |rec| {
                 try expressions.resolveExpr(self, rec);
             }
@@ -263,6 +265,13 @@ fn pointerAssignmentTargetUsesAbstractInterfaceName(self: *context.Context, expr
         .identifier => |name| procedure_interfaces.abstractInterfaceNameBlocksVariableUse(self, name),
         else => false,
     };
+}
+
+fn resolveFormatSpecExpr(self: *context.Context, format_spec: ast.FormatSpec) ResolveError!void {
+    switch (format_spec) {
+        .expr => |fmt_expr| try expressions.resolveExpr(self, fmt_expr),
+        else => {},
+    }
 }
 
 fn resolveAssociateBlock(self: *context.Context, associate: ast.AssociateBlock) ResolveError!void {

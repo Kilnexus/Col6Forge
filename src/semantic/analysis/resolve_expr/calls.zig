@@ -262,6 +262,9 @@ pub fn resolveComponentExpr(
 ) ResolveError!void {
     try deps.resolveExpr(self, comp.base);
     for (comp.args) |arg| try deps.resolveExpr(self, arg);
+    if (invalidPolymorphicParameterComponentBase(self, comp.base)) {
+        return emitInvalidSubscriptDiagnostic(self, expr_node, catalog.semantic.invalid_subscript_target.code, "Syntax error");
+    }
     const base_spec = try deps.exprTypeSpecCached(self, comp.base);
     if (pseudoComponentInfo(base_spec, comp.name)) |pseudo| {
         if (comp.has_parens or comp.args.len != 0) {
@@ -870,6 +873,16 @@ fn ensureResolvedDerivedTypeForComponentBase(
     );
     self.setCurrentSource(source);
     return error.UnexpectedTypeDecl;
+}
+
+fn invalidPolymorphicParameterComponentBase(self: *context.Context, expr_node: *ast.Expr) bool {
+    const name = switch (expr_node.*) {
+        .identifier => |ident| ident,
+        else => return false,
+    };
+    const idx = symbols_mod.findSymbolIndex(self, name) orelse return false;
+    const sym = self.symbols.items[idx];
+    return sym.kind == .parameter and sym.type_spec.lowered_kind == .derived and sym.type_spec.polymorphic;
 }
 
 

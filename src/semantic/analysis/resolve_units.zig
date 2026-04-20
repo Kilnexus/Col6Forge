@@ -155,6 +155,7 @@ pub const Resolver = struct {
         try bind_c_validation.validateBindCInterfaceBlocks(ctx);
         try bind_c_validation.validateBindCFunctionResult(ctx);
         try bind_c_validation.validateBindCCharacters(ctx);
+        try validateFunctionResultDeclConstraints(ctx);
         try validateAssumedCharacterLengths(ctx);
         try resolve_data.lowerDataStatements(ctx);
         // First pass resolves statement-level symbol/shape ambiguity (e.g. statement
@@ -297,6 +298,82 @@ fn validateAssumedCharacterLengths(ctx: *context.Context) !void {
         }
         return error.InvalidCharLen;
     }
+}
+
+fn validateFunctionResultDeclConstraints(ctx: *context.Context) !void {
+    if (ctx.unit.kind != .function) return;
+    const result_name = ctx.unit.result_name orelse ctx.unit.name;
+
+    var decl_idx: usize = 0;
+    while (decl_idx < ctx.unit.decls.len) : (decl_idx += 1) {
+        const decl = ctx.unit.decls[decl_idx];
+        switch (decl) {
+            .type_decl => |type_decl| {
+                for (type_decl.items) |item| {
+                    if (!std.ascii.eqlIgnoreCase(item.name, result_name)) continue;
+                    const decl_source = if (decl_idx < ctx.unit.decl_sources.len) ctx.unit.decl_sources[decl_idx] else ast.DeclSource{};
+                    if (hasDeferredShapeResult(item.dims) and !type_decl.allocatable and !type_decl.pointer) {
+                        ctx.setDiagnosticDetailed(
+                            if (decl_source.line == 0) 1 else decl_source.line,
+                            if (decl_source.column == 0) 1 else decl_source.column,
+                            catalog.semantic.duplicate_declaration.code,
+                            "cannot have a deferred shape",
+                            decl_source.text,
+                            &.{.{ .text = "A function result may not have deferred shape unless it is POINTER or ALLOCATABLE." }},
+                            &.{.{ .text = "Make the result explicit-shape or mark it POINTER/ALLOCATABLE." }},
+                        );
+                        return error.DuplicateDeclaration;
+                    }
+                    if (!type_decl.polymorphic) continue;
+                    const derived_name = type_decl.derived_type_name orelse continue;
+                    const derived_info = symbols_mod.lookupDerivedType(ctx, derived_name) orelse continue;
+                    if (!derived_info.sequence and !derived_info.bind_c) continue;
+                    ctx.setDiagnosticDetailed(
+                        if (decl_source.line == 0) 1 else decl_source.line,
+                        if (decl_source.column == 0) 1 else decl_source.column,
+                        catalog.semantic.unexpected_type_decl.code,
+                        "is not extensible",
+                        decl_source.text,
+                        &.{.{ .text = "A polymorphic CLASS result must name an extensible derived type." }},
+                        &.{.{ .text = "Remove SEQUENCE/BIND(C), or make the result nonpolymorphic." }},
+                    );
+                    return error.UnexpectedTypeDecl;
+                }
+            },
+            .dimension => |dimension_decl| {
+                for (dimension_decl.items) |item| {
+                    if (!std.ascii.eqlIgnoreCase(item.name, result_name)) continue;
+                    if (!hasDeferredShapeResult(item.dims) or dimension_decl.allocatable or dimension_decl.pointer) continue;
+                    const decl_source = if (decl_idx < ctx.unit.decl_sources.len) ctx.unit.decl_sources[decl_idx] else ast.DeclSource{};
+                    ctx.setDiagnosticDetailed(
+                        if (decl_source.line == 0) 1 else decl_source.line,
+                        if (decl_source.column == 0) 1 else decl_source.column,
+                        catalog.semantic.duplicate_declaration.code,
+                        "cannot have a deferred shape",
+                        decl_source.text,
+                        &.{.{ .text = "A function result may not have deferred shape unless it is POINTER or ALLOCATABLE." }},
+                        &.{.{ .text = "Make the result explicit-shape or mark it POINTER/ALLOCATABLE." }},
+                    );
+                    return error.DuplicateDeclaration;
+                }
+            },
+            else => {},
+        }
+    }
+}
+
+fn hasDeferredShapeResult(dims: []*ast.Expr) bool {
+    if (dims.len == 0) return false;
+    for (dims) |dim| {
+        switch (dim.*) {
+            .dim_range => |range| {
+                if (range.assumed_shape and range.lower == null) continue;
+                return false;
+            },
+            else => return false,
+        }
+    }
+    return true;
 }
 
 fn invalidAssumedCharacterResultOwner(ctx: *context.Context) ?[]const u8 {

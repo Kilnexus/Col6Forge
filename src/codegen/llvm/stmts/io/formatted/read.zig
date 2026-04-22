@@ -216,7 +216,7 @@ fn emitReadDescriptorPasses(
                         .relative_right => 'R',
                         .relative_left => 'U',
                     };
-                    try self.fmt_buf.writer().print("%{d}{c}", .{ tab.count, directive });
+                    try self.fmt_buf.print("%{d}{c}", .{ tab.count, directive });
                 },
                 .colon => {},
                 .descriptor => |descriptor| switch (descriptor) {
@@ -224,7 +224,7 @@ fn emitReadDescriptorPasses(
                         if (!self.hasRemaining()) return true;
                         const width = if (spec.width > 0) spec.width else 0;
                         if (width > 0) {
-                            try self.fmt_buf.writer().print("%{d}d", .{width});
+                            try self.fmt_buf.print("%{d}d", .{width});
                         } else {
                             try self.fmt_buf.appendSlice("%d");
                         }
@@ -238,9 +238,9 @@ fn emitReadDescriptorPasses(
                         const width = if (spec.width > 0) spec.width else 0;
                         const fmt_spec = if (ty == .f64) "lf" else "f";
                         if (width > 0) {
-                            try self.fmt_buf.writer().print("%{d}.{d}{s}", .{ width, spec.precision, fmt_spec });
+                            try self.fmt_buf.print("%{d}.{d}{s}", .{ width, spec.precision, fmt_spec });
                         } else {
-                            try self.fmt_buf.writer().print("%.{d}{s}", .{ spec.precision, fmt_spec });
+                            try self.fmt_buf.print("%.{d}{s}", .{ spec.precision, fmt_spec });
                         }
                         try self.arg_ptrs.append(self.expanded.ptrs.items[self.arg_index].name);
                         try self.arg_kinds.append(if (ty == .f64) 'D' else 'f');
@@ -251,7 +251,7 @@ fn emitReadDescriptorPasses(
                         const target_ptr = self.expanded.ptrs.items[self.arg_index];
                         const target_len = self.expanded.char_lens.items[self.arg_index];
                         const width = if (spec.width > 0) spec.width else if (target_len > 0) target_len else 1;
-                        try self.fmt_buf.writer().print("%{d}c", .{width});
+                        try self.fmt_buf.print("%{d}c", .{width});
                         if (target_len > 0 and width > target_len) {
                             const tmp_ptr = try emitHeapBytes(ctx_inner, builder_inner, width);
                             try self.heap_allocs.append(tmp_ptr);
@@ -281,7 +281,7 @@ fn emitReadDescriptorPasses(
                         if (!self.hasRemaining()) return true;
                         const width = if (spec.width > 0) spec.width else 0;
                         if (width > 0) {
-                            try self.fmt_buf.writer().print("%{d}L", .{width});
+                            try self.fmt_buf.print("%{d}L", .{width});
                         } else {
                             try self.fmt_buf.appendSlice("%L");
                         }
@@ -290,10 +290,10 @@ fn emitReadDescriptorPasses(
                         self.arg_index += 1;
                     },
                 },
-                .scale => |value| try self.fmt_buf.writer().print("%{d}P", .{value}),
+                .scale => |value| try self.fmt_buf.print("%{d}P", .{value}),
                 .blank_control => |ctrl| {
                     const directive: u8 = if (ctrl == .nulls) 'N' else 'Z';
-                    try self.fmt_buf.writer().print("%{c}", .{directive});
+                    try self.fmt_buf.print("%{c}", .{directive});
                 },
                 .sign_control => {},
                 .reversion_anchor => {},

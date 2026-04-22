@@ -220,7 +220,7 @@ fn validateInvalidDerivedArrayConstructorInitializer(self: *context.Context, exp
 
 fn declarationTargetNameFromSource(text: []const u8) ?[]const u8 {
     const dbl_colon = std.mem.indexOf(u8, text, "::") orelse return null;
-    const after = std.mem.trimLeft(u8, text[dbl_colon + 2 ..], " \t");
+    const after = std.mem.trimStart(u8, text[dbl_colon + 2 ..], " \t");
     if (after.len == 0) return null;
     var end: usize = 0;
     while (end < after.len) : (end += 1) {

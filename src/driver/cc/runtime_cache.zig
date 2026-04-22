@@ -1,13 +1,16 @@
 const std = @import("std");
+const Col6Forge = @import("Col6Forge");
 const build_options = @import("build_options");
 const types = @import("types.zig");
 const process = @import("process.zig");
+const zig_api = Col6Forge.zig_api;
 
 const RUNTIME_CACHE_SCHEMA_VERSION: u32 = 1;
 
 pub fn prepareRuntimeObjectCached(allocator: std.mem.Allocator, cfg: types.RuntimeBuildConfig) ![]const u8 {
     const cache_dir = cacheDirRel();
-    try std.fs.cwd().makePath(cache_dir);
+    const cwd = zig_api.cwd();
+    try cwd.makePath(cache_dir);
 
     const cache_key = try computeRuntimeCacheKey(allocator, cfg);
     defer allocator.free(cache_key);
@@ -25,19 +28,14 @@ pub fn prepareRuntimeObjectCached(allocator: std.mem.Allocator, cfg: types.Runti
     const tmp_name = try std.fmt.allocPrint(
         allocator,
         "col6forge_rt_tmp_{d}_{s}.o",
-        .{ std.time.nanoTimestamp(), cache_key },
+        .{ zig_api.nowNs(), cache_key },
     );
     defer allocator.free(tmp_name);
     const tmp_path = try std.fs.path.join(allocator, &.{ cache_dir, tmp_name });
     defer allocator.free(tmp_path);
 
     try buildRuntimeObject(allocator, tmp_path, cfg);
-    std.fs.cwd().rename(tmp_path, runtime_obj_path) catch |err| switch (err) {
-        error.PathAlreadyExists => {
-            std.fs.cwd().deleteFile(tmp_path) catch {};
-        },
-        else => return err,
-    };
+    try cwd.rename(tmp_path, runtime_obj_path);
     return runtime_obj_path;
 }
 
@@ -46,15 +44,15 @@ fn cacheDirRel() []const u8 {
 }
 
 fn fileExists(path: []const u8) bool {
-    std.fs.cwd().access(path, .{}) catch return false;
+    zig_api.cwd().access(path, .{}) catch return false;
     return true;
 }
 
 fn hashFileXx64(path: []const u8) !u64 {
     var file = if (std.fs.path.isAbsolute(path))
-        try std.fs.openFileAbsolute(path, .{})
+        try zig_api.openFileAbsolute(path, .{})
     else
-        try std.fs.cwd().openFile(path, .{});
+        try zig_api.cwd().openFile(path, .{});
     defer file.close();
     var hasher = std.hash.XxHash64.init(0);
     var buf: [64 * 1024]u8 = undefined;
@@ -77,7 +75,10 @@ fn runtimeRootSourcePath(allocator: std.mem.Allocator) ![]const u8 {
 fn computeRuntimeSourceKey(allocator: std.mem.Allocator) ![]const u8 {
     const runtime_source_dir = try runtimeSourceDirPath(allocator);
     defer allocator.free(runtime_source_dir);
-    var dir = try std.fs.cwd().openDir(runtime_source_dir, .{ .iterate = true });
+    var dir = if (std.fs.path.isAbsolute(runtime_source_dir))
+        try zig_api.openDirAbsolute(runtime_source_dir, .{ .iterate = true })
+    else
+        try zig_api.cwd().openDir(runtime_source_dir, .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(allocator);
@@ -89,7 +90,7 @@ fn computeRuntimeSourceKey(allocator: std.mem.Allocator) ![]const u8 {
         files.deinit(allocator);
     }
 
-    while (try walker.next()) |entry| {
+    while (if (@hasDecl(std.fs, "cwd")) try walker.next() else try walker.next(zig_api.defaultIo())) |entry| {
         if (entry.kind != .file) continue;
         if (!std.ascii.endsWithIgnoreCase(entry.path, ".zig")) continue;
         try files.append(allocator, try allocator.dupe(u8, entry.path));

@@ -723,7 +723,7 @@ fn validateDerivedProcedureComponentInterface(
 }
 
 fn procedureComponentUsesBareProcedureKeyword(line_text: []const u8) bool {
-    const trimmed = std.mem.trimLeft(u8, line_text, " \t");
+    const trimmed = std.mem.trimStart(u8, line_text, " \t");
     if (!std.ascii.startsWithIgnoreCase(trimmed, "procedure")) return false;
     if (trimmed.len <= "procedure".len) return true;
 

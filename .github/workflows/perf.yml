@@ -23,11 +23,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Zig 0.15.2
+      - name: Install Zig 0.16.0
         shell: bash
         run: |
           set -euo pipefail
-          ZIG_VERSION=0.15.2
+          ZIG_VERSION=0.16.0
           ZIG_DIR="$RUNNER_TEMP/zig-$ZIG_VERSION"
           if [[ ! -x "$ZIG_DIR/zig" ]]; then
             mkdir -p "$ZIG_DIR"

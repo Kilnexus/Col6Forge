@@ -773,7 +773,7 @@ pub fn parseProcedureHeader(trimmed: []const u8) ?[]const u8 {
 
 fn parseHeaderName(trimmed: []const u8, keyword: []const u8) ?[]const u8 {
     if (!startsWithNoCase(trimmed, keyword)) return null;
-    const rest = std.mem.trimLeft(u8, trimmed[keyword.len..], " \t");
+    const rest = std.mem.trimStart(u8, trimmed[keyword.len..], " \t");
     return parseLeadingIdentifier(rest);
 }
 

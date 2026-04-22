@@ -442,7 +442,7 @@ fn cloneExpr(ctx: *context.Context, node: *ast.Expr) !*ast.Expr {
 }
 
 fn canonicalNumericLabel(label: []const u8) []const u8 {
-    const trimmed = std.mem.trimLeft(u8, label, "0");
+    const trimmed = std.mem.trimStart(u8, label, "0");
     return if (trimmed.len == 0) "0" else trimmed;
 }
 

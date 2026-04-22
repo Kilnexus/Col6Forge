@@ -446,11 +446,11 @@ fn emitWriteDescriptorPasses(
                             try self.args.append(.{ .ty = .ptr, .name = fmt_tmp });
                         } else if (descriptor == .real_fixed and spec.precision == 0) {
                             const sign_flag = if (self.sign_plus) "+" else "";
-                            try self.fmt_buf.writer().print("%{s}#{d}.0f", .{ sign_flag, spec.width });
+                            try self.fmt_buf.print("%{s}#{d}.0f", .{ sign_flag, spec.width });
                             try self.args.append(.{ .ty = .f64, .name = coerced.name });
                         } else if (descriptor == .real_fixed) {
                             const sign_flag = if (self.sign_plus) "+" else "";
-                            try self.fmt_buf.writer().print("%{s}{d}.{d}f", .{ sign_flag, spec.width, spec.precision });
+                            try self.fmt_buf.print("%{s}{d}.{d}f", .{ sign_flag, spec.width, spec.precision });
                             try self.args.append(.{ .ty = .f64, .name = coerced.name });
                         } else {
                             const fmt_tmp = try ctx_inner.nextTemp();
@@ -560,7 +560,7 @@ fn emitWriteDescriptorPasses(
                         const select_tmp = try ctx_inner.nextTemp();
                         try builder_inner.select(select_tmp, .i32, cond, true_val, false_val);
                         if (spec.width > 0) {
-                            try self.fmt_buf.writer().print("%{d}c", .{spec.width});
+                            try self.fmt_buf.print("%{d}c", .{spec.width});
                         } else {
                             try self.fmt_buf.appendSlice("%c");
                         }

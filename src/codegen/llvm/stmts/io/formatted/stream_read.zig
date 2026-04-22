@@ -112,10 +112,10 @@ fn lowerStaticReadStreamFormatWithBuilder(ctx: *Context, builder: anytype, fmt_o
                 },
                 .char => |spec| {
                     const width = if (spec.width > 0) spec.width else 1;
-                    try fmt_buf.writer().print("%{d}c", .{width});
+                    try fmt_buf.print("%{d}c", .{width});
                 },
                 .logical => |spec| if (spec.width > 0) {
-                    try fmt_buf.writer().print("%{d}L", .{spec.width});
+                    try fmt_buf.print("%{d}L", .{spec.width});
                 } else {
                     try fmt_buf.appendSlice("%L");
                 },

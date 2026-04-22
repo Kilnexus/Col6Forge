@@ -743,8 +743,8 @@ pub fn emitImpliedBasePtr(
 pub fn appendIntFormat(buffer: *std.array_list.Managed(u8), width: usize, sign_plus: bool) !void {
     const sign_flag = if (sign_plus) "+" else "";
     if (width == 0) {
-        try buffer.writer().print("%{s}d", .{sign_flag});
+        try buffer.print("%{s}d", .{sign_flag});
     } else {
-        try buffer.writer().print("%{s}{d}d", .{ sign_flag, width });
+        try buffer.print("%{s}{d}d", .{ sign_flag, width });
     }
 }

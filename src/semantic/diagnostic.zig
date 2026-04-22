@@ -371,7 +371,7 @@ fn containsOneOf(haystack: []const u8, needles: []const []const u8) bool {
 fn containsFunctionLikeDesignator(line_text: []const u8) bool {
     const open = std.mem.indexOfScalar(u8, line_text, '(') orelse return false;
     if (open == 0) return false;
-    const prefix = std.mem.trimRight(u8, line_text[0..open], " \t");
+    const prefix = std.mem.trimEnd(u8, line_text[0..open], " \t");
     if (prefix.len == 0) return false;
     const last = prefix[prefix.len - 1];
     return std.ascii.isAlphabetic(last) or std.ascii.isDigit(last) or last == '_' or last == '%';

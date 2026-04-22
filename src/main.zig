@@ -69,9 +69,7 @@ fn runMain(init: std.process.Init) !void {
         if (use_count_output) {
             var diag_bag = Col6Forge.diag.Bag.init(allocator);
             defer diag_bag.deinit();
-            var count: u128 = 0;
-            const CountingWriter = std.Io.GenericWriter(*u128, error{}, countWrite);
-            var count_writer = CountingWriter{ .context = &count };
+            var count_writer = CountingOutputWriter{};
             Col6Forge.runPipelineToWriterWithOptionsAndDiagnostics(
                 allocator,
                 parsed.input_path,
@@ -88,7 +86,7 @@ fn runMain(init: std.process.Init) !void {
                 failPipeline(parsed.input_path, &diag_bag, err);
             };
             var msg_buf: [64]u8 = undefined;
-            const msg = try std.fmt.bufPrint(&msg_buf, "emitted {d} bytes\n", .{count});
+            const msg = try std.fmt.bufPrint(&msg_buf, "emitted {d} bytes\n", .{count_writer.count});
             try zig_api.File.stdout().writeAll(msg);
             return;
         }
@@ -176,11 +174,6 @@ fn crossPlatformBasename(path: []const u8) []const u8 {
     return path[start..];
 }
 
-fn countWrite(counter: *u128, bytes: []const u8) error{}!usize {
-    counter.* +%= bytes.len;
-    return bytes.len;
-}
-
 const FileOutputWriter = struct {
     file: *zig_api.File,
     allocator: std.mem.Allocator,
@@ -198,9 +191,22 @@ const FileOutputWriter = struct {
                 try self.file.writeAll(heap_text);
                 return;
             },
-            else => return err,
         };
         try self.file.writeAll(text);
+    }
+};
+
+const CountingOutputWriter = struct {
+    count: u128 = 0,
+
+    pub fn writeAll(self: *CountingOutputWriter, bytes: []const u8) !void {
+        self.count +%= bytes.len;
+    }
+
+    pub fn print(self: *CountingOutputWriter, comptime fmt: []const u8, args: anytype) !void {
+        var stack_buf: [512]u8 = undefined;
+        const text = try std.fmt.bufPrint(&stack_buf, fmt, args);
+        try self.writeAll(text);
     }
 };
 

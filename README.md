@@ -123,14 +123,14 @@ When `-ftime-report` or `--time-report` is enabled, the CLI will output a total/
 
 ## Environment Requirements
 
-- Zig: `0.15.2` or higher
+- Zig: `0.16.0` or higher
 - It is recommended to execute all commands in the root directory of the repository.
 - To run NIST / BLAS / LAPACK baseline verification, `gfortran` is typically required on the machine.
 
 The repository's `build.zig.zon` explicitly declares:
 
 ```text
-minimum_zig_version = 0.15.2
+minimum_zig_version = 0.16.0
 ```
 
 ## Quick Start

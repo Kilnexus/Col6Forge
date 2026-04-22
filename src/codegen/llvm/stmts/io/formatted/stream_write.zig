@@ -52,7 +52,7 @@ fn appendIntDescriptor(
     sign_plus: bool,
 ) !void {
     const sign: u8 = if (sign_plus) 1 else 0;
-    try buf.writer().print(
+    try buf.print(
         "%I{d},{d},{d};",
         .{ width, if (explicit_min_digits and min_digits == 0) @as(i32, -1) else @as(i32, @intCast(min_digits)), sign },
     );
@@ -60,12 +60,12 @@ fn appendIntDescriptor(
 
 fn appendFixedDescriptor(buf: *std.array_list.Managed(u8), width: usize, precision: usize, sign_plus: bool) !void {
     const sign: u8 = if (sign_plus) 1 else 0;
-    try buf.writer().print("%F{d},{d},{d};", .{ width, precision, sign });
+    try buf.print("%F{d},{d},{d};", .{ width, precision, sign });
 }
 
 fn appendRealDescriptor(buf: *std.array_list.Managed(u8), kind: u8, width: usize, precision: usize, exp_width: usize, scale: i32, sign_plus: bool) !void {
     const sign: u8 = if (sign_plus) 1 else 0;
-    try buf.writer().print("%R{c},{d},{d},{d},{d},{d};", .{ kind, width, precision, exp_width, scale, sign });
+    try buf.print("%R{c},{d},{d},{d},{d},{d};", .{ kind, width, precision, exp_width, scale, sign });
 }
 
 fn lowerStaticWriteStreamFormatWithBuilder(

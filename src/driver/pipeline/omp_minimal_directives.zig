@@ -280,7 +280,7 @@ fn validatePreSemanticClauseDirective(
 
 fn findClauseBody(text: []const u8, clause_name: []const u8) ?[]const u8 {
     const idx = omp_declare_variant.indexOfNoCase(text, clause_name) orelse return null;
-    const rest = std.mem.trimLeft(u8, text[idx + clause_name.len ..], " \t");
+    const rest = std.mem.trimStart(u8, text[idx + clause_name.len ..], " \t");
     if (rest.len == 0 or rest[0] != '(') return null;
     const close_idx = omp_declare_variant.findMatchingParen(rest, 0) orelse return null;
     return rest[1..close_idx];
@@ -527,7 +527,7 @@ fn rawSourceDeclaresPolymorphicArray(contents: []const u8, before_line: usize, n
         if (omp_declare_variant.indexOfNoCase(trimmed, "class") == null) continue;
         if (indexOfIdentifierNoCase(trimmed, name)) |name_idx| {
             const after_name = trimmed[name_idx + name.len ..];
-            const after_trimmed = std.mem.trimLeft(u8, after_name, " \t");
+            const after_trimmed = std.mem.trimStart(u8, after_name, " \t");
             if (after_trimmed.len != 0 and after_trimmed[0] == '(') return true;
         }
     }

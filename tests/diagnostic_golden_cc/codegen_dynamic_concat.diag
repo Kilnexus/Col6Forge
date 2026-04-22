@@ -1,9 +1,9 @@
 error[CF3119]: invalid operand type for expression operator
-  --> tests/diagnostic_golden_cc/codegen_dynamic_concat.f:4:16
+  --> tests/diagnostic_golden_cc/codegen_dynamic_concat.f:4:11
    = stage: semantic
    = help: see docs/errors.md#CF3119
   |
 4 |       C = A // I
-  |                ^
+  |           ^
    = note: Arithmetic operators require operands from compatible intrinsic categories.
    = help: Convert CHARACTER or LOGICAL operands before using arithmetic operators.

@@ -1,9 +1,9 @@
 error[CF3119]: invalid operand type for expression operator
-  --> tests/diagnostic_golden/semantic_expr_operands.f:3:13
+  --> tests/diagnostic_golden/semantic_expr_operands.f:3:9
    = stage: semantic
    = help: see docs/errors.md#CF3119
   |
 3 |       I='A'+1
-  |             ^
+  |         ^
    = note: Arithmetic operators require operands from compatible intrinsic categories.
    = help: Convert CHARACTER or LOGICAL operands before using arithmetic operators.

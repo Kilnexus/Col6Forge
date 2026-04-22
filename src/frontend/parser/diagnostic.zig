@@ -123,9 +123,9 @@ fn isEndStmtLine(line_text: []const u8) bool {
 }
 
 fn isNamedConstructStmtLine(line_text: []const u8) bool {
-    const trimmed = std.mem.trimLeft(u8, line_text, " \t");
+    const trimmed = std.mem.trimStart(u8, line_text, " \t");
     const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse return false;
-    const tail = std.mem.trimLeft(u8, trimmed[colon + 1 ..], " \t");
+    const tail = std.mem.trimStart(u8, trimmed[colon + 1 ..], " \t");
     return startsWithWord(tail, "if") or
         startsWithWord(tail, "do") or
         startsWithWord(tail, "select") or
@@ -162,7 +162,7 @@ fn isAttributeStmtLine(line_text: []const u8) bool {
 }
 
 fn isBindEntityStmtLine(line_text: []const u8) bool {
-    return std.ascii.startsWithIgnoreCase(std.mem.trimLeft(u8, line_text, " \t"), "bind(");
+    return std.ascii.startsWithIgnoreCase(std.mem.trimStart(u8, line_text, " \t"), "bind(");
 }
 
 fn isCharacterDeclLine(line_text: []const u8) bool {
@@ -224,7 +224,7 @@ fn isDerivedTypeDeclLine(line_text: []const u8) bool {
 }
 
 fn startsWithWord(line_text: []const u8, keyword: []const u8) bool {
-    const trimmed = std.mem.trimLeft(u8, line_text, " \t");
+    const trimmed = std.mem.trimStart(u8, line_text, " \t");
     return std.ascii.startsWithIgnoreCase(trimmed, keyword);
 }
 

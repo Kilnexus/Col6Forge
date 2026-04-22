@@ -239,30 +239,30 @@ fn buildPrintfFormat(allocator: std.mem.Allocator, items: []const input.FormatIt
             },
             .colon => {},
             .int => |spec| {
-                try buffer.writer().print("%{d}d", .{spec.width});
+                try buffer.print("%{d}d", .{spec.width});
             },
             .real => |spec| {
-                try buffer.writer().print("%{d}.{d}E", .{ spec.width, spec.precision });
+                try buffer.print("%{d}.{d}E", .{ spec.width, spec.precision });
             },
             .real_fixed => |spec| {
                 if (spec.precision == 0) {
-                    try buffer.writer().print("%#{d}.0f", .{spec.width});
+                    try buffer.print("%#{d}.0f", .{spec.width});
                 } else {
-                    try buffer.writer().print("%{d}.{d}f", .{ spec.width, spec.precision });
+                    try buffer.print("%{d}.{d}f", .{ spec.width, spec.precision });
                 }
             },
             .char => |spec| {
                 if (spec.width == 0) {
-                    try buffer.writer().print("%s", .{});
+                    try buffer.print("%s", .{});
                 } else {
-                    try buffer.writer().print("%{d}s", .{spec.width});
+                    try buffer.print("%{d}s", .{spec.width});
                 }
             },
             .logical => |spec| {
                 if (spec.width == 0) {
                     try buffer.appendSlice("%c");
                 } else {
-                    try buffer.writer().print("%{d}c", .{spec.width});
+                    try buffer.print("%{d}c", .{spec.width});
                 }
             },
             .repeat_group => {},

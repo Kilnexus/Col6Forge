@@ -86,12 +86,12 @@ pub fn emitReadFormattedLowered(
                         .relative_right => 'R',
                         .relative_left => 'U',
                     };
-                    try fmt_buf.writer().print("%{d}{c}", .{ tab.count, directive });
+                    try fmt_buf.print("%{d}{c}", .{ tab.count, directive });
                 },
                 .colon => {},
                 .blank_control => |ctrl| {
                     const directive: u8 = if (ctrl == .nulls) 'N' else 'Z';
-                    try fmt_buf.writer().print("%{c}", .{directive});
+                    try fmt_buf.print("%{c}", .{directive});
                 },
                 .sign_control, .scale, .reversion_anchor => {},
                 else => {},

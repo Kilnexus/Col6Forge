@@ -7,6 +7,7 @@ pub const frontend = @import("frontend/mod.zig");
 pub const sema = @import("semantic/mod.zig");
 pub const codegen = @import("codegen/mod.zig");
 pub const pipeline = @import("driver/pipeline/mod.zig");
+pub const zig_api = @import("compat/zig_api.zig");
 
 pub const Diagnostic = diag.Diagnostic;
 pub const EmitKind = pipeline.EmitKind;

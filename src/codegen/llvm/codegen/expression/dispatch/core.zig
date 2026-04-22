@@ -50,7 +50,7 @@ pub fn emitLValue(ctx: *Context, builder: anytype, expr: *Expr) !ValueRef {
             }
             return error.InvalidAssignmentTarget;
         },
-        .substring => |_| {
+        .substring => {
             const plan = (try character.emitCharacterValuePlan(ctx, builder, expr)) orelse return error.UnsupportedSubstring;
             return plan.ptr;
         },
@@ -343,7 +343,7 @@ fn emitExprImpl(ctx: *Context, builder: anytype, expr: *Expr, subst_depth: usize
             const fn_name = try resolution.ensureExternalDeclForCall(ctx, call_or_sub.name, ret_ty, call_or_sub.args, false);
             return call.emitCall(ctx, builder, fn_name, ret_ty, call_or_sub.args, false);
         },
-        .substring => |_| {
+        .substring => {
             const plan = (try character.emitCharacterValuePlanImpl(ctx, builder, expr, subst_depth)) orelse return error.UnsupportedSubstring;
             return .{ .name = plan.ptr.name, .ty = .ptr, .is_ptr = false };
         },

@@ -42,7 +42,7 @@ pub fn normalizeFixedFormWithMapMode(
         var line_string_state = if (layout.is_cont and in_stmt) string_state else StringState{};
         const prepared = prepareCodeField(line, layout, &line_string_state);
         const code = prepared.bytes[0..prepared.len];
-        const trimmed_code = std.mem.trimRight(u8, code, " \t");
+        const trimmed_code = std.mem.trimEnd(u8, code, " \t");
 
         if (trimmed_code.len == 0 and !layout.is_cont) {
             if (in_stmt) {

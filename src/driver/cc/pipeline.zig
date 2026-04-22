@@ -2,6 +2,7 @@ const std = @import("std");
 const Col6Forge = @import("Col6Forge");
 const types = @import("types.zig");
 const paths = @import("paths.zig");
+const zig_api = Col6Forge.zig_api;
 
 pub fn collectFortranKnownSymbols(
     allocator: std.mem.Allocator,
@@ -21,7 +22,7 @@ pub fn collectFortranKnownSymbols(
 
     const max_size = 64 * 1024 * 1024;
     for (fortran_inputs) |input_path| {
-        const contents = std.fs.cwd().readFileAlloc(allocator, input_path, max_size) catch continue;
+        const contents = zig_api.cwd().readFileAlloc(allocator, input_path, max_size) catch continue;
         defer allocator.free(contents);
 
         const logical_lines = Col6Forge.frontend.normalizeSourcePath(.auto, allocator, input_path, contents, false) catch continue;
@@ -116,7 +117,7 @@ pub fn translateFortranInputs(
 }
 
 pub fn reportPipelineError(input_path: []const u8, diag_bag: *const Col6Forge.diag.Bag, err: anyerror) !void {
-    var stderr = std.fs.File.stderr();
+    var stderr = zig_api.File.stderr();
     var buffer: [4096]u8 = undefined;
     var writer = stderr.writer(&buffer);
     try Col6Forge.writePipelineErrorDiagnosticWithOptions(&writer.interface, diag_bag, input_path, err, .{
@@ -249,7 +250,7 @@ fn emitPipelineToFile(
     known_procedure_sigs: []const Col6Forge.sema.KnownProcedureSig,
     diag_bag: *Col6Forge.diag.Bag,
 ) !void {
-    var out_file = try std.fs.cwd().createFile(output_path, .{ .truncate = true });
+    var out_file = try zig_api.cwd().createFile(output_path, .{ .truncate = true });
     defer out_file.close();
     var out_buf: [32 * 1024]u8 = undefined;
     var out_writer = out_file.writer(&out_buf);

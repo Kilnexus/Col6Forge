@@ -54,7 +54,7 @@ fn evalCharExprRaw(ctx: *Context, value: *ast.Expr) !?[]const u8 {
 
 fn formatCharArrayKey(buffer: *std.array_list.Managed(u8), name: []const u8, idx: i64) ![]const u8 {
     buffer.clearRetainingCapacity();
-    try buffer.writer().print("{s}[{d}]", .{ name, idx });
+    try buffer.print("{s}[{d}]", .{ name, idx });
     return buffer.items;
 }
 

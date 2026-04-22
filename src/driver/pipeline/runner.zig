@@ -7,6 +7,7 @@ const profile_mod = @import("profile.zig");
 const diagnostics = @import("diagnostics.zig");
 const emit_mod = @import("emit.zig");
 const types = @import("types.zig");
+const zig_api = @import("../../compat/zig_api.zig");
 
 const PipelineProfile = profile_mod.PipelineProfile;
 const nowNs = profile_mod.nowNs;
@@ -121,7 +122,7 @@ fn readInputFile(
 ) ![]u8 {
     const max_size = 64 * 1024 * 1024;
     const read_start = nowNs();
-    const contents = std.fs.cwd().readFileAlloc(allocator, input_path, max_size) catch |err| {
+    const contents = zig_api.cwd().readFileAlloc(allocator, input_path, max_size) catch |err| {
         profile.read_ns = elapsedNs(read_start);
         profile.markFailure(.read);
         if (err == error.FileNotFound) {

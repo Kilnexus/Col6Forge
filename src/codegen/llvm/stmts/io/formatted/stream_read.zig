@@ -91,24 +91,24 @@ fn lowerStaticReadStreamFormatWithBuilder(ctx: *Context, builder: anytype, fmt_o
                     .relative_right => 'R',
                     .relative_left => 'U',
                 };
-                try fmt_buf.writer().print("%{d}{c}", .{ tab.count, directive });
+                try fmt_buf.print("%{d}{c}", .{ tab.count, directive });
             },
             .colon => {},
             .blank_control => |ctrl| {
                 const directive: u8 = if (ctrl == .nulls) 'N' else 'Z';
-                try fmt_buf.writer().print("%{c}", .{directive});
+                try fmt_buf.print("%{c}", .{directive});
             },
-            .scale => |scale| try fmt_buf.writer().print("%{d}P", .{scale}),
+            .scale => |scale| try fmt_buf.print("%{d}P", .{scale}),
             .descriptor => |descriptor| switch (descriptor) {
                 .int => |spec| if (spec.width > 0) {
-                    try fmt_buf.writer().print("%{d}d", .{spec.width});
+                    try fmt_buf.print("%{d}d", .{spec.width});
                 } else {
                     try fmt_buf.appendSlice("%d");
                 },
                 .real, .real_fixed => |spec| if (spec.width > 0) {
-                    try fmt_buf.writer().print("%{d}.{d}f", .{ spec.width, spec.precision });
+                    try fmt_buf.print("%{d}.{d}f", .{ spec.width, spec.precision });
                 } else {
-                    try fmt_buf.writer().print("%.{d}f", .{spec.precision});
+                    try fmt_buf.print("%.{d}f", .{spec.precision});
                 },
                 .char => |spec| {
                     const width = if (spec.width > 0) spec.width else 1;

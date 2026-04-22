@@ -44,7 +44,7 @@ fn appendTabMarker(fmt_buf: *std.array_list.Managed(u8), tab: ast.TabFormat) !vo
     try fmt_buf.append(kind);
     var tmp = std.array_list.Managed(u8).init(fmt_buf.allocator);
     defer tmp.deinit();
-    try tmp.writer().print("{d}", .{tab.count});
+    try tmp.print("{d}", .{tab.count});
     try fmt_buf.appendSlice(tmp.items);
     try fmt_buf.append(0x02);
 }

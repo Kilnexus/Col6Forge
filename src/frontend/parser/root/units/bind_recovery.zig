@@ -112,15 +112,15 @@ fn recoverProcedureHeaderInfo(arena: std.mem.Allocator, line_text: []const u8) ?
 
 fn malformedBindHeaderMessage(line_text: []const u8) ?[]const u8 {
     const comment_start = std.mem.indexOfScalar(u8, line_text, '!') orelse line_text.len;
-    const prefix = std.mem.trimRight(u8, line_text[0..comment_start], " \t");
+    const prefix = std.mem.trimEnd(u8, line_text[0..comment_start], " \t");
     if (std.ascii.indexOfIgnoreCase(prefix, "bind(") == null) return null;
     const name_idx = std.ascii.indexOfIgnoreCase(prefix, "name") orelse return null;
     var tail = prefix[name_idx + 4 ..];
-    tail = std.mem.trimLeft(u8, tail, " \t");
+    tail = std.mem.trimStart(u8, tail, " \t");
     if (tail.len == 0) return "Syntax error";
     if (tail[0] == ')') return "Syntax error";
     if (tail[0] != '=') return null;
-    tail = std.mem.trimLeft(u8, tail[1..], " \t");
+    tail = std.mem.trimStart(u8, tail[1..], " \t");
     if (tail.len == 0 or tail[0] == ')') return "Invalid character";
     if (tail[0] == '"' or tail[0] == '\'') {
         const quote = tail[0];

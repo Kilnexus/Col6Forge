@@ -835,8 +835,8 @@ pub fn directivePayload(trimmed: []const u8) []const u8 {
 }
 
 fn stripHarnessComment(line: []const u8) []const u8 {
-    if (std.mem.indexOf(u8, line, " ! {")) |idx| return std.mem.trimRight(u8, line[0..idx], " \t");
-    if (std.mem.indexOf(u8, line, " !{")) |idx| return std.mem.trimRight(u8, line[0..idx], " \t");
+    if (std.mem.indexOf(u8, line, " ! {")) |idx| return std.mem.trimEnd(u8, line[0..idx], " \t");
+    if (std.mem.indexOf(u8, line, " !{")) |idx| return std.mem.trimEnd(u8, line[0..idx], " \t");
     return line;
 }
 
@@ -845,7 +845,7 @@ pub fn joinDirectivePayload(arena: std.mem.Allocator, lines: []const DirectiveLi
     for (lines, 0..) |line, idx| {
         var payload = std.mem.trim(u8, line.payload_text, " \t");
         if (payload.len != 0 and payload[payload.len - 1] == '&') {
-            payload = std.mem.trimRight(u8, payload[0 .. payload.len - 1], " \t");
+            payload = std.mem.trimEnd(u8, payload[0 .. payload.len - 1], " \t");
         }
         if (idx != 0 and payload.len != 0) try out.append(' ');
         try out.appendSlice(payload);

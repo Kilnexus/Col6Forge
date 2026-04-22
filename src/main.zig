@@ -2,10 +2,11 @@ const std = @import("std");
 const Col6Forge = @import("Col6Forge");
 const cc_driver = @import("driver/cc_driver.zig");
 const pause_mode_shared = @import("driver/shared/pause_mode.zig");
+const zig_api = Col6Forge.zig_api;
 
-pub fn main() void {
-    runMain() catch |err| {
-        var stderr = std.fs.File.stderr();
+pub fn main(init: std.process.Init) void {
+    runMain(init) catch |err| {
+        var stderr = zig_api.File.stderr();
         var buffer: [512]u8 = undefined;
         var writer = stderr.writer(&buffer);
         writer.interface.print("internal error: {s}\n", .{@errorName(err)}) catch {};
@@ -14,13 +15,10 @@ pub fn main() void {
     };
 }
 
-fn runMain() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+fn runMain(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const args = try allocArgs(allocator, init.minimal.args);
+    defer freeArgs(allocator, args);
 
     if (args.len >= 1 and isCcToolInvocation(args[0])) {
         cc_driver.runOrExit(allocator, args);
@@ -35,23 +33,24 @@ fn runMain() !void {
         .failure => |parse_err| failWithUsage(parse_err),
     };
     if (parsed.show_help) {
-        try printUsage(std.fs.File.stdout());
+        try printUsage(zig_api.File.stdout());
         return;
     }
 
     if (parsed.output_path) |path| {
-        const null_output_value = std.process.getEnvVarOwned(allocator, "COL6FORGE_NULL_OUTPUT") catch null;
+        const null_output_value = getEnvVarOwned(allocator, init, "COL6FORGE_NULL_OUTPUT") catch null;
         defer if (null_output_value) |value| allocator.free(value);
         const use_null_output = if (null_output_value) |value| value.len > 0 and value[0] == '1' else false;
         if (use_null_output) {
             var diag_bag = Col6Forge.diag.Bag.init(allocator);
             defer diag_bag.deinit();
-            var null_writer = std.Io.null_writer;
+            var null_buf: [256]u8 = undefined;
+            var null_writer: std.Io.Writer.Discarding = .init(&null_buf);
             Col6Forge.runPipelineToWriterWithOptionsAndDiagnostics(
                 allocator,
                 parsed.input_path,
                 parsed.emit,
-                &null_writer,
+                &null_writer.writer,
                 .{
                     .bounds_check = parsed.bounds_check,
                     .dialect = parsed.dialect,
@@ -64,7 +63,7 @@ fn runMain() !void {
             };
             return;
         }
-        const count_output_value = std.process.getEnvVarOwned(allocator, "COL6FORGE_COUNT_OUTPUT") catch null;
+        const count_output_value = getEnvVarOwned(allocator, init, "COL6FORGE_COUNT_OUTPUT") catch null;
         defer if (count_output_value) |value| allocator.free(value);
         const use_count_output = if (count_output_value) |value| value.len > 0 and value[0] == '1' else false;
         if (use_count_output) {
@@ -90,12 +89,12 @@ fn runMain() !void {
             };
             var msg_buf: [64]u8 = undefined;
             const msg = try std.fmt.bufPrint(&msg_buf, "emitted {d} bytes\n", .{count});
-            try std.fs.File.stdout().writeAll(msg);
+            try zig_api.File.stdout().writeAll(msg);
             return;
         }
         var diag_bag = Col6Forge.diag.Bag.init(allocator);
         defer diag_bag.deinit();
-        var output_file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+        var output_file = try zig_api.cwd().createFile(path, .{ .truncate = true });
         defer output_file.close();
         var file_writer = FileOutputWriter{ .file = &output_file, .allocator = allocator };
         Col6Forge.runPipelineToWriterWithOptionsAndDiagnostics(
@@ -131,8 +130,36 @@ fn runMain() !void {
             failPipeline(parsed.input_path, &diag_bag, err);
         };
         defer allocator.free(result.output);
-        try std.fs.File.stdout().writeAll(result.output);
+        try zig_api.File.stdout().writeAll(result.output);
     }
+}
+
+fn allocArgs(allocator: std.mem.Allocator, args_src: std.process.Args) ![][]const u8 {
+    var it = try std.process.Args.Iterator.initAllocator(args_src, allocator);
+    defer it.deinit();
+
+    var args = std.array_list.Managed([]const u8).init(allocator);
+    errdefer {
+        for (args.items) |arg| allocator.free(arg);
+        args.deinit();
+    }
+
+    while (it.next()) |arg| {
+        try args.append(try allocator.dupe(u8, arg));
+    }
+
+    return args.toOwnedSlice();
+}
+
+fn freeArgs(allocator: std.mem.Allocator, args: [][]const u8) void {
+    for (args) |arg| allocator.free(arg);
+    allocator.free(args);
+}
+
+fn getEnvVarOwned(allocator: std.mem.Allocator, init: std.process.Init, name: []const u8) !?[]u8 {
+    const value = init.environ_map.get(name) orelse return null;
+    const owned = try allocator.dupe(u8, value);
+    return owned;
 }
 
 fn isCcToolInvocation(argv0: []const u8) bool {
@@ -155,7 +182,7 @@ fn countWrite(counter: *u128, bytes: []const u8) error{}!usize {
 }
 
 const FileOutputWriter = struct {
-    file: *std.fs.File,
+    file: *zig_api.File,
     allocator: std.mem.Allocator,
 
     pub fn writeAll(self: *FileOutputWriter, bytes: []const u8) !void {
@@ -315,7 +342,7 @@ fn parseDialect(value: []const u8) ?Col6Forge.Dialect {
 }
 
 fn reportPipelineError(input_path: []const u8, diag_bag: *const Col6Forge.diag.Bag, err: anyerror) !void {
-    var stderr = std.fs.File.stderr();
+    var stderr = zig_api.File.stderr();
     var buffer: [4096]u8 = undefined;
     var writer = stderr.writer(&buffer);
     try Col6Forge.writePipelineErrorDiagnosticWithOptions(&writer.interface, diag_bag, input_path, err, .{
@@ -328,7 +355,7 @@ fn reportPipelineError(input_path: []const u8, diag_bag: *const Col6Forge.diag.B
 
 fn failPipeline(input_path: []const u8, diag_bag: *const Col6Forge.diag.Bag, err: anyerror) noreturn {
     reportPipelineError(input_path, diag_bag, err) catch {
-        var stderr = std.fs.File.stderr();
+        var stderr = zig_api.File.stderr();
         var buffer: [512]u8 = undefined;
         var writer = stderr.writer(&buffer);
         writer.interface.print("pipeline error: {s} ({s})\n", .{ input_path, @errorName(err) }) catch {};
@@ -382,8 +409,8 @@ test "main parseArgs accepts -std=f77" {
 }
 
 fn failWithUsage(parse_err: ParseArgError) noreturn {
-    printUsage(std.fs.File.stderr()) catch {};
-    var stderr = std.fs.File.stderr();
+    printUsage(zig_api.File.stderr()) catch {};
+    var stderr = zig_api.File.stderr();
     var buffer: [256]u8 = undefined;
     var writer = stderr.writer(&buffer);
     writeParseArgError(&writer.interface, parse_err);
@@ -391,7 +418,7 @@ fn failWithUsage(parse_err: ParseArgError) noreturn {
     std.process.exit(2);
 }
 
-fn printUsage(file: std.fs.File) !void {
+fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage:
         \\  col6forge <file.f> -emit-llvm -o <out.ll>

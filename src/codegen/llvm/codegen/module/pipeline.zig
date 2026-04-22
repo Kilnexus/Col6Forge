@@ -55,8 +55,11 @@ pub fn emitModuleWithDiagnostics(
 ) ![]const u8 {
     var buffer = std.array_list.Managed(u8).init(allocator);
     errdefer buffer.deinit();
-    var writer = buffer.writer();
-    try emitModuleToWriterWithDiagnostics(&writer, allocator, program, sem, source_name, options, diag_bag);
+    var unmanaged = buffer.moveToUnmanaged();
+    var writer_alloc: std.Io.Writer.Allocating = .fromArrayList(allocator, &unmanaged);
+    defer buffer = unmanaged.toManaged(allocator);
+    try emitModuleToWriterWithDiagnostics(&writer_alloc.writer, allocator, program, sem, source_name, options, diag_bag);
+    unmanaged = writer_alloc.toArrayList();
     return buffer.toOwnedSlice();
 }
 

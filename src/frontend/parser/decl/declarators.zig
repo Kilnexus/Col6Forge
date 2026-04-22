@@ -373,7 +373,7 @@ fn splitAmbiguousLegacyStarToken(lp: *LineParser, arena: std.mem.Allocator) !?*a
     if (tok.kind != .real) return null;
     const text = lp.tokenText(tok);
     const split = findLegacyStarSelectorSplit(text) orelse return null;
-    const selector_text = std.mem.trimRight(u8, text[0..split.selector_end], " \t");
+    const selector_text = std.mem.trimEnd(u8, text[0..split.selector_end], " \t");
     if (selector_text.len == 0) return null;
 
     const suffix_start = tok.start + split.suffix_start;

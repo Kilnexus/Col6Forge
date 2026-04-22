@@ -36,11 +36,11 @@ fn dimensionExtentSignature(arena: std.mem.Allocator, dim: *ast.Expr) ![]const u
 }
 
 const LinearExpr = struct {
-    terms: std.StringArrayHashMap(i64),
+    terms: std.StringHashMap(i64),
     constant: i64 = 0,
 
     fn init(arena: std.mem.Allocator) LinearExpr {
-        return .{ .terms = std.StringArrayHashMap(i64).init(arena) };
+        return .{ .terms = std.StringHashMap(i64).init(arena) };
     }
 };
 
@@ -93,15 +93,17 @@ fn linearExprCombine(
 ) !?LinearExpr {
     var out = LinearExpr.init(arena);
     out.constant = left.constant + right_sign * right.constant;
-    for (left.terms.keys(), left.terms.values()) |name, coeff| {
-        try out.terms.put(name, coeff);
+    var left_it = left.terms.iterator();
+    while (left_it.next()) |entry| {
+        try out.terms.put(entry.key_ptr.*, entry.value_ptr.*);
     }
-    for (right.terms.keys(), right.terms.values()) |name, coeff| {
-        const entry = try out.terms.getOrPut(name);
+    var right_it = right.terms.iterator();
+    while (right_it.next()) |entry_in| {
+        const entry = try out.terms.getOrPut(entry_in.key_ptr.*);
         if (entry.found_existing) {
-            entry.value_ptr.* += right_sign * coeff;
+            entry.value_ptr.* += right_sign * entry_in.value_ptr.*;
         } else {
-            entry.value_ptr.* = right_sign * coeff;
+            entry.value_ptr.* = right_sign * entry_in.value_ptr.*;
         }
     }
     return out;
@@ -114,8 +116,9 @@ fn linearExprSub(arena: std.mem.Allocator, left: LinearExpr, right: LinearExpr) 
 fn linearExprAddConst(arena: std.mem.Allocator, expr: LinearExpr, constant: i64) !LinearExpr {
     var out = LinearExpr.init(arena);
     out.constant = expr.constant + constant;
-    for (expr.terms.keys(), expr.terms.values()) |name, coeff| {
-        try out.terms.put(name, coeff);
+    var it = expr.terms.iterator();
+    while (it.next()) |entry| {
+        try out.terms.put(entry.key_ptr.*, entry.value_ptr.*);
     }
     return out;
 }
@@ -124,7 +127,10 @@ fn linearExprCanonicalText(arena: std.mem.Allocator, expr: LinearExpr) ![]const 
     var parts = std.array_list.Managed([]const u8).init(arena);
     defer parts.deinit();
 
-    for (expr.terms.keys(), expr.terms.values()) |name, coeff| {
+    var it = expr.terms.iterator();
+    while (it.next()) |entry| {
+        const name = entry.key_ptr.*;
+        const coeff = entry.value_ptr.*;
         if (coeff == 0) continue;
         if (coeff == 1) {
             try parts.append(try std.fmt.allocPrint(arena, "{s}", .{name}));

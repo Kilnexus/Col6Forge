@@ -7,6 +7,7 @@ const paths = @import("paths.zig");
 const pipeline = @import("pipeline.zig");
 const process = @import("process.zig");
 const runtime_cache = @import("runtime_cache.zig");
+const zig_api = Col6Forge.zig_api;
 
 pub fn runOrExit(allocator: std.mem.Allocator, args: []const []const u8) noreturn {
     run(allocator, args) catch |err| {
@@ -25,15 +26,15 @@ fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var parsed = switch (args_mod.parseArgs(allocator, args)) {
         .success => |value| value,
         .failure => |parse_err| {
-            try printUsage(std.fs.File.stderr());
-            try printParseArgError(std.fs.File.stderr(), parse_err);
+            try printUsage(zig_api.File.stderr());
+            try printParseArgError(zig_api.File.stderr(), parse_err);
             return error.InvalidArguments;
         },
     };
     defer parsed.deinit(allocator);
 
     if (parsed.show_help) {
-        try printUsage(std.fs.File.stdout());
+        try printUsage(zig_api.File.stdout());
         return;
     }
 
@@ -83,19 +84,19 @@ fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
         }
 
         if (compile_units.items.len == 0) {
-            try writeLine(std.fs.File.stderr(), "error: no compile inputs provided\n");
+            try writeLine(zig_api.File.stderr(), "error: no compile inputs provided\n");
             return error.InvalidArguments;
         }
         if (has_link_only_inputs) {
             try writeLine(
-                std.fs.File.stderr(),
+                zig_api.File.stderr(),
                 "error: -c mode does not accept link-only inputs (.o/.obj/.a/.lib/.so/.dll)\n",
             );
             return error.InvalidArguments;
         }
         if (parsed.output_path != null and compile_units.items.len != 1) {
             try writeLine(
-                std.fs.File.stderr(),
+                zig_api.File.stderr(),
                 "error: -o is only valid with exactly one compile input in -c mode\n",
             );
             return error.InvalidArguments;
@@ -132,7 +133,7 @@ fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     else if (parsed.other_inputs.len != 0)
         try paths.defaultExeOutputPath(allocator, parsed.other_inputs[0])
     else {
-        try writeLine(std.fs.File.stderr(), "error: missing input files\n");
+        try writeLine(zig_api.File.stderr(), "error: missing input files\n");
         return error.InvalidArguments;
     };
     defer if (parsed.output_path == null) allocator.free(output_path);
@@ -155,7 +156,7 @@ fn run(allocator: std.mem.Allocator, args: []const []const u8) !void {
     try process.runCheckedCommand(allocator, link_argv.items, "zig cc link");
 }
 
-fn printParseArgError(file: std.fs.File, parse_err: types.ParseArgError) !void {
+fn printParseArgError(file: zig_api.File, parse_err: types.ParseArgError) !void {
     var buffer: [512]u8 = undefined;
     var writer = file.writer(&buffer);
     switch (parse_err) {
@@ -169,7 +170,7 @@ fn printParseArgError(file: std.fs.File, parse_err: types.ParseArgError) !void {
     try writer.interface.flush();
 }
 
-fn printUsage(file: std.fs.File) !void {
+fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage:
         \\  col6forge cc <inputs...> [options] [-- <zig-cc-flags...>]
@@ -195,6 +196,6 @@ fn printUsage(file: std.fs.File) !void {
     );
 }
 
-fn writeLine(file: std.fs.File, text: []const u8) !void {
+fn writeLine(file: zig_api.File, text: []const u8) !void {
     try file.writeAll(text);
 }

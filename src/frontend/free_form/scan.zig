@@ -44,7 +44,7 @@ pub fn normalizeFreeFormWithMapMode(
 
         var part = trimmed;
         if (continued and part.len > 0 and part[0] == '&') {
-            part = std.mem.trimLeft(u8, part[1..], " \t");
+            part = std.mem.trimStart(u8, part[1..], " \t");
         }
 
         const cont = predicates.hasTrailingContinuation(part);

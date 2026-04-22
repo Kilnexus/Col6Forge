@@ -58,7 +58,7 @@ pub fn stripInlineComment(line: []const u8) []const u8 {
 }
 
 pub fn isPreservedDirectiveLine(line: []const u8) bool {
-    const trimmed = std.mem.trimLeft(u8, line, " \t");
+    const trimmed = std.mem.trimStart(u8, line, " \t");
     if (!std.ascii.startsWithIgnoreCase(trimmed, "!gcc$")) return false;
     return std.ascii.indexOfIgnoreCase(trimmed, "attributes") != null and
         std.ascii.indexOfIgnoreCase(trimmed, "no_arg_check") != null;

@@ -94,7 +94,7 @@ fn lowerStaticWriteStreamFormatWithBuilder(
                     .relative_right => 'R',
                     .relative_left => 'L',
                 });
-                try fmt_buf.writer().print("{d}", .{tab.count});
+                try fmt_buf.print("{d}", .{tab.count});
                 try fmt_buf.append(0x02);
             },
             .descriptor => |descriptor| switch (descriptor) {
@@ -113,8 +113,8 @@ fn lowerStaticWriteStreamFormatWithBuilder(
                     scale_factor,
                     sign_plus,
                 ),
-                .char => |spec| try fmt_buf.writer().print("%S{d};", .{spec.width}),
-                .logical => |spec| try fmt_buf.writer().print("%L{d};", .{spec.width}),
+                .char => |spec| try fmt_buf.print("%S{d};", .{spec.width}),
+                .logical => |spec| try fmt_buf.print("%L{d};", .{spec.width}),
             },
             .sign_control => |ctrl| sign_plus = (ctrl == .plus),
             .scale => |value| scale_factor = value,

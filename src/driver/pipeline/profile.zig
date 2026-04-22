@@ -1,5 +1,6 @@
 const std = @import("std");
 const codegen = @import("../../codegen/mod.zig");
+const zig_api = @import("../../compat/zig_api.zig");
 
 pub const PipelineStage = enum {
     none,
@@ -86,7 +87,7 @@ pub const PipelineProfile = struct {
     pub fn emit(self: *const PipelineProfile) void {
         if (!self.time_report) return;
 
-        var stderr = std.fs.File.stderr();
+        var stderr = zig_api.File.stderr();
         var buffer: [768]u8 = undefined;
         var writer = stderr.writer(&buffer);
         const mode_text = switch (self.mode) {
@@ -134,11 +135,11 @@ pub fn takeLastProfileSample() ?PipelineProfileSample {
 }
 
 pub fn nowNs() i128 {
-    return std.time.nanoTimestamp();
+    return zig_api.nowNs();
 }
 
 pub fn elapsedNs(start_ns: i128) u64 {
-    const end_ns = std.time.nanoTimestamp();
+    const end_ns = zig_api.nowNs();
     if (end_ns <= start_ns) return 0;
     return @intCast(end_ns - start_ns);
 }

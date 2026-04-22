@@ -1,4 +1,5 @@
 const std = @import("std");
+const zig_api = @import("../../../../compat/zig_api.zig");
 
 pub const CodegenSubStage = enum {
     none,
@@ -45,11 +46,11 @@ pub fn takeLastBreakdownSample() ?CodegenBreakdownSample {
 }
 
 pub fn nowNs() i128 {
-    return std.time.nanoTimestamp();
+    return zig_api.nowNs();
 }
 
 pub fn elapsedNs(start: i128) u64 {
-    const end = std.time.nanoTimestamp();
+    const end = zig_api.nowNs();
     if (end <= start) return 0;
     return @intCast(end - start);
 }

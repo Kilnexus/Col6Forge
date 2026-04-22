@@ -426,6 +426,44 @@ test "no_arg_check dummy is preserved into intrinsic actual restrictions" {
     try testing.expect(std.mem.indexOf(u8, got.message, "NO_ARG_CHECK") != null);
 }
 
+test "allocatable polymorphic dummy enforces polymorphic allocatable same declared type actuals" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "implicit none\n" ++
+        "type :: base\n" ++
+        "end type\n" ++
+        "type, extends(base) :: ext\n" ++
+        "end type\n" ++
+        "type(base), allocatable :: a\n" ++
+        "class(base), pointer :: b\n" ++
+        "class(ext), allocatable :: c\n" ++
+        "call test(a)\n" ++
+        "call test(b)\n" ++
+        "call test(c)\n" ++
+        "contains\n" ++
+        "  subroutine test(arg)\n" ++
+        "    class(base), allocatable :: arg\n" ++
+        "  end subroutine\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    _ = split_api.analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_bag) catch {};
+
+    try testing.expect(diag_bag.count() >= 3);
+    try testing.expect(std.mem.indexOf(u8, diag_bag.items[0].message, "must be polymorphic") != null);
+    try testing.expect(std.mem.indexOf(u8, diag_bag.items[1].message, "must be ALLOCATABLE") != null);
+    try testing.expect(std.mem.indexOf(u8, diag_bag.items[2].message, "same declared type") != null);
+}
+
 test "TRANSFER rejects mold with zero storage size" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -854,4 +892,3 @@ test "c_f_pointer rejects non-pointer fptr actual" {
     try testing.expectEqualStrings(catalog.semantic.invalid_argument_count.code, got.code);
     try testing.expect(std.mem.indexOf(u8, got.message, "must be a pointer") != null);
 }
-

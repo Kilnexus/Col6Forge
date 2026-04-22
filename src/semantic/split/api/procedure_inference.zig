@@ -944,10 +944,14 @@ fn implicitTypeSpecForName(unit: ast.ProgramUnit, name: []const u8) symbols.Type
 
 fn applyDummyCharLen(type_spec: symbols.TypeSpec, char_len_expr: ?*ast.Expr) symbols.TypeSpec {
     if (type_spec.lowered_kind != .character) return type_spec.withCharacterLength(.none, null);
-    const char_len = inferConstantCharLen(char_len_expr);
+    const expr_node = char_len_expr orelse return type_spec.withCharacterLength(.constant, 1);
+    if (expr_node.* == .literal and expr_node.literal.kind == .assumed_size) {
+        return type_spec.withCharacterLength(.assumed, null);
+    }
+    const char_len = inferConstantCharLen(expr_node);
     return type_spec.withCharacterLength(
-        if (char_len != null) .constant else if (char_len_expr != null) .deferred else .constant,
-        char_len orelse if (char_len_expr == null) 1 else null,
+        if (char_len != null) .constant else .deferred,
+        char_len,
     );
 }
 
@@ -956,8 +960,7 @@ fn applyDummyDeclaratorCharLen(type_spec: symbols.TypeSpec, declarator: ast.Decl
     return applyDummyCharLen(type_spec, declarator.char_len);
 }
 
-fn inferConstantCharLen(len_expr: ?*ast.Expr) ?usize {
-    const expr_node = len_expr orelse return null;
+fn inferConstantCharLen(expr_node: *ast.Expr) ?usize {
     return switch (expr_node.*) {
         .literal => |lit| switch (lit.kind) {
             .integer => std.fmt.parseInt(usize, lit.text, 10) catch null,

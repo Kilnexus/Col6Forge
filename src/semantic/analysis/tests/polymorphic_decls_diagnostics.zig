@@ -76,3 +76,35 @@ test "polymorphic function result still rejects non dummy allocatable pointer re
 
     try testing.expect(bagContainsMessageAtLine(&diag_bag, 4, "must be dummy, allocatable or pointer"));
 }
+
+test "allocatable polymorphic declaration rejects initializer" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  type :: t\n" ++
+        "    integer :: i\n" ++
+        "  end type\n" ++
+        "  class(t), allocatable :: x = t(1)\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    _ = split_api.analyzeProgramWithKnownAndOptionsAndDiagnostics(
+        arena.allocator(),
+        program,
+        &.{},
+        &.{},
+        .{},
+        &diag_bag,
+    ) catch {};
+
+    try testing.expect(bagContainsMessageAtLine(&diag_bag, 5, "cannot have an initializer"));
+}

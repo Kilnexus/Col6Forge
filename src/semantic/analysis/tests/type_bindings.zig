@@ -216,6 +216,54 @@ test "defined assignment declared with procedure is accepted for incompatible in
     try testing.expectEqual(@as(usize, 4), sem.units.len);
 }
 
+test "type-bound generic operator and assignment work for abstract polymorphic base" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module abstract_algebra\n" ++
+        "  implicit none\n" ++
+        "  private\n" ++
+        "  public :: rescale\n" ++
+        "  public :: object\n" ++
+        "  type, abstract :: object\n" ++
+        "  contains\n" ++
+        "    procedure(assign_interface), deferred :: assign\n" ++
+        "    procedure(product_interface), deferred :: product\n" ++
+        "    generic :: assignment(=) => assign\n" ++
+        "    generic :: operator(*) => product\n" ++
+        "  end type\n" ++
+        "  abstract interface\n" ++
+        "    function product_interface(lhs, rhs) result(product)\n" ++
+        "      import :: object\n" ++
+        "      class(object), intent(in) :: lhs\n" ++
+        "      class(object), allocatable :: product\n" ++
+        "      real, intent(in) :: rhs\n" ++
+        "    end function\n" ++
+        "    subroutine assign_interface(lhs, rhs)\n" ++
+        "      import :: object\n" ++
+        "      class(object), intent(inout) :: lhs\n" ++
+        "      class(object), intent(in) :: rhs\n" ++
+        "    end subroutine\n" ++
+        "  end interface\n" ++
+        "contains\n" ++
+        "  subroutine rescale(operand, scale)\n" ++
+        "    class(object) :: operand\n" ++
+        "    real, intent(in) :: scale\n" ++
+        "    operand = operand * scale\n" ++
+        "    operand = operand%product(scale)\n" ++
+        "  end subroutine\n" ++
+        "end module\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    const sem = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expectEqual(@as(usize, 1), sem.units.len);
+}
+
 test "intrinsic assignment accepts double precision to complex conversion" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -755,6 +803,47 @@ test "type-bound PASS dummy must not be pointer" {
     try testing.expect(std.mem.indexOf(u8, got.message, "must not be POINTER") != null);
 }
 
+test "pure procedure rejects polymorphic intent(out) dummy with impure finalizer" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module m\n" ++
+        "  type t\n" ++
+        "  contains\n" ++
+        "    final :: fnl\n" ++
+        "  end type t\n" ++
+        "contains\n" ++
+        "  impure subroutine fnl(x)\n" ++
+        "    type(t) :: x\n" ++
+        "    print *, \"finalized!\"\n" ++
+        "  end subroutine\n" ++
+        "end\n" ++
+        "program test\n" ++
+        "  use m\n" ++
+        "  type(t) :: x\n" ++
+        "  call foo(x)\n" ++
+        "contains\n" ++
+        "  pure subroutine foo(x)\n" ++
+        "    class(t), intent(out) :: x\n" ++
+        "  end subroutine\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    _ = split_api.analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_bag) catch {};
+    const got = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(got);
+    try testing.expect(std.mem.indexOf(u8, got.message, "may not be polymorphic") != null);
+}
+
 test "data actual checking preserves later rank mismatch after earlier call arity error" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -867,4 +956,3 @@ test "contained procedure lookup does not collide across different owners" {
     try testing.expect(std.mem.indexOf(u8, first.message, "Rank mismatch in argument") != null);
     try testing.expect(std.mem.indexOf(u8, second.message, "Character length mismatch") != null);
 }
-

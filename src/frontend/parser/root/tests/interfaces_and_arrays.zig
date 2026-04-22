@@ -82,6 +82,34 @@ test "parseProgram captures multi-target operator type-bound generics" {
     try testing.expect(derived.bindings[3].is_generic);
 }
 
+test "parseProgram captures FINAL subroutine names in derived types" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module m\n" ++
+        "  type :: t\n" ++
+        "  contains\n" ++
+        "    final :: fnl1, fnl2\n" ++
+        "  end type t\n" ++
+        "end module m\n" ++
+        "subroutine s(x)\n" ++
+        "  use m\n" ++
+        "  type(t), intent(inout) :: x\n" ++
+        "end subroutine s\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parseProgram(arena.allocator(), lines);
+
+    const derived = program.units[0].decls[0].derived_type_def;
+    try testing.expectEqual(@as(usize, 2), derived.final_subroutines.len);
+    try testing.expectEqualStrings("fnl1", derived.final_subroutines[0]);
+    try testing.expectEqualStrings("fnl2", derived.final_subroutines[1]);
+}
+
 test "parseProgramWithDiagnostics reports type-bound generic attribute and target syntax errors" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -587,4 +615,3 @@ test "parseProgram handles c_ptr_tests_16 exact file shape" {
     try testing.expectEqual(@as(usize, 4), program.units.len);
     try testing.expect(program.units[0].stmts.len >= 3);
 }
-

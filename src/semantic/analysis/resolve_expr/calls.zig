@@ -381,6 +381,14 @@ fn intrinsicResultRank(
         if (reshapeResultRank(self, args[1], deps)) |rank| return rank;
         return 1;
     }
+    if (std.mem.eql(u8, upper, "PACK")) {
+        if (args.len == 0) return null;
+        return 1;
+    }
+    if (std.mem.eql(u8, upper, "CSHIFT") or std.mem.eql(u8, upper, "EOSHIFT")) {
+        if (args.len == 0) return null;
+        return deps.exprRank(self, args[0]);
+    }
     if (std.mem.eql(u8, upper, "MERGE")) {
         return elementalActualRank(self, args, deps);
     }

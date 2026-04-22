@@ -43,6 +43,7 @@ pub const DeclAttributes = struct {
     save: bool = false,
     allocatable: bool = false,
     pointer: bool = false,
+    target: bool = false,
     optional: bool = false,
     nopass: bool = false,
     pass_name: ?[]const u8 = null,

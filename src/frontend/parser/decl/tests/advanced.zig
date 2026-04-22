@@ -298,6 +298,31 @@ test "parseDecl preserves contiguous and value attributes" {
     }
 }
 
+test "parseDecl preserves target attribute" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "real, target :: a\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+    const tokens = try lexer.lexLogicalLine(allocator, lines[0]);
+    defer allocator.free(tokens);
+    var lp = LineParser.init(lines[0], tokens);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const decl_node = try parseDecl(&lp, arena.allocator());
+
+    switch (decl_node) {
+        .type_decl => |td| {
+            try testing.expect(td.target);
+            try testing.expectEqual(@as(usize, 1), td.items.len);
+            try testing.expectEqualStrings("A", td.items[0].name);
+        },
+        else => return error.UnexpectedToken,
+    }
+}
+
 test "parseDecl handles bare OPTIONAL declaration" {
     const testing = std.testing;
     const allocator = testing.allocator;

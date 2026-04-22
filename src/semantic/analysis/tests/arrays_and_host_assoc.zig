@@ -899,6 +899,32 @@ test "SELECT RANK rejects non-assumed-rank selector" {
     try testing.expect(std.mem.indexOf(u8, got.message, "must be an assumed rank variable") != null);
 }
 
+test "assumed-length character explicit-shape dummy does not enforce compile-time element sufficiency" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "character(4) :: a(2)\n" ++
+        "print *, fun(a)\n" ++
+        "contains\n" ++
+        "  function fun(arg)\n" ++
+        "    character(*) :: arg(10)\n" ++
+        "    integer :: fun(size(arg))\n" ++
+        "    fun = 1\n" ++
+        "  end function\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expect(diag.take() == null);
+}
+
 test {
     _ = @import("../mod_proc_component_tests.zig");
     _ = @import("../mod_regression_tests.zig");

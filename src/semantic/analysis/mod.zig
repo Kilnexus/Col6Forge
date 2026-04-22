@@ -10,4 +10,8 @@ test {
     _ = @import("tests/call_constraints.zig");
     _ = @import("tests/type_bindings.zig");
     _ = @import("tests/arrays_and_host_assoc.zig");
+    _ = @import("tests/assumed_charlen_procedure_args.zig");
+    _ = @import("tests/intrinsic_character_results.zig");
+    _ = @import("tests/nested_array_constructor_shapes.zig");
+    _ = @import("mod_proc_component_tests.zig");
 }

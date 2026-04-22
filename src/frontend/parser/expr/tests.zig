@@ -474,6 +474,32 @@ test "parseExpr handles typed array constructor" {
     }
 }
 
+test "parseExpr handles typed character array constructor len(expr) syntax" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "[character(len(a)) :: a, b]\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+    const tokens = try lexer.lexLogicalLine(allocator, lines[0]);
+    defer allocator.free(tokens);
+    var lp = LineParser.init(lines[0], tokens);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const node = try parseExpr(&lp, arena.allocator(), 0);
+
+    switch (node.*) {
+        .array_constructor => |ctor| {
+            try testing.expect(ctor.type_spec != null);
+            try testing.expectEqual(ast.TypeKind.character, ctor.type_spec.?.type_kind);
+            try testing.expect(ctor.type_spec.?.kind_selector != null);
+            try testing.expectEqual(@as(usize, 2), ctor.items.len);
+        },
+        else => return error.UnexpectedToken,
+    }
+}
+
 test "parseExpr handles bare derived-type array constructor type spec" {
     const testing = std.testing;
     const allocator = testing.allocator;

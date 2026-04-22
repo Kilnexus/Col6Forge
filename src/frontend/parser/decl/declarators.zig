@@ -134,6 +134,7 @@ pub fn consumeDeclAttributes(lp: *LineParser, arena: std.mem.Allocator) !DeclAtt
                 if (attrs.pointer) return error.DuplicateAttribute;
                 attrs.pointer = true;
             }
+            if (context.eqNoCase(attr_name, "TARGET")) attrs.target = true;
             if (context.eqNoCase(attr_name, "OPTIONAL")) attrs.optional = true;
             if (context.eqNoCase(attr_name, "NOPASS")) attrs.nopass = true;
             if (context.eqNoCase(attr_name, "PRIVATE")) attrs.private = true;

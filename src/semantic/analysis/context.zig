@@ -53,6 +53,7 @@ pub const Context = struct {
         bind_c: bool = false,
         components: []const ComponentInfo = &.{},
         bindings: []const BindingInfo = &.{},
+        final_subroutines: []const []const u8 = &.{},
     };
 
     pub const IntegerBounds = struct {

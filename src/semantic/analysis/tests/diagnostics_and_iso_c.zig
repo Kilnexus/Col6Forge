@@ -453,7 +453,7 @@ test "bind(c) function rejects non-character array result" {
     var analyzer_instance = UnitAnalyzer.init(
         arena.allocator(),
         &unit,
-        &.{} ,
+        &.{},
         &known_function_type_specs,
         &known_procedure_sigs,
         &known_host_parameters,
@@ -559,7 +559,6 @@ test "global bind(c) validation allows interface mirror for procedure definition
     try testing.expectEqual(@as(usize, 3), sem.units.len);
     try testing.expect(diag.take() == null);
 }
-
 
 test "use iso_c_binding full import provides builtin derived types and constants to declarations" {
     const testing = std.testing;
@@ -710,6 +709,59 @@ test "unnamed explicit interface body in module prelude is callable from contain
     );
     _ = try analyzer_instance.analyze();
     try testing.expect(diag.take() == null);
+}
+
+test "bind(c) procedure rejects polymorphic dummy" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module m\n" ++
+        "  use iso_c_binding\n" ++
+        "  type :: t\n" ++
+        "    integer(c_int) :: i\n" ++
+        "  end type\n" ++
+        "contains\n" ++
+        "  subroutine test(a) bind(c)\n" ++
+        "    class(t) :: a\n" ++
+        "  end subroutine\n" ++
+        "end module m\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = split_api.analyzeProgram(arena.allocator(), program) catch {};
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "is not C interoperable") != null);
+}
+
+test "sequence or bind(c) derived type rejects polymorphic component" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "type :: t\n" ++
+        "  integer :: i\n" ++
+        "end type\n" ++
+        "type t2\n" ++
+        "  sequence\n" ++
+        "  class(t), pointer :: x\n" ++
+        "end type\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = split_api.analyzeProgram(arena.allocator(), program) catch {};
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "Polymorphic component x") != null);
 }
 
 test "contained procedure does not revalidate imported derived binding prelude" {
@@ -984,4 +1036,3 @@ test "procedure declaration rejects SAVE without POINTER" {
     defer diag.releaseTaken(got);
     try testing.expect(std.mem.indexOf(u8, got.message, "SAVE attribute conflicts with PROCEDURE attribute") != null);
 }
-

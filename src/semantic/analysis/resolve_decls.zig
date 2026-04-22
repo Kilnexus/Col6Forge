@@ -13,6 +13,7 @@ const common_entity_queries = @import("common_entity_queries.zig");
 const decl_diag = @import("resolve_decls_diag_helpers.zig");
 const decl_initializers = @import("resolve_decls_initializers.zig");
 const polymorphic_decls = @import("resolve_decls_polymorphic.zig");
+const assumed_size = @import("assumed_size.zig");
 
 const StorageClass = symbols.StorageClass;
 const CharacterLengthKind = symbols.CharacterLengthKind;
@@ -48,9 +49,15 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
                 effective_item.char_len = null;
             }
         }
-        try applyDeclarator(self, effective_type, effective_item, .local, true, decl.allocatable, decl.pointer, decl.contiguous);
+        try applyDeclarator(self, effective_type, effective_item, .local, true, decl.allocatable, decl.pointer, decl.target, decl.contiguous);
         const idx = symbols_mod.findSymbolIndex(self, item.name) orelse return error.UnknownSymbol;
+        try assumed_size.validateDerivedIntentOutAssumedSizeDummy(self, decl, effective_item, effective_type);
         polymorphic_decls.validateTypeDecl(self, decl, effective_type, self.symbols.items[idx]) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
+        polymorphic_decls.validateInitializer(self, decl, effective_type, item) catch |err| {
             if (!self.usesExplicitDiagnosticBag()) return err;
             if (first_err == null) first_err = err;
             continue;
@@ -129,7 +136,7 @@ pub fn applyProcedureDecl(self: *context.Context, decl: ast.ProcedureDecl) !void
                 }
             }
         }
-        try applyDeclarator(self, resolved.type_spec, item, .local, resolved.explicit_type, false, decl.pointer, false);
+        try applyDeclarator(self, resolved.type_spec, item, .local, resolved.explicit_type, false, decl.pointer, false, false);
 
         const idx = symbols_mod.findSymbolIndex(self, item.name) orelse return error.UnknownSymbol;
         var sym = &self.symbols.items[idx];
@@ -169,6 +176,7 @@ pub fn applyDeclarator(
     explicit_type: bool,
     allocatable: bool,
     pointer: bool,
+    target: bool,
     contiguous: bool,
 ) !void {
     try validateConcreteAbstractTypeUse(self, type_spec);
@@ -190,6 +198,7 @@ pub fn applyDeclarator(
             emitDuplicateDeclaratorDiagnostic(self, item.name, .dimensions);
             return error.DuplicateDeclaration;
         }
+        try assumed_size.validateDeclaratorDims(self, item, if (sym.storage == .dummy) .dummy else storage);
         sym.dims = item.dims;
         try validateDeclaratorDimensionExprs(self, item.dims);
     }
@@ -211,6 +220,9 @@ pub fn applyDeclarator(
             emitDescriptorArrayShapeDiagnostic(self, "POINTER");
             return error.DuplicateDeclaration;
         }
+    }
+    if (target) {
+        sym.is_target = true;
     }
     if (contiguous) {
         if (item.dims.len == 0) {
@@ -648,7 +660,10 @@ fn currentDeclDeclaresFunctionResult(self: *context.Context) bool {
 }
 
 fn validateRestrictedSpecProcedureCall(self: *context.Context, call: ast.CallOrSubscript) !void {
-    if (symbols_mod.isIntrinsicName(call.name)) return;
+    if (symbols_mod.isIntrinsicName(call.name)) {
+        try validateIntrinsicSpecCall(self, call);
+        return;
+    }
 
     if (symbols_mod.lookupKnownProcedureSig(self, call.name)) |sig| {
         if (sig.pure) return;
@@ -666,6 +681,40 @@ fn validateRestrictedSpecProcedureCall(self: *context.Context, call: ast.CallOrS
         decl_diag.emitPureSpecExprDiagnostic(self);
         return error.InvalidArgumentCount;
     }
+}
+
+fn validateIntrinsicSpecCall(self: *context.Context, call: ast.CallOrSubscript) !void {
+    const needs_dim_check =
+        std.ascii.eqlIgnoreCase(call.name, "size") or
+        std.ascii.eqlIgnoreCase(call.name, "lbound") or
+        std.ascii.eqlIgnoreCase(call.name, "ubound");
+    if (!needs_dim_check or call.args.len < 2) return;
+    const dim_value = (try constants.evalConst(self, call.args[1])) orelse return;
+    const dim_int = switch (dim_value) {
+        .integer => |value| value,
+        else => return,
+    };
+    const array_rank = resolve_expr.exprRank(self, call.args[0]);
+    if (dim_int >= 1 and dim_int <= array_rank) return;
+
+    const source = self.sourceForExpr(call.args[1]) orelse blk: {
+        if (self.current_decl_source) |decl_source| {
+            break :blk ast.SourceRef{
+                .line = decl_source.line,
+                .column = decl_source.column,
+                .text = decl_source.text,
+            };
+        }
+        break :blk ast.SourceRef{};
+    };
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.assignment_type_mismatch.code,
+        "is not a valid dimension index",
+        source.text,
+    );
+    return error.InvalidArgumentCount;
 }
 
 fn validateRestrictedSpecProcedureComponent(self: *context.Context, comp: ast.ComponentExpr) !void {

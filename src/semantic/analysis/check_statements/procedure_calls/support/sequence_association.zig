@@ -59,6 +59,7 @@ pub fn checkExplicitShapeElementSufficiency(
 
 pub fn formalRequiredElementCount(formal: context.Context.ProcedureSig.ArgSig) ?usize {
     if (formal.requires_descriptor or formal.shape_signature.len == 0) return null;
+    if (formal.type_spec.lowered_kind == .character and formal.type_spec.char_len_kind == .assumed) return null;
     var total: usize = 1;
     for (formal.shape_signature) |extent_text| {
         const trimmed = std.mem.trim(u8, extent_text, " \t");

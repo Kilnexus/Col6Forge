@@ -67,3 +67,117 @@ test "function result pointer assignment from allocatable class component stays 
     try testing.expectEqual(@as(usize, 2), sem.units.len);
     try testing.expect(diag.take() == null);
 }
+
+test "pointer assignment rejects identifier without TARGET attribute" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  integer :: x\n" ++
+        "  integer, pointer :: p\n" ++
+        "  p => x\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    _ = split_api.analyzeProgram(arena.allocator(), program) catch {};
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "neither TARGET nor POINTER") != null);
+}
+
+test "pointer assignment accepts identifier with TARGET attribute" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  integer, target :: x\n" ++
+        "  integer, pointer :: p\n" ++
+        "  p => x\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    _ = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expect(diag.take() == null);
+}
+
+test "pointer assignment rejects non-target component base" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "module m\n" ++
+        "  type :: test_case\n" ++
+        "  end type\n" ++
+        "  type :: test_suite\n" ++
+        "    type(test_case) :: list\n" ++
+        "  end type\n" ++
+        "contains\n" ++
+        "  subroutine sub(self)\n" ++
+        "    class(test_suite), intent(inout) :: self\n" ++
+        "    type(test_case), pointer :: tst_case\n" ++
+        "    tst_case => self%list\n" ++
+        "  end subroutine\n" ++
+        "end module m\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    _ = split_api.analyzeProgram(arena.allocator(), program) catch {};
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "neither TARGET nor POINTER") != null);
+}
+
+test "allocatable function result can be allocated by result name" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "contains\n" ++
+        "  function f()\n" ++
+        "    integer, allocatable :: f\n" ++
+        "    allocate(f)\n" ++
+        "  end function f\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    _ = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expect(diag.take() == null);
+}
+
+test "allocatable array function result can be allocated through subscript form" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "contains\n" ++
+        "  function f()\n" ++
+        "    integer, allocatable :: f(:)\n" ++
+        "    allocate(f(3))\n" ++
+        "  end function f\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    _ = try split_api.analyzeProgram(arena.allocator(), program);
+    try testing.expect(diag.take() == null);
+}

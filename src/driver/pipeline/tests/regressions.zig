@@ -159,3 +159,19 @@ test "runPipelineWithOptionsAndDiagnostics rejects polymorphic arrays in minimal
     try testing.expect(std.mem.indexOf(u8, diag_info.message, "polymorphic arrays not yet supported for firstprivate") != null);
 }
 
+test "runPipelineWithOptionsAndDiagnostics rejects polymorphic print data transfer element" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var diag_capture = PipelineDiagCapture.init(allocator);
+    defer diag_capture.deinit();
+    const diag_info = try diag_capture.expectError(
+        allocator,
+        "tests/gcc-tests/gfortran.dg/class_24.f03",
+        .llvm,
+        .{},
+        error.AssignmentTypeMismatch,
+    );
+    defer diag_capture.release(diag_info);
+    try testing.expect(std.mem.indexOf(u8, diag_info.message, "cannot be polymorphic") != null);
+}

@@ -151,6 +151,9 @@ pub fn resultDependsOnArgs(name: []const u8) bool {
     for (name, 0..) |ch, i| upper_buf[i] = std.ascii.toUpper(ch);
     const upper = upper_buf[0..name.len];
     if (std.mem.eql(u8, upper, "ABS")) return true;
+    if (std.mem.eql(u8, upper, "PACK")) return true;
+    if (std.mem.eql(u8, upper, "CSHIFT")) return true;
+    if (std.mem.eql(u8, upper, "EOSHIFT")) return true;
     if (std.mem.eql(u8, upper, "MERGE")) return true;
     if (std.mem.eql(u8, upper, "REPEAT")) return true;
     if (std.mem.eql(u8, upper, "TRANSFER")) return true;
@@ -174,6 +177,14 @@ pub fn inferResultType(
     }
 
     if (std.mem.eql(u8, upper, "RESHAPE")) {
+        if (args.len == 0) return current;
+        return args[0];
+    }
+
+    if (std.mem.eql(u8, upper, "PACK") or
+        std.mem.eql(u8, upper, "CSHIFT") or
+        std.mem.eql(u8, upper, "EOSHIFT"))
+    {
         if (args.len == 0) return current;
         return args[0];
     }
@@ -384,4 +395,18 @@ test "inferResultType uses first argument type for MERGE" {
     const inferred = try inferResultType("MERGE", fixedTypeSpec(.real), &.{ char_arg, char_arg, logical_arg });
     try testing.expectEqual(ast.TypeKind.character, inferred.lowered_kind);
     try testing.expectEqual(@as(?usize, 2), inferred.char_len);
+}
+
+test "inferResultType uses array argument type for PACK and EOSHIFT" {
+    const testing = std.testing;
+
+    const char_arg = symbols.TypeSpec.fromResolvedKind(.character, .character, null).withCharacterLength(.constant, 3);
+
+    const pack_inferred = try inferResultType("PACK", fixedTypeSpec(.real), &.{ char_arg, fixedTypeSpec(.logical) });
+    try testing.expectEqual(ast.TypeKind.character, pack_inferred.lowered_kind);
+    try testing.expectEqual(@as(?usize, 3), pack_inferred.char_len);
+
+    const eoshift_inferred = try inferResultType("EOSHIFT", fixedTypeSpec(.real), &.{ char_arg, fixedTypeSpec(.integer) });
+    try testing.expectEqual(ast.TypeKind.character, eoshift_inferred.lowered_kind);
+    try testing.expectEqual(@as(?usize, 3), eoshift_inferred.char_len);
 }

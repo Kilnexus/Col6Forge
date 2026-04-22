@@ -257,6 +257,10 @@ fn parseSelectTypeClauseSpec(
         .kind = kind,
         .stmts = &.{},
     };
+    if (lp.peekIs(.r_paren)) {
+        _ = lp.next();
+        return clause;
+    }
     const parsed: ?type_specs.ParsedTypeSpec = type_specs.parseTypeKind(lp, arena) catch |err| switch (err) {
         error.UnknownType => null,
         else => return err,

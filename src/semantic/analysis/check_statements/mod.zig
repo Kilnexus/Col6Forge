@@ -15,6 +15,7 @@ const procedure_calls = @import("procedure_calls.zig");
 const expr_semantics = @import("expr_semantics.zig");
 const abstract_expr_use = @import("abstract_expr_use.zig");
 const static_shapes = @import("static_shapes.zig");
+const assumed_size = @import("../assumed_size.zig");
 
 pub const CheckError = anyerror;
 
@@ -30,6 +31,12 @@ pub fn checkStmt(self: *context.Context, stmt: ast.Stmt) CheckError!void {
 pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void {
     switch (node) {
         .assignment => |assign| {
+            if (assumed_size.exprNeedsExplicitLastUpperBound(self, assign.target)) {
+                return assumed_size.emitExprDiagnostic(self, assign.target, "upper bound in the last dimension");
+            }
+            if (assumed_size.exprNeedsExplicitLastUpperBound(self, assign.value)) {
+                return assumed_size.emitExprDiagnostic(self, assign.value, "upper bound in the last dimension");
+            }
             if (procedure_calls.isCurrentUnitAmbiguousResultRef(self, assign.target)) return error.DuplicateDeclaration;
             if (procedure_calls.procedurePointerExprSig(self, assign.target) != null and
                 expr_semantics.isPointerTarget(self, assign.target))
@@ -73,6 +80,9 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             try rejectStaticShapeMismatch(self, assign.target, assign.value);
         },
         .pointer_assignment => |assign| {
+            if (assumed_size.exprNeedsExplicitLastUpperBound(self, assign.value)) {
+                return assumed_size.emitExprDiagnostic(self, assign.value, "upper bound in the last dimension");
+            }
             if (pointerAssignmentTargetIsAbstractInterfaceName(self, assign.target)) {
                 const source = self.sourceForExpr(assign.target) orelse ast.SourceRef{};
                 self.setDiagnostic(
@@ -271,6 +281,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             try procedure_calls.checkProcedureActualArgsForCall(self, call.name, call.args, .{
                 .dummyArgTypeCompatible = dummyArgTypeCompatible,
             });
+            try rejectElementalCallRankMismatch(self, call.name, call.args);
             for (call.args) |arg| {
                 switch (arg) {
                     .expr => |actual| try expr_semantics.checkExpr(self, actual.value, .{
@@ -286,6 +297,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             for (write.args) |arg| {
                 try expr_semantics.checkExpr(self, arg, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
                 try rejectProcedurePointerComponentIo(self, arg);
+                try rejectPolymorphicDataTransferIo(self, arg);
             }
             if (write.iostat) |io| try expr_semantics.checkExpr(self, io, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
         },
@@ -295,6 +307,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             for (read.args) |arg| {
                 try expr_semantics.checkExpr(self, arg, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
                 try rejectProcedurePointerComponentIo(self, arg);
+                try rejectPolymorphicDataTransferIo(self, arg);
             }
             if (read.iostat) |io| try expr_semantics.checkExpr(self, io, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
         },
@@ -465,6 +478,30 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
     }
 }
 
+fn rejectElementalCallRankMismatch(
+    self: *context.Context,
+    call_name: []const u8,
+    args: []const ast.CallArg,
+) CheckError!void {
+    const sig = resolve_symbols.lookupKnownProcedureSig(self, call_name) orelse return;
+    if (!sig.elemental) return;
+
+    var expected_rank: ?usize = null;
+    for (args, 0..) |arg, idx| {
+        if (arg != .expr) continue;
+        if (idx >= sig.args.len or sig.args[idx].rank != 0) continue;
+        const actual_rank = resolve_expr.exprRank(self, arg.expr.value);
+        if (actual_rank == 0) continue;
+        if (expected_rank == null) {
+            expected_rank = actual_rank;
+            continue;
+        }
+        if (expected_rank.? != actual_rank) {
+            return emitExprConstraint(self, arg.expr.value, "Incompatible ranks in elemental procedure");
+        }
+    }
+}
+
 fn rejectStaticShapeMismatch(
     self: *context.Context,
     target: *ast.Expr,
@@ -567,7 +604,7 @@ fn assignmentTargetAllowsPolymorphicIntrinsicAssignment(
         .identifier => |name| blk: {
             const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;
             const sym = self.symbols.items[idx];
-            break :blk sym.is_allocatable or sym.is_pointer;
+            break :blk sym.is_allocatable;
         },
         .component => |comp| blk: {
             if (comp.has_parens) break :blk false;
@@ -575,7 +612,7 @@ fn assignmentTargetAllowsPolymorphicIntrinsicAssignment(
             if (base_spec.lowered_kind != .derived) break :blk false;
             const derived_name = base_spec.derived_type_name orelse break :blk false;
             const component = resolve_symbols.lookupDerivedComponent(self, derived_name, comp.name) orelse break :blk false;
-            break :blk component.allocatable or component.pointer;
+            break :blk component.allocatable;
         },
         else => false,
     };
@@ -694,4 +731,10 @@ fn rejectProcedurePointerComponentIo(self: *context.Context, expr_node: *ast.Exp
         if (!component.procedure or !component.pointer) continue;
         return emitExprConstraint(self, expr_node, "cannot have procedure pointer components");
     }
+}
+
+fn rejectPolymorphicDataTransferIo(self: *context.Context, expr_node: *ast.Expr) CheckError!void {
+    const spec = resolve_expr.exprTypeSpec(self, expr_node) catch return;
+    if (spec.lowered_kind != .derived or !spec.polymorphic) return;
+    return emitExprConstraint(self, expr_node, "Data transfer element at .1. cannot be polymorphic");
 }

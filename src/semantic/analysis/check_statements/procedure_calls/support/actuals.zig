@@ -12,6 +12,7 @@ const context = @import("../../../context.zig");
 const constants = @import("../../../resolve_const.zig");
 const resolve_expr = @import("../../../resolve_expr.zig");
 const resolve_symbols = @import("../../../resolve_symbols.zig");
+const assumed_size = @import("../../../assumed_size.zig");
 const abstract_expr_use = @import("../../abstract_expr_use.zig");
 const leaf_helpers = @import("../../leaf_helpers.zig");
 const procedure_call_actual_traits = @import("../../procedure_call_actual_traits.zig");
@@ -52,7 +53,6 @@ const checkExplicitShapeElementSufficiency = sequence_association.checkExplicitS
 const sequenceAssociationAvailableElements = sequence_association.sequenceAssociationAvailableElements;
 const formalRequiredElementCount = sequence_association.formalRequiredElementCount;
 const emitTooFewActualElementsDiagnostic = sequence_association.emitTooFewActualElementsDiagnostic;
-
 
 pub fn sourceFromDirectUseModule(self: *context.Context, source: ast.DeclSource) bool {
     const owner_name = source.owner_name orelse return false;
@@ -398,6 +398,9 @@ pub fn checkDataActualArgCompatibility(
     const skip_no_arg_check_compat = formal.no_arg_check;
     const actual_rank = procedureActualExprRank(self, actual_expr);
     const actual_spec = try resolve_expr.exprTypeSpec(self, actual_expr);
+    if (!skip_no_arg_check_compat) {
+        try checkAllocatablePolymorphicActualConstraint(self, callee_name, formal, actual_expr, actual_spec);
+    }
     if (!skip_no_arg_check_compat and actual_spec.assumed_type and !formal.type_spec.assumed_type) {
         const message = std.fmt.allocPrint(
             self.arena,
@@ -434,6 +437,9 @@ pub fn checkDataActualArgCompatibility(
     if (skip_no_arg_check_compat) return;
     if (formal.assumed_rank) return;
     if (formal.rank == 0 and actual_rank > 0 and calleeAllowsElementalArrayActuals(self, callee_name)) {
+        if (assumed_size.exprNeedsExplicitLastUpperBound(self, actual_expr)) {
+            return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "upper bound in the last dimension");
+        }
         return;
     }
     if (formal.rank == actual_rank) {
@@ -451,6 +457,48 @@ pub fn checkDataActualArgCompatibility(
         }
     }
     return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "Rank mismatch in argument");
+}
+
+fn checkAllocatablePolymorphicActualConstraint(
+    self: *context.Context,
+    callee_name: ?[]const u8,
+    formal: context.Context.ProcedureSig.ArgSig,
+    actual_expr: *ast.Expr,
+    actual_spec: symbols.TypeSpec,
+) CheckError!void {
+    if (!formal.allocatable or !formal.type_spec.polymorphic) return;
+    if (formal.type_spec.lowered_kind != .derived or actual_spec.lowered_kind != .derived) return;
+
+    if (!actual_spec.polymorphic) {
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "must be polymorphic");
+    }
+    if (!exprIsAllocatableActual(self, actual_expr)) {
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "must be ALLOCATABLE");
+    }
+
+    const formal_name = formal.type_spec.derived_type_name orelse return;
+    const actual_name = actual_spec.derived_type_name orelse return;
+    if (!std.ascii.eqlIgnoreCase(formal_name, actual_name)) {
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "must have the same declared type");
+    }
+}
+
+fn exprIsAllocatableActual(self: *context.Context, expr_node: *ast.Expr) bool {
+    return switch (expr_node.*) {
+        .identifier => |name| blk: {
+            const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;
+            break :blk self.symbols.items[idx].is_allocatable;
+        },
+        .component => |comp| blk: {
+            if (comp.has_parens) break :blk false;
+            const base_spec = resolve_expr.exprTypeSpec(self, comp.base) catch break :blk false;
+            if (base_spec.lowered_kind != .derived) break :blk false;
+            const derived_name = base_spec.derived_type_name orelse break :blk false;
+            const component = resolve_symbols.lookupDerivedComponent(self, derived_name, comp.name) orelse break :blk false;
+            break :blk component.allocatable;
+        },
+        else => false,
+    };
 }
 
 pub fn shouldWarnExternalExplicitInterfaceActualTypeMismatch(
@@ -820,6 +868,7 @@ pub fn functionResultTypeMismatchMessage(
     comptime deps: anytype,
 ) ?[]const u8 {
     if (expected.lowered_kind == .character and actual.lowered_kind == .character) {
+        if (expected.char_len_kind == .assumed) return null;
         if (expected.char_len_kind != actual.char_len_kind or expected.char_len != actual.char_len) {
             return "Character length mismatch in function result";
         }
@@ -843,4 +892,3 @@ pub fn passingGlobalProcedureMessage(kind: ast.ProgramUnitKind) []const u8 {
         else => "wrong procedure kind",
     };
 }
-

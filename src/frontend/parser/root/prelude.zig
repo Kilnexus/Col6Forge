@@ -525,6 +525,7 @@ fn renameDerivedTypeDef(
         .procedure_components = procedure_components,
         .procedure_component_sources = derived.procedure_component_sources,
         .bindings = bindings,
+        .final_subroutines = derived.final_subroutines,
     };
 }
 

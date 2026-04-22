@@ -55,6 +55,7 @@ pub fn checkAssociateBlock(self: *context.Context, associate: ast.AssociateBlock
             spec,
             selectorRankForAssociateAlias(self, binding.selector),
             binding_ok[idx] and associateSelectorMayBeVariable(binding.selector) and expr_semantics.selectorIsDefinableAlias(self, binding.selector),
+            resolve_symbols.aliasAttrsForSelector(self, binding.selector),
         );
     }
     for (associate.stmts) |inner| {
@@ -294,7 +295,14 @@ pub fn checkSelectTypeBlock(self: *context.Context, select_type: ast.SelectTypeB
             defer self.popScope();
             if (alias_name) |name| {
                 if (alias_spec) |spec| {
-                    _ = try resolve_symbols.installAliasSymbol(self, name, spec, selector_rank, alias_definable);
+                    _ = try resolve_symbols.installAliasSymbol(
+                        self,
+                        name,
+                        spec,
+                        selector_rank,
+                        alias_definable,
+                        resolve_symbols.aliasAttrsForSelector(self, select_type.selector),
+                    );
                 }
             }
             for (clause.stmts) |inner| {

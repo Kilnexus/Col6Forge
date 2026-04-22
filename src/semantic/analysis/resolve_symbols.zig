@@ -9,8 +9,14 @@ const SymbolKind = symbols.SymbolKind;
 const Symbol = symbols.Symbol;
 const CharacterLengthKind = symbols.CharacterLengthKind;
 const TypeSpec = symbols.TypeSpec;
+const ResolvedRefKind = symbols.ResolvedRefKind;
 const MAX_IDENT_LEN: usize = 64;
 const lowerDup = case_insensitive.lowerDup;
+
+pub const AliasAttrs = struct {
+    is_pointer: bool = false,
+    is_target: bool = false,
+};
 
 pub fn initImplicitDefaults(self: *context.Context) !void {
     try self.implicit.append(symbols.ImplicitRule.init('I', 'N', TypeSpec.fromResolvedKind(.integer, .integer, null)));
@@ -106,6 +112,30 @@ fn lookupOverrideBinding(
         }
     }
     return null;
+}
+
+pub fn derivedTypeHasImpureFinalizer(self: *const context.Context, type_name: []const u8) bool {
+    var current = lookupDerivedType(self, type_name) orelse return false;
+    while (true) {
+        for (current.final_subroutines) |final_name| {
+            const sig = lookupQualifiedProcedureSig(self, current.source.owner_name, final_name) orelse
+                getLowercaseMapValue(context.Context.ProcedureSig, self.known_procedure_sigs, final_name) orelse
+                return true;
+            if (!sig.pure) return true;
+        }
+        const parent_name = current.parent_name orelse return false;
+        current = lookupDerivedType(self, parent_name) orelse return false;
+    }
+}
+
+pub fn lookupQualifiedProcedureSig(
+    self: *const context.Context,
+    owner_name: ?[]const u8,
+    proc_name: []const u8,
+) ?context.Context.ProcedureSig {
+    const owner = owner_name orelse return null;
+    const qualified = std.fmt.allocPrint(self.arena, "{s}::{s}", .{ owner, proc_name }) catch return null;
+    return getLowercaseMapValue(context.Context.ProcedureSig, self.known_procedure_sigs, qualified);
 }
 
 pub fn isSameOrExtension(self: *const context.Context, candidate: []const u8, base: []const u8) bool {
@@ -391,6 +421,7 @@ pub fn installAliasSymbol(
     spec: TypeSpec,
     rank: usize,
     alias_definable: bool,
+    attrs: AliasAttrs,
 ) !usize {
     const dims: []*ast.Expr = if (rank == 0) &.{} else blk: {
         const out = try self.arena.alloc(*ast.Expr, rank);
@@ -406,7 +437,43 @@ pub fn installAliasSymbol(
     symbol.type_explicit = true;
     symbol.is_alias = true;
     symbol.alias_definable = alias_definable;
+    symbol.is_pointer = attrs.is_pointer;
+    symbol.is_target = attrs.is_target;
     return internSymbol(self, symbol);
+}
+
+pub fn aliasAttrsForSelector(self: *context.Context, expr: *ast.Expr) AliasAttrs {
+    return switch (expr.*) {
+        .identifier => |name| blk: {
+            const idx = findSymbolIndex(self, name) orelse break :blk .{};
+            const sym = self.symbols.items[idx];
+            break :blk .{
+                .is_pointer = sym.is_pointer,
+                .is_target = sym.is_target,
+            };
+        },
+        .component => |comp| aliasAttrsForSelector(self, comp.base),
+        .substring => |sub| blk: {
+            const idx = findSymbolIndex(self, sub.name) orelse break :blk .{};
+            const sym = self.symbols.items[idx];
+            break :blk .{
+                .is_pointer = sym.is_pointer,
+                .is_target = sym.is_target,
+            };
+        },
+        .call_or_subscript => |call| blk: {
+            const idx = findSymbolIndex(self, call.name) orelse break :blk .{};
+            const sym = self.symbols.items[idx];
+            const kind = self.ref_kind_index.get(@intFromPtr(expr)) orelse
+                (if (sym.dims.len > 0) ResolvedRefKind.subscript else ResolvedRefKind.call);
+            if (kind != .subscript) break :blk .{};
+            break :blk .{
+                .is_pointer = sym.is_pointer,
+                .is_target = sym.is_target,
+            };
+        },
+        else => .{},
+    };
 }
 
 pub fn internSymbol(self: *context.Context, symbol: Symbol) !usize {

@@ -334,6 +334,7 @@ pub const Parser = struct {
         var procedure_components = std.array_list.Managed(ast.ProcedureDecl).init(self.arena);
         var procedure_component_sources = std.array_list.Managed(DeclSource).init(self.arena);
         var bindings = std.array_list.Managed(ast.TypeBoundProcedureBinding).init(self.arena);
+        var final_subroutines = std.array_list.Managed([]const u8).init(self.arena);
         var in_contains = false;
         var sequence = false;
         var saw_binding_stmt = false;
@@ -387,6 +388,7 @@ pub const Parser = struct {
                     .procedure_components = try procedure_components.toOwnedSlice(),
                     .procedure_component_sources = try procedure_component_sources.toOwnedSlice(),
                     .bindings = try bindings.toOwnedSlice(),
+                    .final_subroutines = try final_subroutines.toOwnedSlice(),
                 } };
             }
             var body_lp = LineParser.init(line, tokens);
@@ -434,6 +436,14 @@ pub const Parser = struct {
                     try bindings.append(stored);
                 }
                 saw_binding_stmt = true;
+            } else if (in_contains and body_lp.isKeywordSplit("FINAL")) {
+                const final_names = root_header.parseTypeBoundFinalBindings(self.arena, &body_lp) catch |err| {
+                    root_diagnostics.setParseDiagnosticFromStream(self.diag_bag, line, body_lp, err);
+                    return err;
+                };
+                for (final_names) |name| {
+                    try final_subroutines.append(name);
+                }
             } else if (in_contains and body_lp.isKeywordSplit("PROCEDURE")) {
                 const type_bound_bindings = root_header.parseTypeBoundProcedureBindings(self.arena, &body_lp) catch |err| {
                     root_diagnostics.setParseDiagnosticFromStream(self.diag_bag, line, body_lp, err);

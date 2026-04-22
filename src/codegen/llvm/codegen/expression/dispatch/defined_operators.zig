@@ -34,10 +34,11 @@ pub fn emitDefinedBinaryOperatorExprCall(
 ) EmitError!?ValueRef {
     const generic_name = resolution.binaryDefinedOperatorName(bin.op) orelse return null;
     if (binaryUsesIntrinsicCodegen(ctx, bin.op, bin.left, bin.right)) return null;
-    const proc_name = resolution.resolveSingleTargetGenericProcedureName(ctx, generic_name) orelse return null;
+    const resolved = resolveDefinedBinaryProcedure(ctx, generic_name, bin.left) orelse return null;
     var actuals = [_]*Expr{ bin.left, bin.right };
-    const fn_name = try resolution.ensureExternalDeclForCall(ctx, proc_name, .i1, &actuals, false);
-    return try call.emitCall(ctx, builder, fn_name, .i1, &actuals, false);
+    const ret_ty = definedBinaryOperatorReturnType(ctx, resolved);
+    const fn_name = try resolution.ensureExternalDeclForResolvedCall(ctx, resolved.lookup_name, resolved.ir_name, ret_ty, &actuals, false);
+    return try call.emitCall(ctx, builder, fn_name, ret_ty, &actuals, false);
 }
 
 pub fn emitDefinedBinaryOperatorValueCall(
@@ -98,11 +99,65 @@ fn binaryUsesIntrinsicCodegen(
     right: *Expr,
 ) bool {
     switch (op) {
-        .eq, .ne, .lt, .le, .gt, .ge => {},
-        else => return true,
+        .eq, .ne, .lt, .le, .gt, .ge => {
+            const left_kind = resolution.roughExprKind(ctx, left);
+            const right_kind = resolution.roughExprKind(ctx, right);
+            return (resolution.isNumericKind(left_kind) and resolution.isNumericKind(right_kind)) or
+                (left_kind == .logical and right_kind == .logical);
+        },
+        .and_, .or_, .eqv, .neqv => {
+            const left_kind = resolution.roughExprKind(ctx, left);
+            const right_kind = resolution.roughExprKind(ctx, right);
+            return left_kind == .logical and right_kind == .logical;
+        },
+        .concat => {
+            const left_kind = resolution.roughExprKind(ctx, left);
+            const right_kind = resolution.roughExprKind(ctx, right);
+            return left_kind == .character and right_kind == .character;
+        },
+        .add, .sub, .mul, .div, .power => {
+            const left_kind = resolution.roughExprKind(ctx, left);
+            const right_kind = resolution.roughExprKind(ctx, right);
+            return resolution.isNumericKind(left_kind) and resolution.isNumericKind(right_kind);
+        },
     }
-    const left_kind = resolution.roughExprKind(ctx, left);
-    const right_kind = resolution.roughExprKind(ctx, right);
-    return (resolution.isNumericKind(left_kind) and resolution.isNumericKind(right_kind)) or
-        (left_kind == .logical and right_kind == .logical);
+}
+
+fn resolveDefinedBinaryProcedure(
+    ctx: *Context,
+    generic_name: []const u8,
+    left: *Expr,
+) ?resolution.ResolvedGenericProcedure {
+    if (resolution.resolveSingleTargetGenericProcedure(ctx, generic_name)) |resolved| return resolved;
+    return resolveTypeBoundBinaryProcedure(ctx, generic_name, left);
+}
+
+fn resolveTypeBoundBinaryProcedure(
+    ctx: *Context,
+    generic_name: []const u8,
+    left: *Expr,
+) ?resolution.ResolvedGenericProcedure {
+    const type_name = ctx.derivedTypeNameForExpr(left) orelse return null;
+    const generic_binding = ctx.lookupDerivedBinding(type_name, generic_name) orelse return null;
+    const specific_name = generic_binding.implementation_name orelse return null;
+    const specific_binding = ctx.lookupDerivedBinding(type_name, specific_name) orelse return null;
+    const proc_name = specific_binding.implementation_name orelse specific_binding.interface_name orelse specific_binding.name;
+    const lookup_name = resolution.boundProcedureLookupName(ctx, specific_binding, proc_name) catch return null;
+    const sig = ctx.lookupKnownProcedureSig(lookup_name) orelse ctx.lookupKnownProcedureSig(proc_name) orelse return null;
+    const ir_name = resolution.boundProcedureIRName(ctx, specific_binding, proc_name) catch return null;
+    return .{
+        .procedure_name = proc_name,
+        .lookup_name = lookup_name,
+        .ir_name = ir_name,
+        .sig = sig,
+    };
+}
+
+fn definedBinaryOperatorReturnType(
+    ctx: *Context,
+    resolved: resolution.ResolvedGenericProcedure,
+) @import("../../../../ir.zig").IRType {
+    if (resolved.sig.result_type_spec) |type_spec| return ctx.typeFromKind(type_spec.lowered_kind);
+    if (ctx.findSymbol(resolved.procedure_name)) |sym| return ctx.typeFromKind(sym.loweredKind());
+    return .ptr;
 }

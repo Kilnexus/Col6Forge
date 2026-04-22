@@ -12,14 +12,42 @@ pub fn staticShapeForExpr(self: *context.Context, expr_node: *ast.Expr) ?[]const
             break :blk staticShapeForDims(self, self.symbols.items[idx].dims);
         },
         .array_constructor => |ctor| blk: {
+            const count = staticArrayConstructorElementCount(self, ctor) orelse break :blk null;
             const out = self.arena.alloc(i64, 1) catch return null;
-            out[0] = @intCast(ctor.items.len);
+            out[0] = count;
             break :blk out;
         },
         .call_or_subscript => |call| staticShapeForCallOrSubscript(self, expr_node, call),
         .substring => |sub| staticShapeForSubstring(self, sub),
+        .unary => |un| staticShapeForExpr(self, un.expr),
+        .binary => |bin| staticShapeForBinary(self, bin),
+        .implied_do => |implied| blk: {
+            const count = staticImpliedDoElementCount(self, implied) orelse break :blk null;
+            const out = self.arena.alloc(i64, 1) catch return null;
+            out[0] = count;
+            break :blk out;
+        },
         else => null,
     };
+}
+
+fn staticShapeForBinary(
+    self: *context.Context,
+    bin: ast.BinaryExpr,
+) ?[]const i64 {
+    const left_rank = resolve_expr.exprRank(self, bin.left);
+    const right_rank = resolve_expr.exprRank(self, bin.right);
+    if (left_rank == 0 and right_rank == 0) return null;
+    if (left_rank == 0) return staticShapeForExpr(self, bin.right);
+    if (right_rank == 0) return staticShapeForExpr(self, bin.left);
+
+    const left_shape = staticShapeForExpr(self, bin.left) orelse return null;
+    const right_shape = staticShapeForExpr(self, bin.right) orelse return null;
+    if (left_shape.len != right_shape.len) return null;
+    for (left_shape, right_shape) |lhs, rhs| {
+        if (lhs != rhs) return null;
+    }
+    return left_shape;
 }
 
 pub fn staticShapeForDims(self: *context.Context, dims: []*ast.Expr) ?[]const i64 {
@@ -189,6 +217,59 @@ fn staticDimExtent(self: *context.Context, expr_node: *ast.Expr) ?i64 {
         },
         else => staticIntValue(self, expr_node),
     };
+}
+
+fn staticArrayConstructorElementCount(
+    self: *context.Context,
+    ctor: ast.ArrayConstructor,
+) ?i64 {
+    var total: i64 = 0;
+    for (ctor.items) |item| {
+        const count = staticElementCountForExpr(self, item) orelse return null;
+        total = std.math.add(i64, total, count) catch return null;
+    }
+    return total;
+}
+
+fn staticImpliedDoElementCount(
+    self: *context.Context,
+    implied: ast.ImpliedDo,
+) ?i64 {
+    const start = staticIntValue(self, implied.start) orelse return null;
+    const end = staticIntValue(self, implied.end) orelse return null;
+    const step = if (implied.step) |step_expr| staticIntValue(self, step_expr) orelse return null else 1;
+    const iterations = impliedDoIterationCount(start, end, step) orelse return null;
+
+    var per_iteration: i64 = 0;
+    for (implied.items) |item| {
+        const count = staticElementCountForExpr(self, item) orelse return null;
+        per_iteration = std.math.add(i64, per_iteration, count) catch return null;
+    }
+    return std.math.mul(i64, iterations, per_iteration) catch return null;
+}
+
+fn staticElementCountForExpr(self: *context.Context, expr_node: *ast.Expr) ?i64 {
+    if (resolve_expr.exprRank(self, expr_node) == 0) return 1;
+    const shape = staticShapeForExpr(self, expr_node) orelse return null;
+    return shapeElementCount(shape);
+}
+
+fn shapeElementCount(shape: []const i64) ?i64 {
+    var total: i64 = 1;
+    for (shape) |extent| {
+        total = std.math.mul(i64, total, extent) catch return null;
+    }
+    return total;
+}
+
+fn impliedDoIterationCount(start: i64, end: i64, step: i64) ?i64 {
+    if (step == 0) return null;
+    if (step > 0) {
+        if (start > end) return 0;
+        return @divTrunc(end - start, step) + 1;
+    }
+    if (start < end) return 0;
+    return @divTrunc(start - end, -step) + 1;
 }
 
 const AffineIntExpr = struct {

@@ -326,6 +326,31 @@ test "parseStatement handles free-form lowercase PRINT with inline string format
     try testing.expectEqual(@as(usize, 1), write_stmt.args.len);
 }
 
+test "parseStatement handles free-form PRINT list-directed without spaces" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "print *,x\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var idx: usize = 0;
+    var do_ctx = DoContext.init(arena.allocator());
+    var param_ints = std.StringHashMap(i64).init(arena.allocator());
+    var param_strings = std.StringHashMap(ast.Literal).init(arena.allocator());
+    var array_names = std.StringHashMap(array_info.ArrayInfo).init(arena.allocator());
+    const stmt_node = try parseStatement(arena.allocator(), lines, &idx, &do_ctx, &param_ints, &param_strings, &array_names);
+
+    try testing.expect(stmt_node.node == .write);
+    const write_stmt = stmt_node.node.write;
+    try testing.expect(write_stmt.format == .list_directed);
+    try testing.expectEqual(@as(usize, 1), write_stmt.args.len);
+    try testing.expect(write_stmt.args[0].* == .identifier);
+    try testing.expectEqualStrings("x", write_stmt.args[0].identifier);
+}
+
 test "lexer preserves free-form PRINT inline format and trailing comma as separate tokens" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -710,4 +735,3 @@ test "parseStatement logical IF advances by one line and does not skip follower"
     try testing.expectEqualStrings("0010", stmt3.label.?);
     try testing.expectEqual(@as(usize, 3), idx);
 }
-

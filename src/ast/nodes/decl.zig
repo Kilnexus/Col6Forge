@@ -44,6 +44,7 @@ pub const TypeDecl = struct {
     save: bool = false,
     allocatable: bool = false,
     pointer: bool = false,
+    target: bool = false,
     optional: bool = false,
     intent: ?IntentKind = null,
     external: bool = false,
@@ -115,6 +116,7 @@ pub const DerivedTypeDef = struct {
     procedure_components: []const ProcedureDecl = &.{},
     procedure_component_sources: []const @import("program.zig").DeclSource = &.{},
     bindings: []const TypeBoundProcedureBinding = &.{},
+    final_subroutines: []const []const u8 = &.{},
 };
 
 pub const TypeBoundProcedureBinding = struct {

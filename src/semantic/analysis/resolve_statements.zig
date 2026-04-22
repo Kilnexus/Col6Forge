@@ -303,6 +303,7 @@ fn resolveAssociateBlock(self: *context.Context, associate: ast.AssociateBlock) 
             spec,
             if (rank >= syntacticSectionRank(binding.selector)) rank else syntacticSectionRank(binding.selector),
             binding_ok[idx] and associateSelectorMayBeVariable(binding.selector),
+            symbols_mod.aliasAttrsForSelector(self, binding.selector),
         ) catch |err| {
             if (!self.usesExplicitDiagnosticBag()) return err;
             if (first_err == null) first_err = err;
@@ -357,7 +358,14 @@ fn resolveSelectTypeBlock(self: *context.Context, select_type: ast.SelectTypeBlo
                     if (!self.usesExplicitDiagnosticBag()) return err;
                     break :blk selector_spec;
                 };
-                _ = try symbols_mod.installAliasSymbol(self, alias_name, alias_spec, selector_rank, true);
+                _ = try symbols_mod.installAliasSymbol(
+                    self,
+                    alias_name,
+                    alias_spec,
+                    selector_rank,
+                    true,
+                    symbols_mod.aliasAttrsForSelector(self, select_type.selector),
+                );
             }
             for (clause.stmts) |inner| try resolveStmt(self, inner);
         }
@@ -811,6 +819,7 @@ fn bindKnownDataUseImportFromModule(
                         true,
                         type_decl.allocatable,
                         type_decl.pointer,
+                        type_decl.target,
                         type_decl.contiguous,
                     );
                     if (symbols_mod.findSymbolIndex(self, local_name)) |idx| {

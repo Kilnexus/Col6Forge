@@ -3,6 +3,7 @@ const ast = @import("../../ast/nodes.zig");
 const catalog = @import("../../common/error_catalog.zig");
 const symbols = @import("../symbol/mod.zig");
 const context = @import("context.zig");
+const symbols_mod = @import("resolve_symbols.zig");
 
 pub fn validateTypeDecl(
     self: *context.Context,
@@ -10,6 +11,7 @@ pub fn validateTypeDecl(
     declared_type: symbols.TypeSpec,
     sym: symbols.Symbol,
 ) !void {
+    try validatePureIntentOutPolymorphicFinalizerConstraint(self, decl, declared_type, sym);
     if (declared_type.lowered_kind != .derived or !declared_type.polymorphic) return;
     if (self.unit.kind == .function) {
         const result_name = self.unit.result_name orelse self.unit.name;
@@ -45,6 +47,31 @@ pub fn validateTypeDecl(
     return error.InvalidUnlimitedPolymorphicEntity;
 }
 
+fn validatePureIntentOutPolymorphicFinalizerConstraint(
+    self: *context.Context,
+    decl: ast.TypeDecl,
+    declared_type: symbols.TypeSpec,
+    sym: symbols.Symbol,
+) !void {
+    if (!self.unit.pure) return;
+    if (sym.storage != .dummy or decl.intent != .out) return;
+    if (declared_type.lowered_kind != .derived or !declared_type.polymorphic) return;
+    const derived_name = declared_type.derived_type_name orelse return;
+    if (!symbols_mod.derivedTypeHasImpureFinalizer(self, derived_name)) return;
+
+    const decl_source = self.current_decl_source orelse ast.DeclSource{};
+    self.setDiagnosticDetailed(
+        if (decl_source.line == 0) 1 else decl_source.line,
+        if (decl_source.column == 0) 1 else decl_source.column,
+        catalog.semantic.invalid_unlimited_polymorphic_entity.code,
+        "may not be polymorphic",
+        decl_source.text,
+        &.{.{ .text = "A PURE procedure may not have a polymorphic INTENT(OUT) dummy when finalization could invoke an impure FINAL subroutine." }},
+        &.{.{ .text = "Make the dummy nonpolymorphic, or make the FINAL subroutine PURE." }},
+    );
+    return error.InvalidUnlimitedPolymorphicEntity;
+}
+
 pub fn hasSeparateParameterSpec(self: *context.Context, target_name: []const u8) bool {
     for (self.unit.decls) |decl| {
         switch (decl) {
@@ -57,4 +84,25 @@ pub fn hasSeparateParameterSpec(self: *context.Context, target_name: []const u8)
         }
     }
     return false;
+}
+
+pub fn validateInitializer(
+    self: *context.Context,
+    decl: ast.TypeDecl,
+    declared_type: symbols.TypeSpec,
+    item: ast.Declarator,
+) !void {
+    if (!decl.allocatable or !declared_type.polymorphic or item.init == null) return;
+
+    const decl_source = self.current_decl_source orelse ast.DeclSource{};
+    self.setDiagnosticDetailed(
+        if (decl_source.line == 0) 1 else decl_source.line,
+        if (decl_source.column == 0) 1 else decl_source.column,
+        catalog.semantic.duplicate_declaration.code,
+        "cannot have an initializer",
+        decl_source.text,
+        &.{.{ .text = "An allocatable polymorphic entity may not have a declarator initializer." }},
+        &.{.{ .text = "Remove the initializer, or make the entity nonpolymorphic or nonallocatable." }},
+    );
+    return error.DuplicateDeclaration;
 }

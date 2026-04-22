@@ -3,6 +3,7 @@ const ast = @import("../../../ast/nodes.zig");
 const symbols = @import("../../symbol/mod.zig");
 const context = @import("../context.zig");
 const symbols_mod = @import("../resolve_symbols.zig");
+const type_bound_generics = @import("../type_bound_generics.zig");
 
 const ResolveError = anyerror;
 
@@ -148,6 +149,16 @@ fn lookupDefinedOperatorSig(
     if (symbols_mod.lookupKnownProcedureSig(self, op_name)) |sig| {
         if (sig.kind == .function and procedureSigMatchesActuals(self, sig, actuals, deps)) return sig;
     }
+    if (actuals.len != 0) {
+        if (try type_bound_generics.lookupTypeBoundGenericSig(
+            self,
+            op_name,
+            actuals[0],
+            actuals[1..],
+            .function,
+            .{ .dummyArgTypeCompatible = deps.dummyArgTypeCompatible },
+        )) |sig| return sig;
+    }
 
     var matched: ?context.Context.ProcedureSig = null;
     for (self.unit.decls) |decl| {
@@ -240,19 +251,29 @@ fn procedureSigMatchesActuals(
 
 fn unaryDefinedOperatorName(op: ast.UnaryOp) ?[]const u8 {
     return switch (op) {
+        .plus => "operator(+)",
+        .minus => "operator(-)",
         .not => "operator(.not.)",
-        else => null,
     };
 }
 
 fn binaryDefinedOperatorName(op: ast.BinaryOp) ?[]const u8 {
     return switch (op) {
+        .add => "operator(+)",
+        .sub => "operator(-)",
+        .mul => "operator(*)",
+        .div => "operator(/)",
+        .concat => "operator(//)",
+        .power => "operator(**)",
         .eq => "operator(==)",
         .ne => "operator(/=)",
         .lt => "operator(<)",
         .le => "operator(<=)",
         .gt => "operator(>)",
         .ge => "operator(>=)",
-        else => null,
+        .and_ => "operator(.and.)",
+        .or_ => "operator(.or.)",
+        .eqv => "operator(.eqv.)",
+        .neqv => "operator(.neqv.)",
     };
 }

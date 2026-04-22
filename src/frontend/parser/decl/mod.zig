@@ -247,6 +247,7 @@ pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
         .save = attrs.save,
         .allocatable = attrs.allocatable,
         .pointer = attrs.pointer,
+        .target = attrs.target,
         .optional = attrs.optional,
         .intent = attrs.intent,
         .external = attrs.external,

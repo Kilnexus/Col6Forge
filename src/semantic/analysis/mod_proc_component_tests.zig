@@ -222,6 +222,78 @@ test "write rejects derived type with procedure pointer component" {
     try testing.expect(std.mem.indexOf(u8, got.message, "cannot have procedure pointer components") != null);
 }
 
+test "write rejects polymorphic data transfer element" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  type :: t\n" ++
+        "    integer :: i = 5\n" ++
+        "  end type\n" ++
+        "  class(t), allocatable :: x\n" ++
+        "  allocate(t :: x)\n" ++
+        "  print *, x\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = split_api.analyzeProgram(arena.allocator(), program) catch {};
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "cannot be polymorphic") != null);
+}
+
+test "write rejects polymorphic data transfer element in implicit main form" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "type t\n" ++
+        "  integer :: ii = 5\n" ++
+        "end type t\n" ++
+        "class(t), allocatable :: x\n" ++
+        "allocate (t :: x)\n" ++
+        "\n" ++
+        "print *,x\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = split_api.analyzeProgram(arena.allocator(), program) catch {};
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "cannot be polymorphic") != null);
+}
+
+test "repository class_24 rejects polymorphic data transfer element" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = try std.fs.cwd().readFileAlloc(allocator, "tests/gcc-tests/gfortran.dg/class_24.f03", 1024 * 1024);
+    defer allocator.free(source);
+
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    diag.clear();
+    _ = split_api.analyzeProgram(arena.allocator(), program) catch {};
+    const got = diag.take() orelse return error.TestExpectedEqual;
+    try testing.expect(std.mem.indexOf(u8, got.message, "cannot be polymorphic") != null);
+}
+
 test "procedure pointer assignment rejects mismatched passed-object dummy interface" {
     const testing = std.testing;
     const allocator = testing.allocator;

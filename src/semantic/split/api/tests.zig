@@ -219,6 +219,39 @@ test "analyzeProgram accepts pointer assignment from single-target generic funct
     try testing.expect(diagnostic.take() == null);
 }
 
+test "analyzeProgramWithKnownAndOptionsAndDiagnostics rejects polymorphic print data transfer element" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = try std.fs.cwd().readFileAlloc(allocator, "tests/gcc-tests/gfortran.dg/class_24.f03", 1024 * 1024);
+    defer allocator.free(source);
+
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+    var diag_bag = diagnostic.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    try testing.expectError(
+        error.AssignmentTypeMismatch,
+        analyzeProgramWithKnownAndOptionsAndDiagnostics(
+            arena.allocator(),
+            program,
+            &.{},
+            &.{},
+            .{},
+            &diag_bag,
+        ),
+    );
+
+    const diag_info = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(diag_info);
+    try testing.expect(std.mem.indexOf(u8, diag_info.message, "cannot be polymorphic") != null);
+}
+
 test "inferProcedureArgSigs marks implicit dummy procedure arguments from call usage" {
     const testing = std.testing;
     const allocator = testing.allocator;

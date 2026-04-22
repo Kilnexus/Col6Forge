@@ -48,6 +48,9 @@ pub fn isCharacterExpr(ctx: *Context, expr: *Expr) bool {
         },
         .call_or_subscript => |call_or_sub| blk: {
             if (isRepeatIntrinsicName(call_or_sub.name) and call_or_sub.args.len == 2) break :blk true;
+            if (intrinsicCharacterResultSourceExpr(call_or_sub)) |source_expr| {
+                break :blk isCharacterExpr(ctx, source_expr);
+            }
             const sym = ctx.findSymbol(call_or_sub.name) orelse break :blk false;
             break :blk sym.isCharacter();
         },
@@ -59,6 +62,19 @@ pub fn isCharacterExpr(ctx: *Context, expr: *Expr) bool {
         .implied_do => |implied| implied.items.len != 0 and isCharacterExpr(ctx, implied.items[0]),
         else => false,
     };
+}
+
+fn intrinsicCharacterResultSourceExpr(call_or_sub: ast.CallOrSubscript) ?*Expr {
+    if (call_or_sub.args.len == 0) return null;
+    if (std.ascii.eqlIgnoreCase(call_or_sub.name, "pack") or
+        std.ascii.eqlIgnoreCase(call_or_sub.name, "reshape") or
+        std.ascii.eqlIgnoreCase(call_or_sub.name, "cshift") or
+        std.ascii.eqlIgnoreCase(call_or_sub.name, "eoshift") or
+        std.ascii.eqlIgnoreCase(call_or_sub.name, "merge"))
+    {
+        return call_or_sub.args[0];
+    }
+    return null;
 }
 
 pub fn constantCharacterLenForExpr(ctx: *Context, expr: *Expr) ?usize {
@@ -83,6 +99,9 @@ pub fn constantCharacterLenForExpr(ctx: *Context, expr: *Expr) ?usize {
                 if (repeat_count < 0) return null;
                 const repeat_usize = std.math.cast(usize, repeat_count) orelse return null;
                 return std.math.mul(usize, base_len, repeat_usize) catch null;
+            }
+            if (intrinsicCharacterResultSourceExpr(call_or_sub)) |source_expr| {
+                return constantCharacterLenForExpr(ctx, source_expr);
             }
             var kind = ctx.ref_kinds.get(@as(usize, @intFromPtr(expr))) orelse .unknown;
             const sym = ctx.findSymbol(call_or_sub.name) orelse return null;
@@ -308,6 +327,22 @@ pub fn emitCharacterValuePlanImpl(
                 });
             }
             const sym = ctx.findSymbol(call_or_sub.name) orelse return null;
+            if (sym.is_intrinsic) {
+                if (intrinsicCharacterResultSourceExpr(call_or_sub)) |source_expr| {
+                    if (!isCharacterExpr(ctx, source_expr)) return null;
+                    const ptr = try intrinsics.emitIntrinsicCall(ctx, builder, call_or_sub.name, call_or_sub.args);
+                    const len_val = (try emitCharacterLenValueImpl(ctx, builder, source_expr, subst_depth)) orelse return null;
+                    const const_len = constantCharacterLenForExpr(ctx, source_expr);
+                    return try shared.validatedCharacterValuePlan(.{
+                        .ptr = .{ .name = ptr.name, .ty = .ptr, .is_ptr = true },
+                        .logical_len = len_val,
+                        .storage_len = len_val,
+                        .logical_len_const = const_len,
+                        .storage_len_const = const_len,
+                        .kind = .function_result,
+                    });
+                }
+            }
             if (!sym.isCharacter()) return null;
             var kind = ctx.ref_kinds.get(@as(usize, @intFromPtr(expr))) orelse .unknown;
             if (kind == .unknown) {
@@ -612,6 +647,9 @@ fn emitCharacterLenValueImpl(ctx: *Context, builder: anytype, expr: *Expr, subst
                 isCharacterExpr(ctx, call_or_sub.args[1]))
             {
                 return emitCharacterLenValueImpl(ctx, builder, call_or_sub.args[1], subst_depth);
+            }
+            if (intrinsicCharacterResultSourceExpr(call_or_sub)) |source_expr| {
+                return emitCharacterLenValueImpl(ctx, builder, source_expr, subst_depth);
             }
             const sym = ctx.findSymbol(call_or_sub.name) orelse return null;
             if (!sym.isCharacter()) return null;

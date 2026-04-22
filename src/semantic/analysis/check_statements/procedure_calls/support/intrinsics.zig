@@ -11,6 +11,7 @@ const context = @import("../../../context.zig");
 const constants = @import("../../../resolve_const.zig");
 const resolve_expr = @import("../../../resolve_expr.zig");
 const resolve_symbols = @import("../../../resolve_symbols.zig");
+const assumed_size = @import("../../../assumed_size.zig");
 const abstract_expr_use = @import("../../abstract_expr_use.zig");
 const leaf_helpers = @import("../../leaf_helpers.zig");
 const procedure_call_actual_traits = @import("../../procedure_call_actual_traits.zig");
@@ -146,6 +147,24 @@ fn checkIntrinsicSpecialActualRestriction(
             return emitIntrinsicArgDiagnostic(self, expr_node, "Assumed-type argument at (1) is not permitted as actual argument to the intrinsic transfer");
         }
         return emitIntrinsicArgDiagnostic(self, expr_node, "Assumed-type argument at (1) is only permitted as actual argument to intrinsic inquiry functions");
+    }
+    if (assumed_size.exprHasAssumedSizeArray(self, expr_node)) {
+        if (actual_idx == 0 and std.ascii.eqlIgnoreCase(name, "lbound")) return;
+        if (actual_idx == 0 and std.ascii.eqlIgnoreCase(name, "loc")) return;
+        if (actual_idx == 0 and std.ascii.eqlIgnoreCase(name, "shape")) {
+            if (assumed_size.exprNeedsExplicitLastUpperBound(self, expr_node)) {
+                return emitIntrinsicArgDiagnostic(self, expr_node, assumed_size.shapeAssumedSizeMessage(self, expr_node));
+            }
+            return;
+        }
+        if (actual_idx == 0 and
+            (std.ascii.eqlIgnoreCase(name, "size") or std.ascii.eqlIgnoreCase(name, "ubound")))
+        {
+            return;
+        }
+        if (assumed_size.exprNeedsExplicitLastUpperBound(self, expr_node)) {
+            return emitIntrinsicArgDiagnostic(self, expr_node, "upper bound in the last dimension");
+        }
     }
 }
 

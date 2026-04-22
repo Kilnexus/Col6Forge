@@ -551,6 +551,22 @@ pub fn parseTypeBoundGenericBindings(
     return out.toOwnedSlice();
 }
 
+pub fn parseTypeBoundFinalBindings(
+    arena: std.mem.Allocator,
+    lp: *LineParser,
+) ![]const []const u8 {
+    if (!lp.consumeKeyword("FINAL")) return error.UnexpectedToken;
+    _ = consumeDoubleColon(lp);
+
+    var out = std.array_list.Managed([]const u8).init(arena);
+    while (true) {
+        const name = lp.readName(arena) orelse return error.MissingName;
+        try out.append(name);
+        if (!lp.consume(.comma)) break;
+    }
+    return out.toOwnedSlice();
+}
+
 fn parseGenericBindingName(arena: std.mem.Allocator, lp: *LineParser) !?[]const u8 {
     const base_name = lp.readName(arena) orelse return null;
     if (!std.ascii.eqlIgnoreCase(base_name, "OPERATOR") and !std.ascii.eqlIgnoreCase(base_name, "ASSIGNMENT")) {

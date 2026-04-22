@@ -99,20 +99,30 @@ pub fn isNumericKind(kind: ast.TypeKind) bool {
 
 pub fn unaryDefinedOperatorName(op: ast.UnaryOp) ?[]const u8 {
     return switch (op) {
+        .plus => "operator(+)",
+        .minus => "operator(-)",
         .not => "operator(.not.)",
-        else => null,
     };
 }
 
 pub fn binaryDefinedOperatorName(op: ast.BinaryOp) ?[]const u8 {
     return switch (op) {
+        .add => "operator(+)",
+        .sub => "operator(-)",
+        .mul => "operator(*)",
+        .div => "operator(/)",
+        .concat => "operator(//)",
+        .power => "operator(**)",
         .eq => "operator(==)",
         .ne => "operator(/=)",
         .lt => "operator(<)",
         .le => "operator(<=)",
         .gt => "operator(>)",
         .ge => "operator(>=)",
-        else => null,
+        .and_ => "operator(.and.)",
+        .or_ => "operator(.or.)",
+        .eqv => "operator(.eqv.)",
+        .neqv => "operator(.neqv.)",
     };
 }
 

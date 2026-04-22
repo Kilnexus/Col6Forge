@@ -18,6 +18,7 @@ const interfaces = @import("interfaces.zig");
 const equivalence = @import("equivalence.zig");
 const procedure_interfaces = @import("../check_statements/procedure_interfaces.zig");
 const bind_c_shared = @import("bind_c_shared.zig");
+const assumed_size = @import("../assumed_size.zig");
 
 const resolvedDeclTypeSpec = helpers.resolvedDeclTypeSpec;
 const ensureImplicitRuleNoOverlap = helpers.ensureImplicitRuleNoOverlap;
@@ -135,6 +136,7 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                     emitDuplicateDimensionDiagnostic(self, item.name);
                     return error.DuplicateDeclaration;
                 }
+                try assumed_size.validateDeclaratorDims(self, item, self.symbols.items[idx].storage);
                 self.symbols.items[idx].dims = item.dims;
                 if (dim.allocatable) {
                     self.symbols.items[idx].is_allocatable = true;
@@ -191,7 +193,7 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
         .common => |common| {
             for (common.blocks) |block| {
                 for (block.items) |item| {
-                    try decls.applyDeclarator(self, symbols_mod.implicitTypeSpec(self, item.name), item, .common, false, false, false, false);
+                    try decls.applyDeclarator(self, symbols_mod.implicitTypeSpec(self, item.name), item, .common, false, false, false, false, false);
                 }
             }
         },
@@ -442,6 +444,10 @@ fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDef) !
         if (!self.usesExplicitDiagnosticBag()) return err;
         if (first_error == null) first_error = err;
     }
+    if (validateSequenceOrBindCPolymorphicComponents(self, derived)) |err| {
+        if (!self.usesExplicitDiagnosticBag()) return err;
+        if (first_error == null) first_error = err;
+    }
     if (validateBindCInteroperableComponents(self, derived)) |err| {
         if (!self.usesExplicitDiagnosticBag()) return err;
         if (first_error == null) first_error = err;
@@ -586,6 +592,35 @@ fn validateBindCInteroperableComponents(
         setSourceDiagnostic(self, source, "procedure pointer component cannot be a member of a BIND(C) derived type");
         if (!self.usesExplicitDiagnosticBag()) return error.UnexpectedTypeDecl;
         if (first_error == null) first_error = error.UnexpectedTypeDecl;
+    }
+
+    return first_error;
+}
+
+fn validateSequenceOrBindCPolymorphicComponents(
+    self: *context.Context,
+    derived: ast.DerivedTypeDef,
+) ?anyerror {
+    if (!derived.sequence and !derived.bind_c) return null;
+
+    var first_error: ?anyerror = null;
+    for (derived.components, 0..) |type_decl, component_idx| {
+        if (!type_decl.polymorphic) continue;
+        const source = if (component_idx < derived.component_sources.len)
+            derived.component_sources[component_idx]
+        else
+            self.current_decl_source orelse ast.DeclSource{};
+
+        for (type_decl.items) |item| {
+            const message = std.fmt.allocPrint(
+                self.arena,
+                "Polymorphic component {s} at .1. in SEQUENCE or BIND(C) type",
+                .{item.name},
+            ) catch "Polymorphic component at .1. in SEQUENCE or BIND(C) type";
+            setSourceDiagnostic(self, source, message);
+            if (!self.usesExplicitDiagnosticBag()) return error.UnexpectedTypeDecl;
+            if (first_error == null) first_error = error.UnexpectedTypeDecl;
+        }
     }
 
     return first_error;

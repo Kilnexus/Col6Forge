@@ -24,7 +24,20 @@ pub fn resolveAllocateTargetInfo(self: *context.Context, expr: *ast.Expr) CheckE
                 .rank = sym.dims.len,
                 .allocatable = sym.is_allocatable,
                 .pointer = sym.is_pointer,
-                .procedure = sym.kind == .function or sym.kind == .subroutine,
+                .procedure = !currentFunctionResultDesignatorIsDataEntity(self, name) and (sym.kind == .function or sym.kind == .subroutine),
+            };
+        },
+        .call_or_subscript => |call| blk: {
+            const idx = resolve_symbols.findSymbolIndex(self, call.name) orelse return error.UnknownSymbol;
+            const sym = self.symbols.items[idx];
+            const kind = self.ref_kind_index.get(@intFromPtr(expr)) orelse
+                (if (sym.dims.len > 0) symbols.ResolvedRefKind.subscript else symbols.ResolvedRefKind.call);
+            if (kind != .subscript) return error.UnsupportedAllocateSyntax;
+            break :blk .{
+                .rank = sym.dims.len,
+                .allocatable = sym.is_allocatable,
+                .pointer = sym.is_pointer,
+                .procedure = !currentFunctionResultDesignatorIsDataEntity(self, call.name) and (sym.kind == .function or sym.kind == .subroutine),
             };
         },
         .component => |comp| blk: {
@@ -48,6 +61,14 @@ pub fn allocateTargetTypeSpec(self: *context.Context, expr: *ast.Expr) CheckErro
         .identifier => |name| blk: {
             const idx = resolve_symbols.findSymbolIndex(self, name) orelse return error.UnknownSymbol;
             break :blk self.symbols.items[idx].type_spec;
+        },
+        .call_or_subscript => |call| blk: {
+            const idx = resolve_symbols.findSymbolIndex(self, call.name) orelse return error.UnknownSymbol;
+            const sym = self.symbols.items[idx];
+            const kind = self.ref_kind_index.get(@intFromPtr(expr)) orelse
+                (if (sym.dims.len > 0) symbols.ResolvedRefKind.subscript else symbols.ResolvedRefKind.call);
+            if (kind != .subscript) return error.UnsupportedAllocateSyntax;
+            break :blk sym.type_spec;
         },
         .component => |comp| blk: {
             const base_spec = try resolve_expr.exprTypeSpec(self, comp.base);
@@ -190,6 +211,12 @@ fn dummyIntentForName(self: *context.Context, name: []const u8) ?ast.IntentKind 
         if (std.ascii.eqlIgnoreCase(arg.name, name)) return arg.intent;
     }
     return null;
+}
+
+fn currentFunctionResultDesignatorIsDataEntity(self: *context.Context, name: []const u8) bool {
+    if (self.unit.kind != .function) return false;
+    const result_name = self.unit.result_name orelse self.unit.name;
+    return std.ascii.eqlIgnoreCase(name, result_name);
 }
 
 fn emitAllocateObjectConflictDiagnostic(self: *context.Context, source: ast.SourceRef, expr_node: *ast.Expr, is_subobject: bool) CheckError {

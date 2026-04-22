@@ -37,6 +37,7 @@ pub const Symbol = struct {
     is_intrinsic: bool,
     is_allocatable: bool = false,
     is_pointer: bool = false,
+    is_target: bool = false,
     contiguous: bool = false,
     no_arg_check: bool = false,
     // Internal compiler-generated temporaries (e.g. intrinsic array-conversion buffers).
@@ -123,6 +124,7 @@ pub const Symbol = struct {
             .is_intrinsic = false,
             .is_allocatable = false,
             .is_pointer = false,
+            .is_target = false,
             .is_alias = false,
             .alias_definable = true,
             .const_value = null,

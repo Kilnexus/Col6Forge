@@ -147,8 +147,14 @@ fn parseCharacterArrayKindSelector(
             _ = lp.expect(.equals) orelse return error.UnexpectedToken;
             kind_selector = try parseExprDepthFn(lp, arena, 0, depth + 1);
         } else if (lp.consumeKeyword("LEN")) {
-            _ = lp.expect(.equals) orelse return error.UnexpectedToken;
-            const len_expr = try parseExprDepthFn(lp, arena, 0, depth + 1);
+            const len_expr = if (lp.consume(.l_paren)) blk: {
+                const parsed = try parseExprDepthFn(lp, arena, 0, depth + 1);
+                _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
+                break :blk parsed;
+            } else blk: {
+                _ = lp.expect(.equals) orelse return error.UnexpectedToken;
+                break :blk try parseExprDepthFn(lp, arena, 0, depth + 1);
+            };
             if (fallback_selector == null) fallback_selector = len_expr;
         } else {
             const bare_expr = try parseExprDepthFn(lp, arena, 0, depth + 1);

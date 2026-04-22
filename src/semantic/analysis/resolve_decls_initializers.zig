@@ -42,6 +42,7 @@ pub fn validateCharacterArrayConstructorInitializer(
         .array_constructor => |ctor| ctor,
         else => return,
     };
+    if (ctor.type_spec != null) return;
     var expected_len: ?usize = null;
     for (ctor.items) |item| {
         const item_len = characterExprLogicalLen(self, item) orelse return;

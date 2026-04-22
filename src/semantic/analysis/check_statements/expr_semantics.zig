@@ -13,6 +13,8 @@ const leaf_helpers = @import("leaf_helpers.zig");
 const static_shapes = @import("static_shapes.zig");
 const procedure_interfaces = @import("procedure_interfaces.zig");
 const procedure_calls = @import("procedure_calls.zig");
+const type_bound_generics = @import("../type_bound_generics.zig");
+const assumed_size = @import("../assumed_size.zig");
 
 const ResolvedRefKind = symbols.ResolvedRefKind;
 pub const CheckError = anyerror;
@@ -50,6 +52,8 @@ pub fn checkSpecialExprCallConstraints(
     name: []const u8,
     args: []*ast.Expr,
 ) CheckError!void {
+    try checkInquiryDimArg(self, name, args);
+    try checkAssumedSizeInquiryArrayArg(self, name, args);
     try checkStaticMatmulConformance(self, call_expr, name, args);
     try checkLegacyWidecharExprCallConstraints(self, name, args);
     if (intrinsicRequiresDoublePrecisionArgs(name)) {
@@ -110,6 +114,65 @@ pub fn checkSpecialExprCallConstraints(
             .{ actual_name, expected_name },
         ) catch "Argument C_PTR_2 to C_ASSOCIATED shall have the same type as C_PTR_1.";
         return emitExprConstraintDiagnostic(self, args[1], message);
+    }
+}
+
+fn checkAssumedSizeInquiryArrayArg(
+    self: *context.Context,
+    name: []const u8,
+    args: []*ast.Expr,
+) CheckError!void {
+    if (args.len == 0) return;
+    if (std.ascii.eqlIgnoreCase(name, "shape")) {
+        if (assumed_size.exprNeedsExplicitLastUpperBound(self, args[0])) {
+            return assumed_size.emitExprDiagnostic(self, args[0], assumed_size.shapeAssumedSizeMessage(self, args[0]));
+        }
+        return;
+    }
+    if (!(std.ascii.eqlIgnoreCase(name, "size") or std.ascii.eqlIgnoreCase(name, "ubound"))) return;
+    if (!assumed_size.exprNeedsExplicitLastUpperBound(self, args[0])) return;
+
+    if (args.len < 2) {
+        return assumed_size.emitExprDiagnostic(self, args[0], "upper bound in the last dimension");
+    }
+    const dim_value = (try constants.evalConst(self, args[1])) orelse {
+        return emitExprConstraintDiagnostic(self, args[1], "Cannot simplify expression");
+    };
+    const dim_int = switch (dim_value) {
+        .integer => |value| value,
+        else => return,
+    };
+    const array_rank = assumed_size.exprAssumedSizeRank(self, args[0]) orelse resolve_expr.exprRank(self, args[0]);
+    if (dim_int == @as(i64, @intCast(array_rank))) {
+        return emitExprConstraintDiagnostic(self, args[1], "is not a valid dimension index");
+    }
+}
+
+fn checkInquiryDimArg(
+    self: *context.Context,
+    name: []const u8,
+    args: []*ast.Expr,
+) CheckError!void {
+    const needs_dim_check =
+        std.ascii.eqlIgnoreCase(name, "size") or
+        std.ascii.eqlIgnoreCase(name, "lbound") or
+        std.ascii.eqlIgnoreCase(name, "ubound");
+    if (!needs_dim_check or args.len < 2) return;
+    if (resolve_expr.exprRank(self, args[1]) != 0) {
+        return emitExprConstraintDiagnostic(self, args[1], "must be a scalar");
+    }
+    const dim_spec = try resolve_expr.exprTypeSpec(self, args[1]);
+    if (dim_spec.lowered_kind != .integer) {
+        return emitExprConstraintDiagnostic(self, args[1], "must be INTEGER");
+    }
+    const dim_value = (try constants.evalConst(self, args[1])) orelse return;
+    const dim_int = switch (dim_value) {
+        .integer => |value| value,
+        else => return,
+    };
+    const array_rank = resolve_expr.exprRank(self, args[0]);
+    if (dim_int < 1 or dim_int > array_rank) {
+        return emitExprConstraintDiagnostic(self, args[1], "is not a valid dimension index");
     }
 }
 
@@ -759,15 +822,21 @@ pub fn isPointerValuedExpr(self: *context.Context, expr: *ast.Expr) bool {
 
 pub fn isAddressableDataTargetExpr(self: *context.Context, expr: *ast.Expr) bool {
     return switch (expr.*) {
-        .identifier => true,
+        .identifier => |name| blk: {
+            const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;
+            const sym = self.symbols.items[idx];
+            break :blk sym.is_target or sym.is_pointer;
+        },
         .component => |comp| blk: {
-            if (!comp.has_parens or resolvedKindFor(self, expr) == .subscript) break :blk true;
-            if (hasTripletSectionArg(comp.args)) break :blk true;
             const base_spec = resolve_expr.exprTypeSpec(self, comp.base) catch break :blk false;
             if (base_spec.lowered_kind != .derived) break :blk false;
             const derived_name = base_spec.derived_type_name orelse break :blk false;
             const component = resolve_symbols.lookupDerivedComponent(self, derived_name, comp.name) orelse break :blk false;
-            break :blk !component.procedure;
+            if (component.procedure) break :blk false;
+            if (component.pointer) break :blk true;
+            if (!componentHasDataTargetBase(self, comp.base)) break :blk false;
+            if (!comp.has_parens or resolvedKindFor(self, expr) == .subscript) break :blk true;
+            break :blk hasTripletSectionArg(comp.args) or !component.procedure;
         },
         .call_or_subscript => |call| blk: {
             const idx = symbolIndexForResolvedCall(self, expr) orelse
@@ -775,17 +844,21 @@ pub fn isAddressableDataTargetExpr(self: *context.Context, expr: *ast.Expr) bool
             const sym = self.symbols.items[idx];
             const kind: ResolvedRefKind = resolvedKindFor(self, expr) orelse
                 (if (sym.dims.len > 0) ResolvedRefKind.subscript else ResolvedRefKind.call);
-            if (kind == .subscript) break :blk true;
-            if (kind == .call and sym.is_alias and call.args.len != 0) break :blk true;
-            break :blk hasTripletSectionArg(call.args);
+            if (kind == .subscript) break :blk sym.is_target or sym.is_pointer;
+            if (kind == .call and sym.is_alias and call.args.len != 0) break :blk sym.is_target or sym.is_pointer;
+            break :blk hasTripletSectionArg(call.args) and (sym.is_target or sym.is_pointer);
         },
         .substring => |sub| blk: {
             const idx = resolve_symbols.findSymbolIndex(self, sub.name) orelse break :blk false;
             const sym = self.symbols.items[idx];
-            break :blk sym.kind == .variable and !sym.is_external;
+            break :blk sym.kind == .variable and !sym.is_external and (sym.is_target or sym.is_pointer);
         },
         else => false,
     };
+}
+
+fn componentHasDataTargetBase(self: *context.Context, expr: *ast.Expr) bool {
+    return isPointerValuedExpr(self, expr) or isAddressableDataTargetExpr(self, expr);
 }
 
 fn hasTripletSectionArg(args: []const *ast.Expr) bool {
@@ -808,13 +881,24 @@ pub fn isDefinedAssignmentCompatible(
     value: *ast.Expr,
     comptime deps: anytype,
 ) bool {
-    const sig = resolve_symbols.lookupKnownProcedureSig(self, "assignment(=)") orelse return false;
-    if (sig.kind != .subroutine) return false;
-    if (sig.arg_count != 2 or sig.alt_return_count != 0) return false;
-    if (procedure_calls.minimumRequiredProcedureArgs(sig) > 2) return false;
+    if (resolve_symbols.lookupKnownProcedureSig(self, "assignment(=)")) |sig| {
+        if (sig.kind == .subroutine and sig.arg_count == 2 and sig.alt_return_count == 0 and
+            procedure_calls.minimumRequiredProcedureArgs(sig) <= 2)
+        {
+            var actuals = [_]*ast.Expr{ target, value };
+            if (procedureSigMatchesActuals(self, sig, &actuals, deps)) return true;
+        }
+    }
 
-    var actuals = [_]*ast.Expr{ target, value };
-    return procedureSigMatchesActuals(self, sig, &actuals, deps);
+    var extra_actuals = [_]*ast.Expr{value};
+    return (type_bound_generics.lookupTypeBoundGenericSig(
+        self,
+        "assignment(=)",
+        target,
+        &extra_actuals,
+        .subroutine,
+        .{ .dummyArgTypeCompatible = deps.dummyArgTypeCompatible },
+    ) catch null) != null;
 }
 
 fn emitExprConstraintDiagnostic(

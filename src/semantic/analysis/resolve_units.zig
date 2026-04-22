@@ -58,6 +58,7 @@ pub const Resolver = struct {
                     .bind_c = decl.derived_type_def.bind_c,
                     .components = try buildDerivedComponentInfo(ctx, decl.derived_type_def),
                     .bindings = try buildDerivedBindingInfo(ctx, decl.derived_type_def, decl_source),
+                    .final_subroutines = decl.derived_type_def.final_subroutines,
                 });
                 ctx.setCurrentDeclSource(null);
             }
@@ -155,6 +156,7 @@ pub const Resolver = struct {
         try bind_c_validation.validateBindCInterfaceBlocks(ctx);
         try bind_c_validation.validateBindCFunctionResult(ctx);
         try bind_c_validation.validateBindCCharacters(ctx);
+        try bind_c_validation.validateBindCDummyInteroperability(ctx);
         try validateFunctionResultDeclConstraints(ctx);
         try validateAssumedCharacterLengths(ctx);
         try resolve_data.lowerDataStatements(ctx);
@@ -248,7 +250,7 @@ fn declSourceSame(a: ast.DeclSource, b: ast.DeclSource) bool {
         a.column == b.column and
         std.mem.eql(u8, a.text, b.text) and
         ((a.owner_name == null and b.owner_name == null) or
-        (a.owner_name != null and b.owner_name != null and std.ascii.eqlIgnoreCase(a.owner_name.?, b.owner_name.?)));
+            (a.owner_name != null and b.owner_name != null and std.ascii.eqlIgnoreCase(a.owner_name.?, b.owner_name.?)));
 }
 
 fn unitScopeKind(kind: ast.ProgramUnitKind) scope.ScopeKind {
@@ -619,6 +621,11 @@ fn buildDerivedComponentInfo(
         ctx.setCurrentDeclSource(component_source);
         for (type_decl.items) |item| {
             try decls.validateDeclaratorInitializer(ctx, item.init);
+            if ((type_decl.allocatable or type_decl.pointer) and item.dims.len != 0 and !componentHasDeferredShape(item.dims)) {
+                emitDescriptorComponentShapeDiagnostic(ctx, if (type_decl.allocatable) "ALLOCATABLE" else "POINTER");
+                if (!ctx.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                continue;
+            }
             var spec = symbols.TypeSpec.fromResolvedKind(type_decl.type_kind, type_decl.type_kind, null);
             if (type_decl.type_kind == .derived) {
                 if (type_decl.derived_type_name) |name| {
@@ -693,6 +700,37 @@ fn buildDerivedComponentInfo(
         ctx.setCurrentDeclSource(prior_decl_source);
     }
     return try components.toOwnedSlice();
+}
+
+fn componentHasDeferredShape(dims: []const *ast.Expr) bool {
+    for (dims) |dim| {
+        switch (dim.*) {
+            .dim_range => |range| {
+                if (range.assumed_shape and range.lower == null) continue;
+                return false;
+            },
+            else => return false,
+        }
+    }
+    return dims.len != 0;
+}
+
+fn emitDescriptorComponentShapeDiagnostic(ctx: *context.Context, attr_name: []const u8) void {
+    const decl_source = ctx.current_decl_source orelse ast.DeclSource{};
+    const message = std.fmt.allocPrint(
+        ctx.arena,
+        "{s} array must have a deferred shape or assumed rank",
+        .{attr_name},
+    ) catch "array must have a deferred shape or assumed rank";
+    ctx.setDiagnosticDetailed(
+        if (decl_source.line == 0) 1 else decl_source.line,
+        if (decl_source.column == 0) 1 else decl_source.column,
+        catalog.semantic.duplicate_declaration.code,
+        message,
+        decl_source.text,
+        &.{.{ .text = "A POINTER or ALLOCATABLE component may not use explicit shape bounds." }},
+        &.{.{ .text = "Use ':' or assumed-rank form for each descriptor array dimension." }},
+    );
 }
 
 fn resolveDerivedProcedureComponentSig(

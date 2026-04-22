@@ -112,6 +112,28 @@ pub fn validateBindCFunctionResult(ctx: *context.Context) !void {
     return error.InvalidCharLen;
 }
 
+pub fn validateBindCDummyInteroperability(ctx: *context.Context) !void {
+    if (!ctx.unit.bind_c) return;
+    if (ctx.unit.kind != .subroutine and ctx.unit.kind != .function) return;
+
+    for (ctx.unit.args) |arg_name| {
+        const info = findDummyDeclInfo(ctx, arg_name) orelse continue;
+        if (!info.polymorphic) continue;
+
+        const source = info.source orelse continue;
+        ctx.setDiagnosticDetailed(
+            if (source.line == 0) 1 else source.line,
+            if (source.column == 0) 1 else source.column,
+            catalog.semantic.invalid_char_len.code,
+            std.fmt.allocPrint(ctx.arena, "'{s}' is not C interoperable", .{arg_name}) catch "is not C interoperable",
+            source.text,
+            &.{.{ .text = "A BIND(C) dummy argument may not be a polymorphic CLASS entity." }},
+            &.{.{ .text = "Use an interoperable TYPE dummy argument, or remove BIND(C) from the procedure." }},
+        );
+        return error.InvalidCharLen;
+    }
+}
+
 pub fn validateBindCInterfaceBlocks(ctx: *context.Context) !void {
     var first_error: ?anyerror = null;
     for (ctx.unit.decls) |decl| {
@@ -173,6 +195,11 @@ const CharacterDummyDeclInfo = struct {
     value_attr: bool = false,
 };
 
+const DummyDeclInfo = struct {
+    source: ?ast.DeclSource = null,
+    polymorphic: bool = false,
+};
+
 const CharacterLengthForm = enum {
     const_one,
     assumed,
@@ -230,6 +257,20 @@ fn findCharacterDummyDeclInfo(ctx: *context.Context, target_name: []const u8) ?C
     }
 
     return info;
+}
+
+fn findDummyDeclInfo(ctx: *context.Context, target_name: []const u8) ?DummyDeclInfo {
+    for (ctx.unit.decls, 0..) |decl, decl_idx| {
+        if (decl != .type_decl) continue;
+        for (decl.type_decl.items) |item| {
+            if (!std.ascii.eqlIgnoreCase(item.name, target_name)) continue;
+            return .{
+                .source = if (decl_idx < ctx.unit.decl_sources.len) ctx.unit.decl_sources[decl_idx] else null,
+                .polymorphic = decl.type_decl.polymorphic,
+            };
+        }
+    }
+    return null;
 }
 
 fn characterLengthForm(info: CharacterDummyDeclInfo) CharacterLengthForm {

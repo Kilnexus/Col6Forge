@@ -10,6 +10,7 @@ const builtin = common.builtin;
 const Col6Forge = common.Col6Forge;
 const fallback_policy = common.fallback_policy;
 const HOST_CACHE_TAG = common.HOST_CACHE_TAG;
+const zig_api = common.zig_api;
 
 const cli = @import("verify_runner/cli.zig");
 const cases = @import("verify_runner/cases.zig");
@@ -36,31 +37,27 @@ const computeRunScopedRuntimeCacheKey = runner_io.computeRunScopedRuntimeCacheKe
 const computeCompilerCacheKey = runner_io.computeCompilerCacheKey;
 const computeReferenceCompilerCacheKey = runner_io.computeReferenceCompilerCacheKey;
 const processCase = process_mod.processCase;
-const runCaseParallel = process_mod.runCaseParallel;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var thread_safe = std.heap.ThreadSafeAllocator{ .child_allocator = gpa.allocator() };
-    const allocator = thread_safe.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const arena_allocator = arena.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try allocArgs(allocator, init.minimal.args);
+    defer freeArgs(allocator, args);
 
     const options = switch (parseArgs(args)) {
         .success => |value| value,
         .failure => |parse_err| {
-            try printUsage(std.fs.File.stderr());
-            try printParseArgError(std.fs.File.stderr(), parse_err);
+            try printUsage(zig_api.File.stderr());
+            try printParseArgError(zig_api.File.stderr(), parse_err);
             return error.InvalidArguments;
         },
     };
     if (options.show_help) {
-        try printUsage(std.fs.File.stdout());
+        try printUsage(zig_api.File.stdout());
         return;
     }
 
@@ -69,7 +66,7 @@ pub fn main() !void {
     defer profile_collector.deinit(allocator);
     var fallback_tracker = fallback_policy.Tracker.init(options.fallback_policy);
 
-    const root_path = try std.fs.cwd().realpathAlloc(allocator, ".");
+    const root_path = try allocator.dupe(u8, ".");
     defer allocator.free(root_path);
 
     const cache_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "verify", "cache", HOST_CACHE_TAG });
@@ -77,7 +74,7 @@ pub fn main() !void {
     if (options.clean_cache) {
         cleanupWorkDir(cache_rel);
     }
-    try std.fs.cwd().makePath(cache_rel);
+    try zig_api.cwd().makePath(cache_rel);
     const cache_dir = try std.fs.path.join(allocator, &.{ root_path, cache_rel });
     defer allocator.free(cache_dir);
     const runtime_cache_key = if (options.incremental)
@@ -103,10 +100,10 @@ pub fn main() !void {
 
     var gfortran_cmd = options.gfortran_path;
     if (std.mem.eql(u8, gfortran_cmd, defaultGfortran())) {
-        if (std.process.getEnvVarOwned(allocator, "GFORTRAN") catch null) |value| {
+        if (getEnvVarOwned(allocator, init, "GFORTRAN") catch null) |value| {
             defer allocator.free(value);
             gfortran_cmd = try arena_allocator.dupe(u8, value);
-        } else if (std.process.getEnvVarOwned(allocator, "FC") catch null) |value| {
+        } else if (getEnvVarOwned(allocator, init, "FC") catch null) |value| {
             defer allocator.free(value);
             gfortran_cmd = try arena_allocator.dupe(u8, value);
         }
@@ -126,55 +123,10 @@ pub fn main() !void {
     var dir_locks = DirLocks.init(allocator);
     defer dir_locks.deinit();
 
-    if (options.jobs == 1 or cases_list.len == 1) {
-        var failures: usize = 0;
-        for (cases_list) |case| {
-            runtime.logProgress(&log_state, &progress, case.input_path);
-            const ok = processCase(
-                allocator,
-                root_path,
-                cache_dir,
-                runtime_cache_key,
-                &runtime_artifacts,
-                compiler_cache_key,
-                ref_compiler_cache_key,
-                gfortran_cmd,
-                case,
-                options,
-                &log_state,
-                &dir_locks,
-                &profile_collector,
-            ) catch {
-                failures += 1;
-                _ = progress.completed.fetchAdd(1, .seq_cst);
-                continue;
-            };
-            if (!ok) failures += 1;
-            _ = progress.completed.fetchAdd(1, .seq_cst);
-        }
-        if (failures > 0) {
-            profile_collector.print(&log_state);
-            try emitFallbackSummary(&log_state, &fallback_tracker);
-            log_state.stderr("verification failed: {d}\n", .{failures});
-            return error.VerificationFailed;
-        }
-        profile_collector.print(&log_state);
-        try emitFallbackSummary(&log_state, &fallback_tracker);
-        log_state.stdout("verification passed\n", .{});
-        return;
-    }
-
-    var failures = std.atomic.Value(usize).init(0);
-    var pool: std.Thread.Pool = undefined;
-    try pool.init(.{
-        .allocator = allocator,
-        .n_jobs = options.jobs,
-    });
-    defer pool.deinit();
-
-    var wait_group = std.Thread.WaitGroup{};
+    var failures: usize = 0;
     for (cases_list) |case| {
-        pool.spawnWg(&wait_group, runCaseParallel, .{
+        runtime.logProgress(&log_state, &progress, case.input_path);
+        const ok = processCase(
             allocator,
             root_path,
             cache_dir,
@@ -186,22 +138,50 @@ pub fn main() !void {
             case,
             options,
             &log_state,
-            &progress,
             &dir_locks,
-            &failures,
             &profile_collector,
-        });
+        ) catch {
+            failures += 1;
+            _ = progress.completed.fetchAdd(1, .seq_cst);
+            continue;
+        };
+        if (!ok) failures += 1;
+        _ = progress.completed.fetchAdd(1, .seq_cst);
     }
-    pool.waitAndWork(&wait_group);
-
-    const failure_count = failures.load(.seq_cst);
-    if (failure_count > 0) {
+    if (failures > 0) {
         profile_collector.print(&log_state);
         try emitFallbackSummary(&log_state, &fallback_tracker);
-        log_state.stderr("verification failed: {d}\n", .{failure_count});
+        log_state.stderr("verification failed: {d}\n", .{failures});
         return error.VerificationFailed;
     }
     profile_collector.print(&log_state);
     try emitFallbackSummary(&log_state, &fallback_tracker);
     log_state.stdout("verification passed\n", .{});
+}
+
+fn allocArgs(allocator: std.mem.Allocator, args_src: std.process.Args) ![][]const u8 {
+    var it = try std.process.Args.Iterator.initAllocator(args_src, allocator);
+    defer it.deinit();
+
+    var args = std.array_list.Managed([]const u8).init(allocator);
+    errdefer {
+        for (args.items) |arg| allocator.free(arg);
+        args.deinit();
+    }
+
+    while (it.next()) |arg| {
+        try args.append(try allocator.dupe(u8, arg));
+    }
+
+    return args.toOwnedSlice();
+}
+
+fn freeArgs(allocator: std.mem.Allocator, args: [][]const u8) void {
+    for (args) |arg| allocator.free(arg);
+    allocator.free(args);
+}
+
+fn getEnvVarOwned(allocator: std.mem.Allocator, init: std.process.Init, name: []const u8) !?[]u8 {
+    const value = init.environ_map.get(name) orelse return null;
+    return try allocator.dupe(u8, value);
 }

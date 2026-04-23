@@ -6,6 +6,7 @@ const fallback_policy = common.fallback_policy;
 const RuntimeBackend = common.RuntimeBackend;
 const CACHE_SCHEMA_VERSION = common.CACHE_SCHEMA_VERSION;
 const HOST_CACHE_TAG = common.HOST_CACHE_TAG;
+const zig_api = common.zig_api;
 const runtime = @import("runtime.zig");
 const cases = @import("cases.zig");
 const runner_io = @import("runner_io.zig");
@@ -49,7 +50,7 @@ const StageSamples = struct {
 
 pub const PipelineProfileCollector = struct {
     enabled: bool,
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     count: usize = 0,
     failures: usize = 0,
     read: StageSamples = .{},
@@ -90,8 +91,8 @@ pub const PipelineProfileCollector = struct {
 
     pub fn record(self: *PipelineProfileCollector, allocator: std.mem.Allocator, sample: Col6Forge.PipelineProfileSample) !void {
         if (!self.enabled) return;
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(zig_api.defaultIo());
+        defer self.mutex.unlock(zig_api.defaultIo());
 
         self.count += 1;
         if (sample.failed_stage != .none) self.failures += 1;
@@ -113,8 +114,8 @@ pub const PipelineProfileCollector = struct {
 
     pub fn print(self: *PipelineProfileCollector, log_state: *LogState) void {
         if (!self.enabled or self.count == 0) return;
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(zig_api.defaultIo());
+        defer self.mutex.unlock(zig_api.defaultIo());
 
         self.read.sort();
         self.normalize.sort();
@@ -408,7 +409,7 @@ pub fn parseArgs(args: []const []const u8) ParseArgsOutcome {
     } };
 }
 
-pub fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
+pub fn printParseArgError(file: zig_api.File, parse_err: ParseArgError) !void {
     var buffer: [512]u8 = undefined;
     var writer = file.writer(&buffer);
     switch (parse_err) {
@@ -429,7 +430,7 @@ pub fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
     try writer.interface.flush();
 }
 
-pub fn printUsage(file: std.fs.File) !void {
+pub fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage: verify_runner [--tests-dir <dir>] [--fcvs21_f95 | --fcsv78] [--filter <text>] [--std <default|f77>] [--runtime-backend <c|zig>] [--timeout <ms>] [--jobs <n>] [--incremental|--no-incremental] [--clean-cache] [--profile-summary] [-emit-llvm]
         \\Options:
@@ -464,24 +465,24 @@ pub fn emitFallbackSummary(log_state: *LogState, tracker: *fallback_policy.Track
     if (!tracker.policy.shouldPrintSummary()) return;
 
     var summary_buf: [256]u8 = undefined;
-    var summary_stream = std.io.fixedBufferStream(&summary_buf);
-    try fallback_policy.writeSummary(summary_stream.writer(), tracker.stats);
+    var summary_writer: std.Io.Writer = .fixed(&summary_buf);
+    try fallback_policy.writeSummary(&summary_writer, tracker.stats);
     if (tracker.stats.total() > 0) {
-        log_state.stderr("{s}\n", .{summary_stream.getWritten()});
+        log_state.stderr("{s}\n", .{summary_writer.buffered()});
     } else {
-        log_state.stdout("{s}\n", .{summary_stream.getWritten()});
+        log_state.stdout("{s}\n", .{summary_writer.buffered()});
     }
 
     tracker.enforce() catch |err| {
         if (err == error.FallbackBudgetExceeded) {
             var budget_buf: [128]u8 = undefined;
-            var budget_stream = std.io.fixedBufferStream(&budget_buf);
+            var budget_writer: std.Io.Writer = .fixed(&budget_buf);
             try fallback_policy.writeBudgetExceeded(
-                budget_stream.writer(),
+                &budget_writer,
                 tracker.stats,
                 tracker.policy.max_fallbacks.?,
             );
-            log_state.stderr("{s}\n", .{budget_stream.getWritten()});
+            log_state.stderr("{s}\n", .{budget_writer.buffered()});
         }
         return err;
     };

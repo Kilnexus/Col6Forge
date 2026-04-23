@@ -6,6 +6,7 @@ const fallback_policy = common.fallback_policy;
 const RuntimeBackend = common.RuntimeBackend;
 const CACHE_SCHEMA_VERSION = common.CACHE_SCHEMA_VERSION;
 const HOST_CACHE_TAG = common.HOST_CACHE_TAG;
+const zig_api = common.zig_api;
 
 pub const TestCase = struct {
     input_path: []const u8,
@@ -20,13 +21,13 @@ pub fn collectTestCases(
     dialect: Col6Forge.Dialect,
 ) ![]TestCase {
     var list: std.ArrayList(TestCase) = .empty;
-    var dir = try std.fs.cwd().openDir(tests_dir, .{ .iterate = true });
+    var dir = try zig_api.cwd().openDir(tests_dir, .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(allocator);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(zig_api.defaultIo())) |entry| {
         if (entry.kind != .file) continue;
         if (!isFortranSource(entry.path)) continue;
         if (filter) |needle| {

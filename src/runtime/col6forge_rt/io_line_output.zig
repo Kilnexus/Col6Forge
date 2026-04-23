@@ -1,5 +1,6 @@
 const std = @import("std");
 const runtime_text = @import("runtime_text.zig");
+const zig_compat = @import("zig_compat.zig");
 
 const FILE = opaque {};
 extern fn fwrite(ptr: ?*const anyopaque, size: usize, nmemb: usize, stream: *FILE) usize;
@@ -15,7 +16,7 @@ extern fn col6forge_unit_stream_release_write(unit: c_int, stream: ?*anyopaque, 
 
 const cstrlen = runtime_text.cstrlen;
 
-var line_output_mutex: std.Thread.Mutex = .{};
+var line_output_mutex: zig_compat.Mutex = .{};
 
 fn writeLineWithOptionalNl(stream: *FILE, src: [*]const u8, src_len: usize) bool {
     const needs_nl = (src_len == 0 or src[src_len - 1] != '\n');

@@ -107,7 +107,10 @@ pub const File = if (has_legacy_fs) struct {
     }
 
     pub fn read(self: File, buffer: []u8) !usize {
-        return self.raw.readStreaming(io(), &.{buffer});
+        return self.raw.readStreaming(io(), &.{buffer}) catch |err| switch (err) {
+            error.EndOfStream => 0,
+            else => return err,
+        };
     }
 
     pub fn writeAll(self: File, bytes: []const u8) !void {
@@ -148,6 +151,10 @@ pub const Dir = if (has_legacy_fs) struct {
 
     pub fn deleteFile(self: Dir, path: []const u8) !void {
         try self.raw.deleteFile(path);
+    }
+
+    pub fn deleteTree(self: Dir, path: []const u8) !void {
+        try self.raw.deleteTree(path);
     }
 
     pub fn access(self: Dir, path: []const u8, options: anytype) !void {
@@ -196,6 +203,10 @@ pub const Dir = if (has_legacy_fs) struct {
         try self.raw.deleteFile(io(), path);
     }
 
+    pub fn deleteTree(self: Dir, path: []const u8) !void {
+        try self.raw.deleteTree(io(), path);
+    }
+
     pub fn access(self: Dir, path: []const u8, options: anytype) !void {
         try self.raw.access(io(), path, mapAccessOptions(options));
     }
@@ -233,6 +244,29 @@ pub fn openDirAbsolute(path: []const u8, options: anytype) !Dir {
         return .{ .raw = try std.fs.openDirAbsolute(path, options) };
     }
     return .{ .raw = try std.Io.Dir.openDirAbsolute(io(), path, mapOpenDirOptions(options)) };
+}
+
+pub fn createFileAbsolute(path: []const u8, flags: anytype) !File {
+    if (comptime has_legacy_fs) {
+        return .{ .raw = try std.fs.createFileAbsolute(path, flags) };
+    }
+    return .{ .raw = try std.Io.Dir.createFileAbsolute(io(), path, mapCreateFileOptions(flags)) };
+}
+
+pub fn deleteFileAbsolute(path: []const u8) !void {
+    if (comptime has_legacy_fs) {
+        try std.fs.deleteFileAbsolute(path);
+        return;
+    }
+    try std.Io.Dir.deleteFileAbsolute(io(), path);
+}
+
+pub fn accessAbsolute(path: []const u8, options: anytype) !void {
+    if (comptime has_legacy_fs) {
+        try std.fs.accessAbsolute(path, options);
+        return;
+    }
+    try std.Io.Dir.accessAbsolute(io(), path, mapAccessOptions(options));
 }
 
 pub fn nowNs() i128 {

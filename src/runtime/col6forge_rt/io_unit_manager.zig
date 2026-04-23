@@ -1,5 +1,6 @@
 const std = @import("std");
 const runtime_text = @import("runtime_text.zig");
+const zig_compat = @import("zig_compat.zig");
 
 const COL6FORGE_MAX_UNITS = 256;
 const COL6FORGE_FILENAME_MAX = 4096;
@@ -33,11 +34,11 @@ const StreamEntry = struct {
     mode: StreamMode = .none,
     cursor: c_long = 0,
     has_cursor: bool = false,
-    lock: std.Thread.Mutex = .{},
+    lock: zig_compat.Mutex = .{},
     held: bool = false,
 };
 
-var manager_mutex: std.Thread.Mutex = .{};
+var manager_mutex: zig_compat.Mutex = .{};
 var fixed_entries: [COL6FORGE_MAX_UNITS]StreamEntry = [_]StreamEntry{.{}} ** COL6FORGE_MAX_UNITS;
 var extra_entries: std.AutoHashMapUnmanaged(c_int, *StreamEntry) = .{};
 var extra_unit_pos: std.AutoHashMapUnmanaged(c_int, c_long) = .{};

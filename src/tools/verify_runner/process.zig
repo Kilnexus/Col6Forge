@@ -6,6 +6,7 @@ const fallback_policy = common.fallback_policy;
 const RuntimeBackend = common.RuntimeBackend;
 const CACHE_SCHEMA_VERSION = common.CACHE_SCHEMA_VERSION;
 const HOST_CACHE_TAG = common.HOST_CACHE_TAG;
+const zig_api = common.zig_api;
 const cli = @import("cli.zig");
 const cases = @import("cases.zig");
 const runner_io = @import("runner_io.zig");
@@ -46,6 +47,10 @@ const isZeroExit = runner_io.isZeroExit;
 const allowsProcessorDependentOutputDiff = compare.allowsProcessorDependentOutputDiff;
 const tryRecoverRuntimeCacheAndRelink = runtime.tryRecoverRuntimeCacheAndRelink;
 const logProgress = runtime.logProgress;
+
+fn workDirArg(path: []const u8) []const u8 {
+    return std.fs.path.basename(path);
+}
 
 fn emitTranslatedLl(
     allocator: std.mem.Allocator,
@@ -101,7 +106,7 @@ pub fn processCase(
     dir_locks: *DirLocks,
     profile_collector: *PipelineProfileCollector,
 ) !bool {
-    var timer = try std.time.Timer.start();
+    var timer = runner_io.Stopwatch.start();
     const abs_input_path = try std.fs.path.join(allocator, &.{ root_path, case.input_path });
     defer allocator.free(abs_input_path);
 
@@ -110,7 +115,7 @@ pub fn processCase(
 
     const work_dir = try resolveVerifyWorkDir(allocator, root_path, case.work_name);
     defer allocator.free(work_dir);
-    try std.fs.cwd().makePath(work_dir);
+    try zig_api.cwd().makePath(work_dir);
 
     const ll_path = try std.fs.path.join(allocator, &.{ work_dir, "translated.ll" });
     defer allocator.free(ll_path);
@@ -118,8 +123,10 @@ pub fn processCase(
     defer allocator.free(translated_obj_path);
     const ref_exe = try prepareExePath(allocator, work_dir, "ref");
     defer allocator.free(ref_exe);
+    const ref_exe_arg = workDirArg(ref_exe);
     const test_exe = try prepareExePath(allocator, work_dir, "test");
     defer allocator.free(test_exe);
+    const test_exe_arg = workDirArg(test_exe);
     if (isTimedOut(options.timeout_ms, &timer)) {
         log_state.stderr("timeout: {s}\n", .{abs_input_path});
         cleanupWorkDir(work_dir);
@@ -147,7 +154,7 @@ pub fn processCase(
         return false;
     }
 
-    var ref_cache_lock: ?*std.Thread.Mutex = null;
+    var ref_cache_lock: ?*std.Io.Mutex = null;
     if (options.incremental) {
         ref_cache_lock = try dir_locks.get(ref_exe_cache_path.?);
     }
@@ -155,8 +162,8 @@ pub fn processCase(
     var need_ref_compile = true;
     if (options.incremental) {
         const lock = ref_cache_lock.?;
-        lock.lock();
-        defer lock.unlock();
+        lock.lockUncancelable(zig_api.defaultIo());
+        defer lock.unlock(zig_api.defaultIo());
 
         if (fileExistsAbsolute(ref_exe_cache_path.?)) {
             if (copyFileAbsolute(ref_exe_cache_path.?, ref_exe)) {
@@ -175,7 +182,7 @@ pub fn processCase(
         const ref_compile = runProcessCapture(
             allocator,
             &.{ gfortran_cmd, "-std=legacy", "-o", ref_exe, ref_source.path },
-            work_dir,
+            null,
             ref_timeout,
         ) catch |err| {
             if (err == error.FileNotFound) {
@@ -194,7 +201,7 @@ pub fn processCase(
             const code = exitCode(ref_compile.term);
             log_state.lock();
             defer log_state.unlock();
-            var stderr_file = std.fs.File.stderr();
+            var stderr_file = zig_api.File.stderr();
             var buffer: [4096]u8 = undefined;
             var writer = stderr_file.writer(&buffer);
             writer.interface.print("\n=== GFORTRAN COMPILE ERROR ===\n", .{}) catch {};
@@ -209,8 +216,8 @@ pub fn processCase(
         }
         if (options.incremental) {
             const lock = ref_cache_lock.?;
-            lock.lock();
-            defer lock.unlock();
+            lock.lockUncancelable(zig_api.defaultIo());
+            defer lock.unlock(zig_api.defaultIo());
 
             // Another worker may have populated the cache while we compiled.
             if (fileExistsAbsolute(ref_exe_cache_path.?)) {
@@ -293,7 +300,7 @@ pub fn processCase(
             const object_compile = runProcessCapture(
                 allocator,
                 &.{ "zig", "cc", "-O0", "-c", "-o", translated_obj_path, ll_path },
-                work_dir,
+                null,
                 object_timeout,
             ) catch |err| {
                 log_state.stderr("zig cc failed: {s} ({s})\n", .{ ll_path, @errorName(err) });
@@ -329,7 +336,7 @@ pub fn processCase(
                     const retry_compile = runProcessCapture(
                         allocator,
                         &.{ "zig", "cc", "-O0", "-c", "-o", translated_obj_path, ll_path },
-                        work_dir,
+                        null,
                         retry_timeout,
                     ) catch |err| {
                         log_state.stderr("zig cc failed after ll regenerate: {s} ({s})\n", .{ ll_path, @errorName(err) });
@@ -382,10 +389,10 @@ pub fn processCase(
     var used_cached_test_exe = false;
 
     if (options.incremental) {
-        var link_cache_lock: ?*std.Thread.Mutex = null;
+        var link_cache_lock: ?*std.Io.Mutex = null;
         link_cache_lock = try dir_locks.get(test_exe_cache_path.?);
-        link_cache_lock.?.lock();
-        defer if (link_cache_lock) |lock| lock.unlock();
+        link_cache_lock.?.lockUncancelable(zig_api.defaultIo());
+        defer if (link_cache_lock) |lock| lock.unlock(zig_api.defaultIo());
 
         var need_link = true;
         if (fileExistsAbsolute(test_exe_cache_path.?)) {
@@ -403,7 +410,7 @@ pub fn processCase(
             var our_compile = runZigCcLinkWithWindowsRetry(
                 allocator,
                 compile_args.items,
-                work_dir,
+                null,
                 link_timeout,
                 test_exe,
             ) catch |err| {
@@ -451,7 +458,7 @@ pub fn processCase(
         const our_compile = runZigCcLinkWithWindowsRetry(
             allocator,
             compile_args.items,
-            work_dir,
+            null,
             link_timeout,
             test_exe,
         ) catch |err| {
@@ -480,7 +487,7 @@ pub fn processCase(
     try cleanupFortranScratchFiles(work_dir);
     const ref_run = runProcessCaptureWithInput(
         allocator,
-        &.{ref_exe},
+        &.{ref_exe_arg},
         work_dir,
         ref_run_timeout,
         stdin_input_path,
@@ -506,7 +513,7 @@ pub fn processCase(
     const test_run = blk: {
         break :blk runProcessCaptureWithInput(
             allocator,
-            &.{test_exe},
+            &.{test_exe_arg},
             work_dir,
             test_run_timeout,
             stdin_input_path,
@@ -523,7 +530,7 @@ pub fn processCase(
                 const rebuilt = runZigCcLinkWithWindowsRetry(
                     allocator,
                     compile_args.items,
-                    work_dir,
+                    null,
                     test_run_timeout,
                     test_exe,
                 ) catch |link_err| {
@@ -544,7 +551,7 @@ pub fn processCase(
                 try cleanupFortranScratchFiles(work_dir);
                 break :blk runProcessCaptureWithInput(
                     allocator,
-                    &.{test_exe},
+                    &.{test_exe_arg},
                     work_dir,
                     test_run_timeout,
                     stdin_input_path,

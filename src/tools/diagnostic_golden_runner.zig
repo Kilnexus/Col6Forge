@@ -5,26 +5,27 @@
 //! golden files.
 const std = @import("std");
 const Col6Forge = @import("Col6Forge");
+const zig_api = Col6Forge.zig_api;
 
-pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const arena_allocator = arena.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try allocArgs(allocator, init.minimal.args);
+    defer freeArgs(allocator, args);
 
     const options = switch (parseArgs(args)) {
         .success => |value| value,
         .failure => |parse_err| {
-            try printUsage(std.fs.File.stderr());
-            try printParseArgError(std.fs.File.stderr(), parse_err);
+            try printUsage(zig_api.File.stderr());
+            try printParseArgError(zig_api.File.stderr(), parse_err);
             return error.InvalidArguments;
         },
     };
     if (options.show_help) {
-        try printUsage(std.fs.File.stdout());
+        try printUsage(zig_api.File.stdout());
         return;
     }
 
@@ -37,65 +38,46 @@ pub fn main() !void {
     var progress = try Progress.init(cases.len);
     defer progress.deinit();
 
-    if (options.jobs == 1 or cases.len == 1) {
-        var failures: usize = 0;
-        var updated: usize = 0;
-        for (cases) |case| {
-            logProgress(&log_state, &progress, case.input_path);
-            const result = processCase(allocator, case, options, &log_state) catch {
-                failures += 1;
-                _ = progress.completed.fetchAdd(1, .seq_cst);
-                continue;
-            };
-            if (!result.ok) failures += 1;
-            if (result.updated) updated += 1;
+    for (cases) |case| {
+        logProgress(&log_state, &progress, case.input_path);
+        const result = processCase(allocator, case, options, &log_state) catch {
             _ = progress.completed.fetchAdd(1, .seq_cst);
-        }
-        if (options.update) {
-            log_state.stdout("updated {d} diagnostic golden files\n", .{updated});
-            return;
-        }
-        if (failures > 0) {
-            log_state.stderr("diagnostic golden tests failed: {d}\n", .{failures});
+            return error.DiagnosticGoldenTestsFailed;
+        };
+        if (!result.ok) {
+            _ = progress.completed.fetchAdd(1, .seq_cst);
             return error.DiagnosticGoldenTestsFailed;
         }
-        log_state.stdout("diagnostic golden tests passed\n", .{});
-        return;
+        _ = progress.completed.fetchAdd(1, .seq_cst);
     }
-
-    var failures = std.atomic.Value(usize).init(0);
-    var updated = std.atomic.Value(usize).init(0);
-    var pool: std.Thread.Pool = undefined;
-    try pool.init(.{
-        .allocator = allocator,
-        .n_jobs = options.jobs,
-    });
-    defer pool.deinit();
-
-    var wait_group = std.Thread.WaitGroup{};
-    for (cases) |case| {
-        pool.spawnWg(&wait_group, runCaseParallel, .{
-            allocator,
-            case,
-            options,
-            &log_state,
-            &progress,
-            &failures,
-            &updated,
-        });
-    }
-    pool.waitAndWork(&wait_group);
 
     if (options.update) {
-        log_state.stdout("updated {d} diagnostic golden files\n", .{updated.load(.seq_cst)});
+        log_state.stdout("updated diagnostic golden files\n", .{});
         return;
     }
-    const failure_count = failures.load(.seq_cst);
-    if (failure_count > 0) {
-        log_state.stderr("diagnostic golden tests failed: {d}\n", .{failure_count});
-        return error.DiagnosticGoldenTestsFailed;
-    }
     log_state.stdout("diagnostic golden tests passed\n", .{});
+}
+
+fn allocArgs(allocator: std.mem.Allocator, args_src: std.process.Args) ![][]const u8 {
+    var it = try std.process.Args.Iterator.initAllocator(args_src, allocator);
+    defer it.deinit();
+
+    var args = std.array_list.Managed([]const u8).init(allocator);
+    errdefer {
+        for (args.items) |arg| allocator.free(arg);
+        args.deinit();
+    }
+
+    while (it.next()) |arg| {
+        try args.append(try allocator.dupe(u8, arg));
+    }
+
+    return args.toOwnedSlice();
+}
+
+fn freeArgs(allocator: std.mem.Allocator, args: [][]const u8) void {
+    for (args) |arg| allocator.free(arg);
+    allocator.free(args);
 }
 
 const Options = struct {
@@ -207,7 +189,7 @@ fn defaultTestsDir(mode: Mode) []const u8 {
     };
 }
 
-fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
+fn printParseArgError(file: zig_api.File, parse_err: ParseArgError) !void {
     var buffer: [512]u8 = undefined;
     var writer = file.writer(&buffer);
     switch (parse_err) {
@@ -219,7 +201,7 @@ fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
     try writer.interface.flush();
 }
 
-fn printUsage(file: std.fs.File) !void {
+fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage: diagnostic_golden_runner [--mode <pipeline|cc-translate>] [--tests-dir <dir>] [--filter <text>] [--update] [--timeout <ms>] [--jobs <n>]
         \\Options:
@@ -241,13 +223,13 @@ const TestCase = struct {
 
 fn collectTestCases(allocator: std.mem.Allocator, tests_dir: []const u8, filter: ?[]const u8) ![]TestCase {
     var list: std.ArrayList(TestCase) = .empty;
-    var dir = try std.fs.cwd().openDir(tests_dir, .{ .iterate = true });
+    var dir = try zig_api.cwd().openDir(tests_dir, .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(allocator);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(zig_api.defaultIo())) |entry| {
         if (entry.kind != .file) continue;
         if (!isFortranSource(entry.path)) continue;
         if (filter) |needle| {
@@ -285,7 +267,7 @@ fn replaceExtension(allocator: std.mem.Allocator, path: []const u8, new_ext: []c
 }
 
 fn writeFile(path: []const u8, contents: []const u8) !void {
-    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+    var file = try zig_api.cwd().createFile(path, .{ .truncate = true });
     defer file.close();
     try file.writeAll(contents);
 }
@@ -344,7 +326,7 @@ const Comparator = struct {
 };
 
 fn trimCr(line: []const u8) []const u8 {
-    return std.mem.trimRight(u8, line, "\r");
+    return std.mem.trimEnd(u8, line, "\r");
 }
 
 fn equalIgnoringPathSeparators(expected: []const u8, actual: []const u8) bool {
@@ -388,7 +370,20 @@ fn renderDiagnosticText(
     return try allocator.dupe(u8, out.writer.buffered());
 }
 
-fn isTimedOut(timeout_ms: u64, timer: *std.time.Timer) bool {
+const Stopwatch = struct {
+    start_ns: i128,
+
+    fn start() Stopwatch {
+        return .{ .start_ns = zig_api.nowNs() };
+    }
+
+    fn read(self: *const Stopwatch) u64 {
+        const elapsed = zig_api.nowNs() - self.start_ns;
+        return @intCast(if (elapsed > 0) elapsed else 0);
+    }
+};
+
+fn isTimedOut(timeout_ms: u64, timer: *const Stopwatch) bool {
     if (timeout_ms == 0) return false;
     const elapsed_ms = timer.read() / std.time.ns_per_ms;
     return elapsed_ms >= timeout_ms;
@@ -405,7 +400,7 @@ fn processCase(
     options: Options,
     log_state: *LogState,
 ) !CaseResult {
-    var timer = try std.time.Timer.start();
+    var timer = Stopwatch.start();
     var diag_bag = Col6Forge.diag.Bag.init(allocator);
     defer diag_bag.deinit();
     const result = switch (options.mode) {
@@ -434,7 +429,7 @@ fn processCase(
             return .{ .ok = true, .updated = true };
         }
 
-        const expected = std.fs.cwd().readFileAlloc(allocator, case.golden_path, 8 * 1024 * 1024) catch |read_err| {
+        const expected = zig_api.cwd().readFileAlloc(allocator, case.golden_path, 8 * 1024 * 1024) catch |read_err| {
             if (read_err == error.FileNotFound) {
                 log_state.stderr("missing golden file: {s}\n", .{case.golden_path});
             } else {
@@ -483,52 +478,28 @@ fn runCcTranslateDiagnosticPipeline(
     return .{ .output = try allocator.dupe(u8, out.writer.buffered()) };
 }
 
-fn runCaseParallel(
-    allocator: std.mem.Allocator,
-    case: TestCase,
-    options: Options,
-    log_state: *LogState,
-    progress: *Progress,
-    failures: *std.atomic.Value(usize),
-    updated: *std.atomic.Value(usize),
-) void {
-    logProgress(log_state, progress, case.input_path);
-    const result = processCase(allocator, case, options, log_state) catch {
-        _ = failures.fetchAdd(1, .seq_cst);
-        _ = progress.completed.fetchAdd(1, .seq_cst);
-        return;
-    };
-    if (!result.ok) {
-        _ = failures.fetchAdd(1, .seq_cst);
-    }
-    if (result.updated) {
-        _ = updated.fetchAdd(1, .seq_cst);
-    }
-    _ = progress.completed.fetchAdd(1, .seq_cst);
-}
-
 const LogState = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
 
     fn lock(self: *LogState) void {
-        self.mutex.lock();
+        self.mutex.lockUncancelable(zig_api.defaultIo());
     }
 
     fn unlock(self: *LogState) void {
-        self.mutex.unlock();
+        self.mutex.unlock(zig_api.defaultIo());
     }
 
     fn stdout(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(std.fs.File.stdout(), fmt, args);
+        self.print(zig_api.File.stdout(), fmt, args);
     }
 
     fn stderr(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(std.fs.File.stderr(), fmt, args);
+        self.print(zig_api.File.stderr(), fmt, args);
     }
 
-    fn print(self: *LogState, file: std.fs.File, comptime fmt: []const u8, args: anytype) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    fn print(self: *LogState, file: zig_api.File, comptime fmt: []const u8, args: anytype) void {
+        self.mutex.lockUncancelable(zig_api.defaultIo());
+        defer self.mutex.unlock(zig_api.defaultIo());
         var buffer: [4096]u8 = undefined;
         var writer = file.writer(&buffer);
         writer.interface.print(fmt, args) catch {};

@@ -95,14 +95,14 @@ pub const Comparator = struct {
 
 fn exitCode(term: std.process.Child.Term) u32 {
     return switch (term) {
-        .Exited => |code| code,
-        .Signal => |signal| 128 + signal,
+        .exited => |code| code,
+        .signal => |signal| 128 + @intFromEnum(signal),
         else => 255,
     };
 }
 
 fn trimCr(line: []const u8) []const u8 {
-    return std.mem.trimRight(u8, line, "\r");
+    return std.mem.trimEnd(u8, line, "\r");
 }
 
 fn testCaseStemEquals(input_path: []const u8, stem: []const u8) bool {

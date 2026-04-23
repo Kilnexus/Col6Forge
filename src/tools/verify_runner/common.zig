@@ -1,6 +1,7 @@
 const builtin_mod = @import("builtin");
 pub const std = @import("std");
 pub const Col6Forge = @import("Col6Forge");
+pub const zig_api = Col6Forge.zig_api;
 pub const fallback_policy = @import("../fallback_policy.zig");
 pub const builtin = builtin_mod;
 

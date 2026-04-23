@@ -1,4 +1,5 @@
 const std = @import("std");
+const zig_compat = @import("zig_compat.zig");
 const COL6FORGE_MAX_UNITS = 256;
 const COL6FORGE_FILENAME_MAX = 4096;
 const COL6FORGE_UNFORMATTED_MAX_RECORDS: usize = std.math.maxInt(usize);
@@ -43,7 +44,7 @@ extern var direct_units: [COL6FORGE_MAX_UNITS]DirectUnit;
 extern var unformatted_units: [COL6FORGE_MAX_UNITS]UnformattedUnit;
 extern fn unit_filename(unit: c_int, buf: ?[*]u8, len: usize) void;
 
-var store_unit_locks: [COL6FORGE_STORE_LOCK_STRIPES]std.Thread.Mutex = [_]std.Thread.Mutex{.{}} ** COL6FORGE_STORE_LOCK_STRIPES;
+var store_unit_locks: [COL6FORGE_STORE_LOCK_STRIPES]zig_compat.Mutex = [_]zig_compat.Mutex{.{}} ** COL6FORGE_STORE_LOCK_STRIPES;
 
 var extra_direct_units: [COL6FORGE_STORE_LOCK_STRIPES]std.AutoHashMapUnmanaged(c_int, *DirectUnit) =
     [_]std.AutoHashMapUnmanaged(c_int, *DirectUnit){.{}} ** COL6FORGE_STORE_LOCK_STRIPES;
@@ -82,7 +83,7 @@ fn unitLockIndex(unit: c_int) usize {
     return @intCast(bits % COL6FORGE_STORE_LOCK_STRIPES);
 }
 
-fn unitLock(unit: c_int) *std.Thread.Mutex {
+fn unitLock(unit: c_int) *zig_compat.Mutex {
     return &store_unit_locks[unitLockIndex(unit)];
 }
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const io_unit_manager = @import("io_unit_manager.zig");
 const runtime_text = @import("runtime_text.zig");
+const zig_compat = @import("zig_compat.zig");
 const COL6FORGE_FILENAME_MAX = 4096;
 
 extern fn remove(pathname: [*:0]const u8) c_int;
@@ -101,8 +102,7 @@ fn scanBackspaceTarget(file: *FILE, start_pos: c_long) ?c_long {
 
 fn col6forgeFileExists(name: [*:0]const u8) bool {
     if (name[0] == 0) return false;
-    std.fs.cwd().access(cstrSlice(name), .{}) catch return false;
-    return true;
+    return zig_compat.fileExists(cstrSlice(name));
 }
 
 fn toUpperAscii(ch: u8) u8 {

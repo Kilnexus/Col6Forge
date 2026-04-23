@@ -1,5 +1,6 @@
 const std = @import("std");
 const runtime_text = @import("runtime_text.zig");
+const zig_compat = @import("zig_compat.zig");
 
 const FILE = opaque {};
 
@@ -28,7 +29,7 @@ fn resolvePauseAction(mode: c_int, interactive: bool) PauseAction {
 const cstrlen = runtime_text.cstrlen;
 
 fn isInteractiveStdio() bool {
-    return std.fs.File.stdin().isTty() and std.fs.File.stderr().isTty();
+    return zig_compat.stdinIsTty() and zig_compat.stderrIsTty();
 }
 
 fn pauseOutput() ?*FILE {

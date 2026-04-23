@@ -414,7 +414,7 @@ fn appendInternalTabMarker(out: *std.array_list.Managed(u8), tab: TabSpec) !void
         .relative_right => 'R',
         .relative_left => 'L',
     });
-    try out.writer().print("{d}", .{tab.count});
+    try out.print("{d}", .{tab.count});
     try out.append(0x02);
 }
 
@@ -451,8 +451,8 @@ fn lowerWrite(allocator: std.mem.Allocator, tokens: []const Token, arg_kinds: ?[
                 if (arg_i >= nargs) break;
                 try out.append('%');
                 if (sign_plus) try out.append('+');
-                if (s.width > 0) try out.writer().print("{d}", .{s.width});
-                if (s.explicit_min_digits) try out.writer().print(".{d}", .{s.min_digits});
+                if (s.width > 0) try out.print("{d}", .{s.width});
+                if (s.explicit_min_digits) try out.print(".{d}", .{s.min_digits});
                 try out.append('d');
                 arg_i += 1;
             },
@@ -460,25 +460,25 @@ fn lowerWrite(allocator: std.mem.Allocator, tokens: []const Token, arg_kinds: ?[
                 if (arg_i >= nargs) break;
                 try out.append('%');
                 if (sign_plus) try out.append('+');
-                if (s.width > 0) try out.writer().print("{d}", .{s.width});
-                try out.writer().print(".{d}f", .{s.precision});
+                if (s.width > 0) try out.print("{d}", .{s.width});
+                try out.print(".{d}f", .{s.precision});
                 arg_i += 1;
             },
             .char => |s| {
                 if (arg_i >= nargs) break;
                 const k = kindAt(arg_kinds, arg_i, nargs);
                 if (k == 'i' or k == 'j') {
-                    if (s.width > 0) try out.writer().print("%{d}d", .{s.width}) else try out.appendSlice("%d");
+                    if (s.width > 0) try out.print("%{d}d", .{s.width}) else try out.appendSlice("%d");
                 } else if (isFloatKind(k)) {
-                    if (s.width > 0) try out.writer().print("%{d}.0f", .{s.width}) else try out.appendSlice("%.0f");
+                    if (s.width > 0) try out.print("%{d}.0f", .{s.width}) else try out.appendSlice("%.0f");
                 } else {
-                    if (s.width > 0) try out.writer().print("%{d}s", .{s.width}) else try out.appendSlice("%s");
+                    if (s.width > 0) try out.print("%{d}s", .{s.width}) else try out.appendSlice("%s");
                 }
                 arg_i += 1;
             },
             .logical => |s| {
                 if (arg_i >= nargs) break;
-                if (s.width > 0) try out.writer().print("%{d}c", .{s.width}) else try out.appendSlice("%c");
+                if (s.width > 0) try out.print("%{d}c", .{s.width}) else try out.appendSlice("%c");
                 arg_i += 1;
             },
         }
@@ -499,36 +499,36 @@ fn lowerRead(allocator: std.mem.Allocator, tokens: []const Token, arg_kinds: ?[*
             .spaces => |c| for (0..c) |_| try out.append(' '),
             .tab => |tab| {
                 const d: u8 = switch (tab.kind) { .absolute => 'T', .relative_right => 'R', .relative_left => 'U' };
-                try out.writer().print("%{d}{c}", .{ tab.count, d });
+                try out.print("%{d}{c}", .{ tab.count, d });
             },
             .blank => |b| try out.appendSlice(if (b == .nulls) "%N" else "%Z"),
             .sign => {},
-            .scale => |value| try out.writer().print("%{d}P", .{value}),
+            .scale => |value| try out.print("%{d}P", .{value}),
             .colon => if (arg_i >= nargs) break,
             .int => |s| {
                 if (arg_i >= nargs) break;
-                if (s.width > 0) try out.writer().print("%{d}d", .{s.width}) else try out.appendSlice("%d");
+                if (s.width > 0) try out.print("%{d}d", .{s.width}) else try out.appendSlice("%d");
                 arg_i += 1;
             },
             .real, .real_fixed => |s| {
                 if (arg_i >= nargs) break;
                 const spec = if (kindAt(arg_kinds, arg_i, nargs) == 'D') "lf" else "f";
                 if (s.width > 0) {
-                    try out.writer().print("%{d}.{d}{s}", .{ s.width, s.precision, spec });
+                    try out.print("%{d}.{d}{s}", .{ s.width, s.precision, spec });
                 } else {
-                    try out.writer().print("%.{d}{s}", .{ s.precision, spec });
+                    try out.print("%.{d}{s}", .{ s.precision, spec });
                 }
                 arg_i += 1;
             },
             .char => |s| {
                 if (arg_i >= nargs) break;
                 const w = if (s.width > 0) s.width else 1;
-                try out.writer().print("%{d}c", .{w});
+                try out.print("%{d}c", .{w});
                 arg_i += 1;
             },
             .logical => |s| {
                 if (arg_i >= nargs) break;
-                if (s.width > 0) try out.writer().print("%{d}L", .{s.width}) else try out.appendSlice("%L");
+                if (s.width > 0) try out.print("%{d}L", .{s.width}) else try out.appendSlice("%L");
                 arg_i += 1;
             },
         }
@@ -556,7 +556,7 @@ fn lowerWriteStream(allocator: std.mem.Allocator, seq: TokenSequence, internal_m
             .scale => |value| scale_factor = value,
             .sign => |ctrl| sign_plus = (ctrl == .plus),
             .colon => {},
-            .int => |spec| try out.writer().print(
+            .int => |spec| try out.print(
                 "%I{d},{d},{d};",
                 .{
                     spec.width,
@@ -564,20 +564,20 @@ fn lowerWriteStream(allocator: std.mem.Allocator, seq: TokenSequence, internal_m
                     sign_flag,
                 },
             ),
-            .real_fixed => |spec| try out.writer().print("%F{d},{d},{d};", .{ spec.width, spec.precision, sign_flag }),
+            .real_fixed => |spec| try out.print("%F{d},{d},{d};", .{ spec.width, spec.precision, sign_flag }),
             .real => |spec| {
                 const real_kind: u8 = switch (spec.kind) {
                     .e => 'E',
                     .d => 'D',
                     .g => 'G',
                 };
-                try out.writer().print(
+                try out.print(
                     "%R{c},{d},{d},{d},{d},{d};",
                     .{ real_kind, spec.width, spec.precision, spec.exp_width, scale_factor, sign_flag },
                 );
             },
-            .char => |spec| try out.writer().print("%S{d};", .{spec.width}),
-            .logical => |spec| try out.writer().print("%L{d};", .{spec.width}),
+            .char => |spec| try out.print("%S{d};", .{spec.width}),
+            .logical => |spec| try out.print("%L{d};", .{spec.width}),
         }
     }
     try out.append(0);
@@ -598,25 +598,25 @@ fn lowerReadStream(allocator: std.mem.Allocator, seq: TokenSequence) ![]u8 {
                     .relative_right => 'R',
                     .relative_left => 'U',
                 };
-                try out.writer().print("%{d}{c}", .{ tab.count, d });
+                try out.print("%{d}{c}", .{ tab.count, d });
             },
             .blank => |ctrl| try out.appendSlice(if (ctrl == .nulls) "%N" else "%Z"),
             .sign => {},
-            .scale => |value| try out.writer().print("%{d}P", .{value}),
+            .scale => |value| try out.print("%{d}P", .{value}),
             .colon => {},
             .int => |spec| if (spec.width > 0) {
-                try out.writer().print("%{d}d", .{spec.width});
+                try out.print("%{d}d", .{spec.width});
             } else {
                 try out.appendSlice("%d");
             },
             .real, .real_fixed => |spec| if (spec.width > 0) {
-                try out.writer().print("%{d}.{d}f", .{ spec.width, spec.precision });
+                try out.print("%{d}.{d}f", .{ spec.width, spec.precision });
             } else {
-                try out.writer().print("%.{d}f", .{spec.precision});
+                try out.print("%.{d}f", .{spec.precision});
             },
-            .char => |spec| try out.writer().print("%{d}c", .{if (spec.width > 0) spec.width else 1}),
+            .char => |spec| try out.print("%{d}c", .{if (spec.width > 0) spec.width else 1}),
             .logical => |spec| if (spec.width > 0) {
-                try out.writer().print("%{d}L", .{spec.width});
+                try out.print("%{d}L", .{spec.width});
             } else {
                 try out.appendSlice("%L");
             },

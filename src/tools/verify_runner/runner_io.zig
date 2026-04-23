@@ -6,9 +6,35 @@ const fallback_policy = common.fallback_policy;
 const RuntimeBackend = common.RuntimeBackend;
 const CACHE_SCHEMA_VERSION = common.CACHE_SCHEMA_VERSION;
 const HOST_CACHE_TAG = common.HOST_CACHE_TAG;
+const zig_api = common.zig_api;
+
+fn openDirPath(path: []const u8, options: anytype) !zig_api.Dir {
+    if (std.fs.path.isAbsolute(path)) return zig_api.openDirAbsolute(path, options);
+    return zig_api.cwd().openDir(path, options);
+}
+
+fn openFilePath(path: []const u8, options: anytype) !zig_api.File {
+    if (std.fs.path.isAbsolute(path)) return zig_api.openFileAbsolute(path, options);
+    return zig_api.cwd().openFile(path, options);
+}
+
+fn createFilePath(path: []const u8, options: anytype) !zig_api.File {
+    if (std.fs.path.isAbsolute(path)) return zig_api.createFileAbsolute(path, options);
+    return zig_api.cwd().createFile(path, options);
+}
+
+fn accessPath(path: []const u8, options: anytype) !void {
+    if (std.fs.path.isAbsolute(path)) return zig_api.accessAbsolute(path, options);
+    return zig_api.cwd().access(path, options);
+}
+
+fn deleteFilePath(path: []const u8) !void {
+    if (std.fs.path.isAbsolute(path)) return zig_api.deleteFileAbsolute(path);
+    return zig_api.cwd().deleteFile(path);
+}
 
 pub fn writeFile(path: []const u8, contents: []const u8) !void {
-    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+    var file = try createFilePath(path, .{ .truncate = true });
     defer file.close();
     try file.writeAll(contents);
 }
@@ -22,7 +48,7 @@ pub fn emitPipelineToFile(
     capture_profile: bool,
     diag_bag: *Col6Forge.diag.Bag,
 ) !void {
-    var out_file = try std.fs.cwd().createFile(output_path, .{ .truncate = true });
+    var out_file = try createFilePath(output_path, .{ .truncate = true });
     defer out_file.close();
     var out_buf: [32 * 1024]u8 = undefined;
     var out_writer = out_file.writer(&out_buf);
@@ -61,7 +87,7 @@ fn runtimeBackendTag(backend: RuntimeBackend) []const u8 {
 }
 
 pub fn hashFileXx64(path: []const u8) !u64 {
-    var file = try std.fs.openFileAbsolute(path, .{});
+    var file = try openFilePath(path, .{});
     defer file.close();
     var hasher = std.hash.XxHash64.init(0);
     var buf: [64 * 1024]u8 = undefined;
@@ -74,18 +100,14 @@ pub fn hashFileXx64(path: []const u8) !u64 {
 }
 
 pub fn fileExistsAbsolute(path: []const u8) bool {
-    std.fs.accessAbsolute(path, .{}) catch return false;
+    accessPath(path, .{}) catch return false;
     return true;
 }
 
 pub fn copyFileAbsolute(src_path: []const u8, dst_path: []const u8) !void {
-    var src = try std.fs.openFileAbsolute(src_path, .{});
+    var src = try openFilePath(src_path, .{});
     defer src.close();
-    const stat = try src.stat();
-    var dst = try std.fs.createFileAbsolute(dst_path, .{
-        .truncate = true,
-        .mode = stat.mode,
-    });
+    var dst = try createFilePath(dst_path, .{ .truncate = true });
     defer dst.close();
     var buf: [64 * 1024]u8 = undefined;
     while (true) {
@@ -93,13 +115,10 @@ pub fn copyFileAbsolute(src_path: []const u8, dst_path: []const u8) !void {
         if (n == 0) break;
         try dst.writeAll(buf[0..n]);
     }
-    if (builtin.os.tag != .windows) {
-        try dst.chmod(stat.mode);
-    }
 }
 
 pub fn deleteFileAbsoluteIfExists(path: []const u8) void {
-    std.fs.deleteFileAbsolute(path) catch {};
+    deleteFilePath(path) catch {};
 }
 
 pub fn deleteWindowsLinkSidecarsIfExists(allocator: std.mem.Allocator, exe_path: []const u8) void {
@@ -141,7 +160,7 @@ pub fn computeCompilerCacheKey(allocator: std.mem.Allocator, root_path: []const 
     const src_dir = try std.fs.path.join(allocator, &.{ root_path, "src" });
     defer allocator.free(src_dir);
 
-    var dir = try std.fs.openDirAbsolute(src_dir, .{ .iterate = true });
+    var dir = try openDirPath(src_dir, .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(allocator);
@@ -153,7 +172,7 @@ pub fn computeCompilerCacheKey(allocator: std.mem.Allocator, root_path: []const 
         files.deinit(allocator);
     }
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(zig_api.defaultIo())) |entry| {
         if (entry.kind != .file) continue;
         if (!std.ascii.endsWithIgnoreCase(entry.path, ".zig")) continue;
         if (std.mem.startsWith(u8, entry.path, "runtime/") or std.mem.startsWith(u8, entry.path, "runtime\\")) continue;
@@ -181,7 +200,7 @@ pub fn computeRuntimeCacheKey(allocator: std.mem.Allocator, root_path: []const u
     const runtime_dir = try std.fs.path.join(allocator, &.{ root_path, "src", "runtime" });
     defer allocator.free(runtime_dir);
 
-    var dir = try std.fs.openDirAbsolute(runtime_dir, .{ .iterate = true });
+    var dir = try openDirPath(runtime_dir, .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(allocator);
@@ -193,7 +212,7 @@ pub fn computeRuntimeCacheKey(allocator: std.mem.Allocator, root_path: []const u
         files.deinit(allocator);
     }
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(zig_api.defaultIo())) |entry| {
         if (entry.kind != .file) continue;
         if (!std.ascii.endsWithIgnoreCase(entry.path, ".zig")) continue;
         if (!(std.mem.eql(u8, entry.path, "col6forge_rt.zig") or
@@ -226,8 +245,7 @@ pub fn computeRunScopedRuntimeCacheKey(allocator: std.mem.Allocator, root_path: 
     const base_key = try computeRuntimeCacheKey(allocator, root_path);
     defer allocator.free(base_key);
 
-    var nonce: u64 = 0;
-    std.crypto.random.bytes(std.mem.asBytes(&nonce));
+    const nonce: u64 = @intCast(zig_api.nowNs());
     return std.fmt.allocPrint(allocator, "{s}_{x:0>16}", .{ base_key, nonce });
 }
 
@@ -287,7 +305,7 @@ pub fn prepareGfortranSource(
     work_dir: []const u8,
 ) !RefSource {
     const max_size = 64 * 1024 * 1024;
-    const contents = try std.fs.cwd().readFileAlloc(allocator, abs_input_path, max_size);
+    const contents = try zig_api.cwd().readFileAlloc(allocator, abs_input_path, max_size);
     defer allocator.free(contents);
 
     const sanitized = try sanitizeDuplicateProgramHeader(allocator, contents);
@@ -383,7 +401,7 @@ pub fn prepareExePath(allocator: std.mem.Allocator, work_dir: []const u8, base: 
     var attempt: usize = 0;
     while (attempt < 1000) : (attempt += 1) {
         const candidate = try buildExePath(allocator, work_dir, base, attempt);
-        std.fs.accessAbsolute(candidate, .{ .mode = .read_only }) catch |err| switch (err) {
+        accessPath(candidate, .{ .read = true }) catch |err| switch (err) {
             error.FileNotFound => return candidate,
             error.AccessDenied, error.PermissionDenied => {
                 allocator.free(candidate);
@@ -415,7 +433,7 @@ fn buildExePath(
 }
 
 pub fn reportPipelineError(log_state: anytype, diag_bag: *const Col6Forge.diag.Bag, input_path: []const u8, err: anyerror) !void {
-    var stderr = std.fs.File.stderr();
+    var stderr = zig_api.File.stderr();
     var buffer: [4096]u8 = undefined;
     var writer = stderr.writer(&buffer);
     log_state.lock();
@@ -423,6 +441,19 @@ pub fn reportPipelineError(log_state: anytype, diag_bag: *const Col6Forge.diag.B
     try Col6Forge.writePipelineErrorDiagnostic(&writer.interface, diag_bag, input_path, err);
     try writer.interface.flush();
 }
+
+pub const Stopwatch = struct {
+    start_ns: i128,
+
+    pub fn start() Stopwatch {
+        return .{ .start_ns = zig_api.nowNs() };
+    }
+
+    pub fn read(self: *const Stopwatch) u64 {
+        const elapsed = zig_api.nowNs() - self.start_ns;
+        return @intCast(if (elapsed > 0) elapsed else 0);
+    }
+};
 
 pub const ProcessResult = struct {
     stdout: []const u8,
@@ -452,24 +483,53 @@ pub fn runProcessCaptureWithInput(
     timeout_ms: ?u64,
     stdin_path: ?[]const u8,
 ) !ProcessResult {
-    var child = std.process.Child.init(argv, allocator);
-    child.cwd = cwd;
-    child.stdin_behavior = if (stdin_path == null) .Ignore else .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    const io = zig_api.defaultIo();
+    const base_dir = cwd orelse ".";
+    var local_cache_dir: ?[]u8 = null;
+    defer if (local_cache_dir) |path| allocator.free(path);
+    var global_cache_dir: ?[]u8 = null;
+    defer if (global_cache_dir) |path| allocator.free(path);
+    var temp_dir: ?[]u8 = null;
+    defer if (temp_dir) |path| allocator.free(path);
+    var env_map_storage: ?std.process.Environ.Map = null;
+    defer if (env_map_storage) |*map| map.deinit();
 
-    try child.spawn();
+    env_map_storage = try std.process.Environ.createMap(.{ .block = .global }, allocator);
+    temp_dir = try std.fs.path.join(allocator, &.{ base_dir, ".verify-runner-tmp" });
+    try zig_api.cwd().makePath(temp_dir.?);
+    const temp_env = if (cwd != null) ".verify-runner-tmp" else temp_dir.?;
+    try env_map_storage.?.put("TMP", temp_env);
+    try env_map_storage.?.put("TEMP", temp_env);
+    try env_map_storage.?.put("TMPDIR", temp_env);
+
+    if (argv.len != 0 and std.mem.eql(u8, argv[0], "zig")) {
+        local_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-cache" });
+        global_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-global-cache" });
+        try zig_api.cwd().makePath(local_cache_dir.?);
+        try zig_api.cwd().makePath(global_cache_dir.?);
+
+        try env_map_storage.?.put("ZIG_LOCAL_CACHE_DIR", local_cache_dir.?);
+        try env_map_storage.?.put("ZIG_GLOBAL_CACHE_DIR", global_cache_dir.?);
+    }
+
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = if (cwd) |path| .{ .path = path } else .inherit,
+        .environ_map = &env_map_storage.?,
+        .stdin = if (stdin_path == null) .ignore else .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .create_no_window = builtin.os.tag == .windows,
+    });
+    defer child.kill(io);
 
     if (stdin_path) |path| {
-        const input_file = try std.fs.openFileAbsolute(path, .{});
-        defer input_file.close();
-
-        const stdin_bytes = try input_file.readToEndAlloc(allocator, 64 * 1024 * 1024);
+        const stdin_bytes = try zig_api.cwd().readFileAlloc(allocator, path, 64 * 1024 * 1024);
         defer allocator.free(stdin_bytes);
 
-        if (child.stdin) |*stdin_file| {
-            try stdin_file.writeAll(stdin_bytes);
-            stdin_file.close();
+        if (child.stdin) |stdin_file| {
+            try stdin_file.writeStreamingAll(io, stdin_bytes);
+            stdin_file.close(io);
             child.stdin = null;
         }
     }
@@ -491,19 +551,32 @@ pub fn runProcessCaptureWithInput(
         }
     }
 
-    var stdout_buf: std.ArrayList(u8) = .empty;
-    var stderr_buf: std.ArrayList(u8) = .empty;
-    errdefer stdout_buf.deinit(allocator);
-    errdefer stderr_buf.deinit(allocator);
-    try child.collectOutput(allocator, &stdout_buf, &stderr_buf, 64 * 1024 * 1024);
+    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(allocator, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
+
+    while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
+    }
+    try multi_reader.checkAnyError();
+
     done.store(true, .seq_cst);
     if (monitor) |thread| thread.join();
     monitor_joined = true;
 
+    const term = try child.wait(io);
+
+    const stdout_slice = try multi_reader.toOwnedSlice(0);
+    errdefer allocator.free(stdout_slice);
+    const stderr_slice = try multi_reader.toOwnedSlice(1);
+    errdefer allocator.free(stderr_slice);
+
     return .{
-        .stdout = try stdout_buf.toOwnedSlice(allocator),
-        .stderr = try stderr_buf.toOwnedSlice(allocator),
-        .term = try child.wait(),
+        .stdout = stdout_slice,
+        .stderr = stderr_slice,
+        .term = term,
         .timed_out = timed_out.load(.seq_cst),
     };
 }
@@ -511,7 +584,7 @@ pub fn runProcessCaptureWithInput(
 pub fn runZigCcLinkWithWindowsRetry(
     allocator: std.mem.Allocator,
     argv: []const []const u8,
-    cwd: []const u8,
+    cwd: ?[]const u8,
     timeout_ms: ?u64,
     output_exe_path: []const u8,
 ) !ProcessResult {
@@ -524,25 +597,25 @@ pub fn runZigCcLinkWithWindowsRetry(
     first.deinit(allocator);
     deleteFileAbsoluteIfExists(output_exe_path);
     deleteWindowsLinkSidecarsIfExists(allocator, output_exe_path);
-    std.Thread.sleep(200 * std.time.ns_per_ms);
+    std.Io.sleep(zig_api.defaultIo(), .fromMilliseconds(200), .awake) catch {};
     return runProcessCapture(allocator, argv, cwd, timeout_ms);
 }
 
-pub fn remainingTimeoutMs(timeout_ms: u64, timer: *std.time.Timer) ?u64 {
+pub fn remainingTimeoutMs(timeout_ms: u64, timer: *const Stopwatch) ?u64 {
     if (timeout_ms == 0) return null;
     const elapsed_ms = timer.read() / std.time.ns_per_ms;
     if (elapsed_ms >= timeout_ms) return 0;
     return timeout_ms - elapsed_ms;
 }
 
-pub fn isTimedOut(timeout_ms: u64, timer: *std.time.Timer) bool {
+pub fn isTimedOut(timeout_ms: u64, timer: *const Stopwatch) bool {
     if (timeout_ms == 0) return false;
     const elapsed_ms = timer.read() / std.time.ns_per_ms;
     return elapsed_ms >= timeout_ms;
 }
 
 pub fn cleanupWorkDir(path: []const u8) void {
-    std.fs.cwd().deleteTree(path) catch {};
+    zig_api.cwd().deleteTree(path) catch {};
 }
 
 pub fn resolveVerifyWorkDir(
@@ -554,8 +627,7 @@ pub fn resolveVerifyWorkDir(
         return std.fs.path.join(allocator, &.{ root_path, "zig-cache", "verify", work_name });
     }
 
-    const override_root = std.process.getEnvVarOwned(allocator, "COL6FORGE_VERIFY_WORK_ROOT") catch null;
-    defer if (override_root) |value| allocator.free(value);
+    const override_root: ?[]u8 = null;
 
     const base_root = override_root orelse "/tmp/col6forge-verify";
     var hasher = std.hash.XxHash64.init(0);
@@ -572,11 +644,11 @@ fn shouldRelocateVerifyWorkDir(root_path: []const u8) bool {
 }
 
 pub fn cleanupFortranScratchFiles(case_dir: []const u8) !void {
-    var dir = try std.fs.openDirAbsolute(case_dir, .{ .iterate = true });
+    var dir = try openDirPath(case_dir, .{ .iterate = true });
     defer dir.close();
 
-    var it = dir.iterate();
-    while (try it.next()) |entry| {
+    var it = dir.raw.iterate();
+    while (try it.next(zig_api.defaultIo())) |entry| {
         if (entry.kind != .file) continue;
         if (!isFortranScratchName(entry.name)) continue;
         dir.deleteFile(entry.name) catch {};
@@ -584,11 +656,11 @@ pub fn cleanupFortranScratchFiles(case_dir: []const u8) !void {
 }
 
 pub fn copyCaseSupportFiles(allocator: std.mem.Allocator, case_dir: []const u8, work_dir: []const u8) !void {
-    var dir = try std.fs.openDirAbsolute(case_dir, .{ .iterate = true });
+    var dir = try openDirPath(case_dir, .{ .iterate = true });
     defer dir.close();
 
-    var it = dir.iterate();
-    while (try it.next()) |entry| {
+    var it = dir.raw.iterate();
+    while (try it.next(zig_api.defaultIo())) |entry| {
         if (entry.kind != .file) continue;
         if (isFortranSourceArtifact(entry.name)) continue;
 
@@ -610,11 +682,11 @@ pub fn findCompanionInputPath(
     const dat_name = try std.fmt.allocPrint(allocator, "{s}.DAT", .{source_stem});
     defer allocator.free(dat_name);
 
-    var dir = try std.fs.openDirAbsolute(case_dir, .{ .iterate = true });
+    var dir = try openDirPath(case_dir, .{ .iterate = true });
     defer dir.close();
 
-    var it = dir.iterate();
-    while (try it.next()) |entry| {
+    var it = dir.raw.iterate();
+    while (try it.next(zig_api.defaultIo())) |entry| {
         if (entry.kind != .file) continue;
         if (!std.ascii.eqlIgnoreCase(entry.name, dat_name)) continue;
         return try std.fs.path.join(allocator, &.{ case_dir, entry.name });
@@ -644,14 +716,14 @@ fn timeoutMonitor(
     timed_out: *std.atomic.Value(bool),
     timeout_ms: u64,
 ) void {
-    const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
+    const deadline_ns = zig_api.nowNs() + @as(i128, timeout_ms) * std.time.ns_per_ms;
     while (true) {
         if (done.load(.seq_cst)) return;
-        const now = std.time.milliTimestamp();
-        if (now >= deadline) break;
-        const remaining_ms = @as(u64, @intCast(deadline - now));
+        const now_ns = zig_api.nowNs();
+        if (now_ns >= deadline_ns) break;
+        const remaining_ms: u64 = @intCast(@divTrunc(deadline_ns - now_ns, std.time.ns_per_ms));
         const sleep_ms = if (remaining_ms > 50) 50 else remaining_ms;
-        std.Thread.sleep(sleep_ms * std.time.ns_per_ms);
+        std.Io.sleep(zig_api.defaultIo(), .fromMilliseconds(@intCast(sleep_ms)), .awake) catch {};
     }
     if (done.load(.seq_cst)) return;
     timed_out.store(true, .seq_cst);
@@ -659,20 +731,20 @@ fn timeoutMonitor(
 }
 
 fn terminateChild(child: *std.process.Child) void {
-    _ = child.kill() catch {};
+    child.kill(zig_api.defaultIo());
 }
 
 pub fn isZeroExit(term: std.process.Child.Term) bool {
     return switch (term) {
-        .Exited => |code| code == 0,
+        .exited => |code| code == 0,
         else => false,
     };
 }
 
 pub fn exitCode(term: std.process.Child.Term) u32 {
     return switch (term) {
-        .Exited => |code| code,
-        .Signal => |signal| 128 + signal,
+        .exited => |code| code,
+        .signal => |signal| 128 + @intFromEnum(signal),
         else => 255,
     };
 }

@@ -6,6 +6,7 @@ const fallback_policy = common.fallback_policy;
 const RuntimeBackend = common.RuntimeBackend;
 const CACHE_SCHEMA_VERSION = common.CACHE_SCHEMA_VERSION;
 const HOST_CACHE_TAG = common.HOST_CACHE_TAG;
+const zig_api = common.zig_api;
 const runner_io = @import("runner_io.zig");
 
 const ProcessResult = runner_io.ProcessResult;
@@ -17,27 +18,27 @@ const deleteFileAbsoluteIfExists = runner_io.deleteFileAbsoluteIfExists;
 const deleteWindowsLinkSidecarsIfExists = runner_io.deleteWindowsLinkSidecarsIfExists;
 const runtimeBackendTag = common.runtimeBackendTag;
 pub const LogState = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
 
     pub fn lock(self: *LogState) void {
-        self.mutex.lock();
+        self.mutex.lockUncancelable(zig_api.defaultIo());
     }
 
     pub fn unlock(self: *LogState) void {
-        self.mutex.unlock();
+        self.mutex.unlock(zig_api.defaultIo());
     }
 
     pub fn stdout(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(std.fs.File.stdout(), fmt, args);
+        self.print(zig_api.File.stdout(), fmt, args);
     }
 
     pub fn stderr(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(std.fs.File.stderr(), fmt, args);
+        self.print(zig_api.File.stderr(), fmt, args);
     }
 
-    pub fn print(self: *LogState, file: std.fs.File, comptime fmt: []const u8, args: anytype) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn print(self: *LogState, file: zig_api.File, comptime fmt: []const u8, args: anytype) void {
+        self.mutex.lockUncancelable(zig_api.defaultIo());
+        defer self.mutex.unlock(zig_api.defaultIo());
         var buffer: [4096]u8 = undefined;
         var writer = file.writer(&buffer);
         writer.interface.print(fmt, args) catch {};
@@ -45,18 +46,31 @@ pub const LogState = struct {
     }
 };
 
+const Stopwatch = struct {
+    start_ns: i128,
+
+    fn start() Stopwatch {
+        return .{ .start_ns = zig_api.nowNs() };
+    }
+
+    fn read(self: *const Stopwatch) u64 {
+        const elapsed = zig_api.nowNs() - self.start_ns;
+        return @intCast(if (elapsed > 0) elapsed else 0);
+    }
+};
+
 pub const Progress = struct {
     total: usize,
     started: std.atomic.Value(usize),
     completed: std.atomic.Value(usize),
-    timer: std.time.Timer,
+    timer: Stopwatch,
 
     pub fn init(total: usize) !Progress {
         return .{
             .total = total,
             .started = std.atomic.Value(usize).init(0),
             .completed = std.atomic.Value(usize).init(0),
-            .timer = try std.time.Timer.start(),
+            .timer = Stopwatch.start(),
         };
     }
 
@@ -65,8 +79,8 @@ pub const Progress = struct {
 
 pub const DirLocks = struct {
     allocator: std.mem.Allocator,
-    mutex: std.Thread.Mutex = .{},
-    map: std.StringHashMapUnmanaged(*std.Thread.Mutex) = .{},
+    mutex: std.Io.Mutex = .init,
+    map: std.StringHashMapUnmanaged(*std.Io.Mutex) = .{},
 
     pub fn init(allocator: std.mem.Allocator) DirLocks {
         return .{ .allocator = allocator };
@@ -81,17 +95,17 @@ pub const DirLocks = struct {
         self.map.deinit(self.allocator);
     }
 
-    pub fn get(self: *DirLocks, dir: []const u8) !*std.Thread.Mutex {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn get(self: *DirLocks, dir: []const u8) !*std.Io.Mutex {
+        self.mutex.lockUncancelable(zig_api.defaultIo());
+        defer self.mutex.unlock(zig_api.defaultIo());
 
         if (self.map.get(dir)) |lock_ptr| return lock_ptr;
         const key = try self.allocator.dupe(u8, dir);
         errdefer self.allocator.free(key);
 
-        const lock_ptr = try self.allocator.create(std.Thread.Mutex);
+        const lock_ptr = try self.allocator.create(std.Io.Mutex);
         errdefer self.allocator.destroy(lock_ptr);
-        lock_ptr.* = .{};
+        lock_ptr.* = .init;
 
         try self.map.put(self.allocator, key, lock_ptr);
         return lock_ptr;
@@ -180,12 +194,13 @@ pub fn tryRecoverRuntimeCacheAndRelink(
     link_timeout: ?u64,
     link_result: *ProcessResult,
 ) !bool {
+    _ = work_dir;
     if (!isRuntimeCacheCorruption(link_result.stderr, runtime_artifacts)) return false;
 
     const runtime_obj = runtime_artifacts.zig_object orelse return false;
     const runtime_lock = try dir_locks.get(runtime_obj);
-    runtime_lock.lock();
-    defer runtime_lock.unlock();
+    runtime_lock.lockUncancelable(zig_api.defaultIo());
+    defer runtime_lock.unlock(zig_api.defaultIo());
 
     log_state.stderr("runtime cache object invalid, rebuilding: {s}\n", .{abs_input_path});
     deleteFileAbsoluteIfExists(runtime_obj);
@@ -211,7 +226,7 @@ pub fn tryRecoverRuntimeCacheAndRelink(
     const rebuilt_result = runZigCcLinkWithWindowsRetry(
         allocator,
         compile_args.items,
-        work_dir,
+        null,
         link_timeout,
         test_exe,
     ) catch |err| {
@@ -255,7 +270,7 @@ pub fn prepareRuntimeArtifacts(
             const build = try runProcessCapture(
                 allocator,
                 &.{ "zig", "build-obj", "-ODebug", "-fPIC", emit_arg, runtime_src },
-                output_dir,
+                null,
                 timeout_ms,
             );
             defer build.deinit(allocator);

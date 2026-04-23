@@ -4,6 +4,7 @@ const build_options = @import("build_options");
 const types = @import("types.zig");
 const process = @import("process.zig");
 const zig_api = Col6Forge.zig_api;
+const file_ops = Col6Forge.file_ops;
 
 const RUNTIME_CACHE_SCHEMA_VERSION: u32 = 1;
 
@@ -48,22 +49,6 @@ fn fileExists(path: []const u8) bool {
     return true;
 }
 
-fn hashFileXx64(path: []const u8) !u64 {
-    var file = if (std.fs.path.isAbsolute(path))
-        try zig_api.openFileAbsolute(path, .{})
-    else
-        try zig_api.cwd().openFile(path, .{});
-    defer file.close();
-    var hasher = std.hash.XxHash64.init(0);
-    var buf: [64 * 1024]u8 = undefined;
-    while (true) {
-        const n = try file.read(&buf);
-        if (n == 0) break;
-        hasher.update(buf[0..n]);
-    }
-    return hasher.final();
-}
-
 fn runtimeSourceDirPath(allocator: std.mem.Allocator) ![]const u8 {
     return std.fs.path.join(allocator, &.{ build_options.project_root, "src", "runtime" });
 }
@@ -106,7 +91,7 @@ fn computeRuntimeSourceKey(allocator: std.mem.Allocator) ![]const u8 {
         hasher.update(rel_path);
         const abs_rel = try std.fs.path.join(allocator, &.{ runtime_source_dir, rel_path });
         defer allocator.free(abs_rel);
-        var digest = try hashFileXx64(abs_rel);
+        var digest = try file_ops.hashFileXx64(abs_rel);
         hasher.update(std.mem.asBytes(&digest));
     }
     const final = hasher.final();

@@ -1,5 +1,6 @@
 const std = @import("std");
 const zig_ast = @import("zig_ast/source_index.zig");
+const fs_compat = @import("../fs_compat.zig");
 
 const rule_id = "AR-AST-001";
 const rule_title = "facade entry must stay implementation-free";
@@ -27,7 +28,7 @@ pub fn run(allocator: std.mem.Allocator) !usize {
 }
 
 fn checkFacadeFile(allocator: std.mem.Allocator, path: []const u8, failures: *usize) !void {
-    const text = try std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024);
+    const text = try fs_compat.cwd().readFileAlloc(allocator, path, 1024 * 1024);
     defer allocator.free(text);
 
     var index = (try zig_ast.buildIndex(allocator, text)) orelse return;

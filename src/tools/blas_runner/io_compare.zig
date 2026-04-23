@@ -1,6 +1,11 @@
 const common = @import("common.zig");
 const std = common.std;
 const builtin = common.builtin;
+const Col6Forge = common.Col6Forge;
+const zig_api = Col6Forge.zig_api;
+const process_timeout = @import("../process_timeout.zig");
+pub const timeoutMonitor = process_timeout.timeoutMonitor;
+
 pub const ProcessResult = struct {
     stdout: []const u8,
     stderr: []const u8,
@@ -20,70 +25,83 @@ pub fn runProcessCaptureWithInput(
     input: ?[]const u8,
     timeout_ms: u64,
 ) !ProcessResult {
-    var child = std.process.Child.init(argv, allocator);
-    child.cwd = cwd;
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    const io = zig_api.defaultIo();
+    const base_dir = cwd orelse ".";
+    const temp_dir = try std.fs.path.join(allocator, &.{ base_dir, ".blas-runner-tmp" });
+    defer allocator.free(temp_dir);
+    try zig_api.cwd().makePath(temp_dir);
+    var env_map = try std.process.Environ.createMap(.{ .block = .global }, allocator);
+    defer env_map.deinit();
+    const temp_env = if (cwd != null) ".blas-runner-tmp" else temp_dir;
+    try env_map.put("TMP", temp_env);
+    try env_map.put("TEMP", temp_env);
+    try env_map.put("TMPDIR", temp_env);
 
-    try child.spawn();
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = if (cwd) |path| .{ .path = path } else .inherit,
+        .environ_map = &env_map,
+        .stdin = if (input == null) .ignore else .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .create_no_window = builtin.os.tag == .windows,
+    });
+    defer child.kill(io);
 
     var done = std.atomic.Value(bool).init(false);
     var timed_out = std.atomic.Value(bool).init(false);
     var monitor: ?std.Thread = null;
+    var monitor_joined = false;
     if (timeout_ms > 0) {
         monitor = try std.Thread.spawn(.{}, timeoutMonitor, .{ &child, &done, &timed_out, timeout_ms });
     }
-
-    if (child.stdin) |*stdin_file| {
-        if (input) |bytes| {
-            try stdin_file.writeAll(bytes);
+    errdefer {
+        done.store(true, .seq_cst);
+        if (!monitor_joined) {
+            if (monitor) |thread| thread.join();
+            monitor_joined = true;
         }
-        stdin_file.close();
+    }
+
+    if (input) |bytes| {
+        if (child.stdin) |stdin_file| {
+            try stdin_file.writeStreamingAll(io, bytes);
+            stdin_file.close(io);
+        }
         child.stdin = null;
     }
 
-    var stdout_buf: std.ArrayList(u8) = .empty;
-    var stderr_buf: std.ArrayList(u8) = .empty;
-    errdefer stdout_buf.deinit(allocator);
-    errdefer stderr_buf.deinit(allocator);
+    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(allocator, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
 
-    try child.collectOutput(allocator, &stdout_buf, &stderr_buf, 64 * 1024 * 1024);
+    while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
+    }
+    try multi_reader.checkAnyError();
 
     done.store(true, .seq_cst);
     if (monitor) |thread| thread.join();
+    monitor_joined = true;
+
+    const stdout_slice = try multi_reader.toOwnedSlice(0);
+    errdefer allocator.free(stdout_slice);
+    const stderr_slice = try multi_reader.toOwnedSlice(1);
+    errdefer allocator.free(stderr_slice);
 
     return .{
-        .stdout = try stdout_buf.toOwnedSlice(allocator),
-        .stderr = try stderr_buf.toOwnedSlice(allocator),
-        .term = try child.wait(),
+        .stdout = stdout_slice,
+        .stderr = stderr_slice,
+        .term = try child.wait(io),
         .timed_out = timed_out.load(.seq_cst),
     };
 }
 
-pub fn timeoutMonitor(
-    child: *std.process.Child,
-    done: *std.atomic.Value(bool),
-    timed_out: *std.atomic.Value(bool),
-    timeout_ms: u64,
-) void {
-    const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
-    while (true) {
-        if (done.load(.seq_cst)) return;
-        const now = std.time.milliTimestamp();
-        if (now >= deadline) break;
-        const remaining_ms = @as(u64, @intCast(deadline - now));
-        const sleep_ms = if (remaining_ms > 50) 50 else remaining_ms;
-        std.Thread.sleep(sleep_ms * std.time.ns_per_ms);
-    }
-    if (done.load(.seq_cst)) return;
-    timed_out.store(true, .seq_cst);
-    _ = child.kill() catch {};
-}
-
 pub fn isZeroExit(term: std.process.Child.Term) bool {
     return switch (term) {
-        .Exited => |code| code == 0,
+        .exited => |code| code == 0,
         else => false,
     };
 }
@@ -179,13 +197,13 @@ pub const Comparator = struct {
 };
 
 fn trimCr(line: []const u8) []const u8 {
-    return std.mem.trimRight(u8, line, "\r");
+    return std.mem.trimEnd(u8, line, "\r");
 }
 
 fn exitCode(term: std.process.Child.Term) u32 {
     return switch (term) {
-        .Exited => |code| code,
-        .Signal => |signal| 128 + signal,
+        .exited => |code| code,
+        .signal => |signal| 128 + @intFromEnum(signal),
         else => 255,
     };
 }

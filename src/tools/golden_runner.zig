@@ -7,6 +7,9 @@
 const std = @import("std");
 const Col6Forge = @import("Col6Forge");
 const zig_api = Col6Forge.zig_api;
+const cli_args = Col6Forge.process_args;
+const allocArgs = cli_args.allocArgs;
+const freeArgs = cli_args.freeArgs;
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
@@ -60,28 +63,6 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
     log_state.stdout("golden tests passed\n", .{});
-}
-
-fn allocArgs(allocator: std.mem.Allocator, args_src: std.process.Args) ![][]const u8 {
-    var it = try std.process.Args.Iterator.initAllocator(args_src, allocator);
-    defer it.deinit();
-
-    var args = std.array_list.Managed([]const u8).init(allocator);
-    errdefer {
-        for (args.items) |arg| allocator.free(arg);
-        args.deinit();
-    }
-
-    while (it.next()) |arg| {
-        try args.append(try allocator.dupe(u8, arg));
-    }
-
-    return args.toOwnedSlice();
-}
-
-fn freeArgs(allocator: std.mem.Allocator, args: [][]const u8) void {
-    for (args) |arg| allocator.free(arg);
-    allocator.free(args);
 }
 
 const Options = struct {

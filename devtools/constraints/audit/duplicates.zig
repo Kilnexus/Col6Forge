@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs_compat = @import("../fs_compat.zig");
 
 pub const FingerprintMode = enum {
     lexical,
@@ -97,9 +98,9 @@ fn scanTree(
     mode: FingerprintMode,
 ) !void {
     var dir = if (std.fs.path.isAbsolute(root))
-        try std.fs.openDirAbsolute(root, .{ .iterate = true })
+        try fs_compat.openDirAbsolute(root, .{ .iterate = true })
     else
-        try std.fs.cwd().openDir(root, .{ .iterate = true });
+        try fs_compat.cwd().openDir(root, .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(allocator);

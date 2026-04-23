@@ -1,18 +1,20 @@
 const std = @import("std");
 const Col6Forge = @import("Col6Forge");
+const zig_api = Col6Forge.zig_api;
+const cli_args = Col6Forge.process_args;
+const allocArgs = cli_args.allocArgs;
+const freeArgs = cli_args.freeArgs;
 
 const Mode = enum {
     check,
     write,
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try allocArgs(allocator, init.minimal.args);
+    defer freeArgs(allocator, args);
 
     var mode: Mode = .check;
     var output_path: []const u8 = "docs/errors.md";
@@ -47,11 +49,10 @@ pub fn main() !void {
 }
 
 fn renderErrorDocs(allocator: std.mem.Allocator) ![]u8 {
-    var output = std.ArrayList(u8).empty;
-    defer output.deinit(allocator);
-    const writer = output.writer(allocator);
+    var output = std.array_list.Managed(u8).init(allocator);
+    defer output.deinit();
 
-    try writer.writeAll(
+    try output.appendSlice(
         \\# Col6Forge Error Codes
         \\
         \\This file is generated from `src/common/error_catalog.zig`.
@@ -66,7 +67,7 @@ fn renderErrorDocs(allocator: std.mem.Allocator) ![]u8 {
     );
 
     for (Col6Forge.error_catalog.allDocs()) |entry| {
-        try writer.print(
+        try output.print(
             \\## {s}
             \\
             \\- Stage: {s}
@@ -78,11 +79,11 @@ fn renderErrorDocs(allocator: std.mem.Allocator) ![]u8 {
         );
     }
 
-    return output.toOwnedSlice(allocator);
+    return output.toOwnedSlice();
 }
 
 fn checkFileMatches(allocator: std.mem.Allocator, path: []const u8, rendered: []const u8) !void {
-    const current = try std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024);
+    const current = try zig_api.cwd().readFileAlloc(allocator, path, 1024 * 1024);
     defer allocator.free(current);
 
     if (!std.mem.eql(u8, current, rendered)) {
@@ -93,7 +94,9 @@ fn checkFileMatches(allocator: std.mem.Allocator, path: []const u8, rendered: []
 
 fn writeFile(path: []const u8, rendered: []const u8) !void {
     if (std.fs.path.dirname(path)) |dir_path| {
-        try std.fs.cwd().makePath(dir_path);
+        try zig_api.cwd().makePath(dir_path);
     }
-    try std.fs.cwd().writeFile(.{ .sub_path = path, .data = rendered });
+    const file = try zig_api.cwd().createFile(path, .{ .truncate = true });
+    defer file.close();
+    try file.writeAll(rendered);
 }

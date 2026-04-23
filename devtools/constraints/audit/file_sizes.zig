@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs_compat = @import("../fs_compat.zig");
 
 pub const max_lines: usize = 1000;
 
@@ -27,7 +28,7 @@ pub fn run(allocator: std.mem.Allocator) !usize {
 }
 
 fn scanRoot(allocator: std.mem.Allocator, root: []const u8, failures: *usize) !void {
-    var dir = try std.fs.cwd().openDir(root, .{ .iterate = true });
+    var dir = try fs_compat.cwd().openDir(root, .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(allocator);
@@ -51,7 +52,7 @@ fn checkFile(allocator: std.mem.Allocator, rel_path: []const u8, failures: *usiz
 }
 
 fn checkPath(allocator: std.mem.Allocator, rel_path: []const u8, failures: *usize) !void {
-    const text = try std.fs.cwd().readFileAlloc(allocator, rel_path, 16 * 1024 * 1024);
+    const text = try fs_compat.cwd().readFileAlloc(allocator, rel_path, 16 * 1024 * 1024);
     defer allocator.free(text);
 
     const line_count = countLines(text);

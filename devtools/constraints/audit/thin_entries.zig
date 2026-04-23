@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs_compat = @import("../fs_compat.zig");
 
 const rule_id = "AR-AST-002";
 const rule_title = "thin entry must keep only approved thin local functions";
@@ -37,7 +38,7 @@ pub fn run(allocator: std.mem.Allocator) !usize {
 }
 
 fn checkThinEntryFile(allocator: std.mem.Allocator, spec: Spec, failures: *usize) !void {
-    const text = try std.fs.cwd().readFileAlloc(allocator, spec.path, 1024 * 1024);
+    const text = try fs_compat.cwd().readFileAlloc(allocator, spec.path, 1024 * 1024);
     defer allocator.free(text);
 
     const source = try allocator.dupeZ(u8, text);

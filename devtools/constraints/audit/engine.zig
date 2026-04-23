@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs_compat = @import("../fs_compat.zig");
 const Col6Forge = @import("Col6Forge");
 const model = @import("../model.zig");
 const registry = @import("../registry.zig");
@@ -132,7 +133,7 @@ pub fn run(allocator: std.mem.Allocator, root: []const u8) !usize {
 }
 
 fn scanTree(allocator: std.mem.Allocator, root: []const u8, failures: *usize) !void {
-    var dir = try std.fs.cwd().openDir(root, .{ .iterate = true });
+    var dir = try fs_compat.cwd().openDir(root, .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(allocator);
@@ -155,7 +156,7 @@ fn scanTree(allocator: std.mem.Allocator, root: []const u8, failures: *usize) !v
             continue;
         };
 
-        const text = try std.fs.cwd().readFileAlloc(allocator, rel_path, 16 * 1024 * 1024);
+        const text = try fs_compat.cwd().readFileAlloc(allocator, rel_path, 16 * 1024 * 1024);
         defer allocator.free(text);
 
         try scanFile(allocator, rel_path, domain, text, failures);

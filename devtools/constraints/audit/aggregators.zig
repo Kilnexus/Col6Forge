@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs_compat = @import("../fs_compat.zig");
 
 const rule_id = "AR-AST-003";
 const rule_title = "test aggregator entry must stay import-and-test only";
@@ -25,7 +26,7 @@ pub fn run(allocator: std.mem.Allocator) !usize {
 }
 
 fn checkAggregatorFile(allocator: std.mem.Allocator, path: []const u8, failures: *usize) !void {
-    const text = try std.fs.cwd().readFileAlloc(allocator, path, 1024 * 1024);
+    const text = try fs_compat.cwd().readFileAlloc(allocator, path, 1024 * 1024);
     defer allocator.free(text);
 
     const source = try allocator.dupeZ(u8, text);

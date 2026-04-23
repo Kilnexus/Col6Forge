@@ -17,6 +17,10 @@ const cases = @import("verify_runner/cases.zig");
 const runner_io = @import("verify_runner/runner_io.zig");
 const process_mod = @import("verify_runner/process.zig");
 const runtime = @import("verify_runner/runtime.zig");
+const cli_args = Col6Forge.process_args;
+const allocArgs = cli_args.allocArgs;
+const freeArgs = cli_args.freeArgs;
+const getEnvVarOwned = cli_args.getEnvVarOwned;
 
 const Options = cli.Options;
 const PipelineProfileCollector = cli.PipelineProfileCollector;
@@ -157,31 +161,4 @@ pub fn main(init: std.process.Init) !void {
     profile_collector.print(&log_state);
     try emitFallbackSummary(&log_state, &fallback_tracker);
     log_state.stdout("verification passed\n", .{});
-}
-
-fn allocArgs(allocator: std.mem.Allocator, args_src: std.process.Args) ![][]const u8 {
-    var it = try std.process.Args.Iterator.initAllocator(args_src, allocator);
-    defer it.deinit();
-
-    var args = std.array_list.Managed([]const u8).init(allocator);
-    errdefer {
-        for (args.items) |arg| allocator.free(arg);
-        args.deinit();
-    }
-
-    while (it.next()) |arg| {
-        try args.append(try allocator.dupe(u8, arg));
-    }
-
-    return args.toOwnedSlice();
-}
-
-fn freeArgs(allocator: std.mem.Allocator, args: [][]const u8) void {
-    for (args) |arg| allocator.free(arg);
-    allocator.free(args);
-}
-
-fn getEnvVarOwned(allocator: std.mem.Allocator, init: std.process.Init, name: []const u8) !?[]u8 {
-    const value = init.environ_map.get(name) orelse return null;
-    return try allocator.dupe(u8, value);
 }

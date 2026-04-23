@@ -2,11 +2,15 @@ const common = @import("common.zig");
 const std = common.std;
 const builtin = common.builtin;
 const Col6Forge = common.Col6Forge;
+const zig_api = Col6Forge.zig_api;
 const RuntimeBackend = common.RuntimeBackend;
 const CACHE_SCHEMA_VERSION = common.CACHE_SCHEMA_VERSION;
 const BlasCase = common.BlasCase;
 const FORTRAN_FALLBACK = common.FORTRAN_FALLBACK;
 const io_compare = @import("io_compare.zig");
+const file_ops = Col6Forge.file_ops;
+const cache_keys = @import("../cache_keys.zig");
+const pipeline_output = @import("../pipeline_output.zig");
 const ProcessResult = io_compare.ProcessResult;
 const runProcessCaptureWithInput = io_compare.runProcessCaptureWithInput;
 const timeoutMonitor = io_compare.timeoutMonitor;
@@ -14,7 +18,7 @@ const isZeroExit = io_compare.isZeroExit;
 const Comparator = io_compare.Comparator;
 
 fn trimCr(line: []const u8) []const u8 {
-    return std.mem.trimRight(u8, line, "\r");
+    return std.mem.trimEnd(u8, line, "\r");
 }
 pub const RuntimeArtifacts = struct {
     zig_object: ?[]const u8 = null,
@@ -63,7 +67,7 @@ pub fn prepareRuntimeArtifacts(
             const emit_arg = try std.fmt.allocPrint(allocator, "-femit-bin={s}", .{runtime_obj});
             defer allocator.free(emit_arg);
             const cmd = [_][]const u8{ "zig", "build-obj", "-ODebug", "-fPIC", emit_arg, runtime_src };
-            const build = try runProcessCaptureWithInput(allocator, &cmd, output_dir, null, timeout_ms);
+            const build = try runProcessCaptureWithInput(allocator, &cmd, null, null, timeout_ms);
             defer build.deinit(allocator);
             if (build.timed_out) return error.RuntimeBackendBuildTimeout;
             if (!isZeroExit(build.term)) {
@@ -111,7 +115,7 @@ pub fn maybePatchDriverForDeterministicRandom(
 ) !?[]const u8 {
     if (!shouldForceDeterministicRandomDriver(driver_path)) return null;
 
-    const original = try std.fs.cwd().readFileAlloc(allocator, driver_path, 8 * 1024 * 1024);
+    const original = try zig_api.cwd().readFileAlloc(allocator, driver_path, 8 * 1024 * 1024);
     defer allocator.free(original);
 
     // BLAS xblat1 drivers use intentional undefined/random behavior in helper
@@ -320,7 +324,7 @@ pub fn compileReference(
 
     const obj_dir = try std.fs.path.join(allocator, &.{ cwd, "obj-ref" });
     defer allocator.free(obj_dir);
-    try std.fs.cwd().makePath(obj_dir);
+    try zig_api.cwd().makePath(obj_dir);
 
     const driver_obj = try std.fs.path.join(allocator, &.{ obj_dir, "driver.o" });
     defer allocator.free(driver_obj);
@@ -330,7 +334,7 @@ pub fn compileReference(
     // Compile test driver.
     {
         const compile_driver = [_][]const u8{ gfortran_cmd, "-std=legacy", "-O0", "-c", "-o", driver_obj, source_paths[0] };
-        const result = runProcessCaptureWithInput(allocator, &compile_driver, cwd, null, timeout_ms) catch |err| {
+        const result = runProcessCaptureWithInput(allocator, &compile_driver, null, null, timeout_ms) catch |err| {
             if (err == error.FileNotFound) {
                 std.log.err("gfortran not found (use --gfortran or set GFORTRAN/FC)\n", .{});
             }
@@ -363,7 +367,7 @@ pub fn compileReference(
         try blas_objs.append(allocator, obj_path);
 
         const compile_blas = [_][]const u8{ gfortran_cmd, "-std=legacy", "-O0", "-c", "-o", obj_path, source_paths[i] };
-        const result = runProcessCaptureWithInput(allocator, &compile_blas, cwd, null, timeout_ms) catch |err| {
+        const result = runProcessCaptureWithInput(allocator, &compile_blas, null, null, timeout_ms) catch |err| {
             std.log.err("gfortran invoke error: {s}\n", .{@errorName(err)});
             return false;
         };
@@ -384,7 +388,7 @@ pub fn compileReference(
         try ar_args.appendSlice(allocator, &.{ "zig", "ar", "rcs", ref_lib });
         try ar_args.appendSlice(allocator, blas_objs.items);
 
-        const ar_result = runProcessCaptureWithInput(allocator, ar_args.items, cwd, null, timeout_ms) catch |err| {
+        const ar_result = runProcessCaptureWithInput(allocator, ar_args.items, null, null, timeout_ms) catch |err| {
             std.log.err("archive invoke error: {s}\n", .{@errorName(err)});
             return false;
         };
@@ -402,7 +406,7 @@ pub fn compileReference(
     // Link driver with BLAS archive.
     {
         const link_args = [_][]const u8{ gfortran_cmd, "-O0", "-o", out_exe, driver_obj, ref_lib };
-        const result = runProcessCaptureWithInput(allocator, &link_args, cwd, null, timeout_ms) catch |err| {
+        const result = runProcessCaptureWithInput(allocator, &link_args, null, null, timeout_ms) catch |err| {
             std.log.err("gfortran link invoke error: {s}\n", .{@errorName(err)});
             return false;
         };
@@ -439,7 +443,7 @@ pub fn compileTranslated(
 
     const obj_dir = try std.fs.path.join(allocator, &.{ cwd, "obj-test" });
     defer allocator.free(obj_dir);
-    try std.fs.cwd().makePath(obj_dir);
+    try zig_api.cwd().makePath(obj_dir);
 
     const driver_obj = try std.fs.path.join(allocator, &.{ obj_dir, "driver.o" });
     defer allocator.free(driver_obj);
@@ -475,7 +479,7 @@ pub fn compileTranslated(
             driver_link_obj = cached;
         } else {
             const compile_driver = [_][]const u8{ "zig", "cc", "-O0", "-c", "-o", driver_obj, driver_ll };
-            const result = runProcessCaptureWithInput(allocator, &compile_driver, cwd, null, timeout_ms) catch |err| {
+            const result = runProcessCaptureWithInput(allocator, &compile_driver, null, null, timeout_ms) catch |err| {
                 std.log.err("zig cc invoke error: {s}\n", .{@errorName(err)});
                 return false;
             };
@@ -492,7 +496,7 @@ pub fn compileTranslated(
     } else {
         // Compile test driver with gfortran to keep BLAS harness behavior aligned.
         const compile_driver = [_][]const u8{ gfortran_cmd, "-std=legacy", "-O0", "-c", "-o", driver_obj, source_paths[0] };
-        const result = runProcessCaptureWithInput(allocator, &compile_driver, cwd, null, timeout_ms) catch |err| {
+        const result = runProcessCaptureWithInput(allocator, &compile_driver, null, null, timeout_ms) catch |err| {
             std.log.err("gfortran invoke error: {s}\n", .{@errorName(err)});
             return false;
         };
@@ -525,7 +529,7 @@ pub fn compileTranslated(
         try fallback_objs.append(allocator, obj_path);
 
         const compile_fallback = [_][]const u8{ gfortran_cmd, "-std=legacy", "-O0", "-c", "-o", obj_path, source_paths[i] };
-        const result = runProcessCaptureWithInput(allocator, &compile_fallback, cwd, null, timeout_ms) catch |err| {
+        const result = runProcessCaptureWithInput(allocator, &compile_fallback, null, null, timeout_ms) catch |err| {
             std.log.err("gfortran invoke error: {s}\n", .{@errorName(err)});
             return false;
         };
@@ -562,7 +566,7 @@ pub fn compileTranslated(
             try trans_objs.append(allocator, obj_path);
 
             const compile_translated = [_][]const u8{ "zig", "cc", "-O0", "-c", "-o", obj_path, ll_path };
-            const result = runProcessCaptureWithInput(allocator, &compile_translated, cwd, null, timeout_ms) catch |err| {
+            const result = runProcessCaptureWithInput(allocator, &compile_translated, null, null, timeout_ms) catch |err| {
                 std.log.err("zig cc invoke error: {s}\n", .{@errorName(err)});
                 return false;
             };
@@ -597,7 +601,7 @@ pub fn compileTranslated(
         try link_args.append(allocator, "-lntdll");
     }
 
-    const link_result = runProcessCaptureWithInput(allocator, link_args.items, cwd, null, timeout_ms) catch |err| {
+    const link_result = runProcessCaptureWithInput(allocator, link_args.items, null, null, timeout_ms) catch |err| {
         std.log.err("gfortran link invoke error: {s}\n", .{@errorName(err)});
         return false;
     };
@@ -637,14 +641,14 @@ pub fn parseSummaryOutputName(allocator: std.mem.Allocator, input_text: []const 
 pub fn readOptionalFile(allocator: std.mem.Allocator, dir: []const u8, name: []const u8) !?[]const u8 {
     const path = try std.fs.path.join(allocator, &.{ dir, name });
     defer allocator.free(path);
-    return std.fs.cwd().readFileAlloc(allocator, path, 64 * 1024 * 1024) catch |err| switch (err) {
+    return zig_api.cwd().readFileAlloc(allocator, path, 64 * 1024 * 1024) catch |err| switch (err) {
         error.FileNotFound => null,
         else => return err,
     };
 }
 
 fn writeFile(path: []const u8, contents: []const u8) !void {
-    var file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+    var file = try zig_api.cwd().createFile(path, .{ .truncate = true });
     defer file.close();
     try file.writeAll(contents);
 }
@@ -656,19 +660,7 @@ fn emitPipelineToFile(
     output_path: []const u8,
     diag_bag: *Col6Forge.diag.Bag,
 ) !void {
-    var out_file = try std.fs.cwd().createFile(output_path, .{ .truncate = true });
-    defer out_file.close();
-    var out_buf: [32 * 1024]u8 = undefined;
-    var out_writer = out_file.writer(&out_buf);
-    try Col6Forge.runPipelineToWriterWithOptionsAndDiagnostics(
-        allocator,
-        input_path,
-        emit,
-        &out_writer.interface,
-        .{ .coarse_source_map = true },
-        diag_bag,
-    );
-    try out_writer.interface.flush();
+    return pipeline_output.emitPipelineToFile(allocator, input_path, emit, output_path, diag_bag);
 }
 
 fn emitCacheTag(_: Col6Forge.EmitKind) []const u8 {
@@ -683,34 +675,15 @@ fn runtimeBackendTag(backend: RuntimeBackend) []const u8 {
 }
 
 fn fileExistsAbsolute(path: []const u8) bool {
-    std.fs.accessAbsolute(path, .{}) catch return false;
-    return true;
+    return file_ops.pathExists(path);
 }
 
 fn hashFileXx64(path: []const u8) !u64 {
-    var file = try std.fs.openFileAbsolute(path, .{});
-    defer file.close();
-    var hasher = std.hash.XxHash64.init(0);
-    var buf: [64 * 1024]u8 = undefined;
-    while (true) {
-        const n = try file.read(&buf);
-        if (n == 0) break;
-        hasher.update(buf[0..n]);
-    }
-    return hasher.final();
+    return file_ops.hashFileXx64(path);
 }
 
 fn copyFileAbsolute(src_path: []const u8, dst_path: []const u8) !void {
-    var src = try std.fs.openFileAbsolute(src_path, .{});
-    defer src.close();
-    var dst = try std.fs.createFileAbsolute(dst_path, .{ .truncate = true });
-    defer dst.close();
-    var buf: [64 * 1024]u8 = undefined;
-    while (true) {
-        const n = try src.read(&buf);
-        if (n == 0) break;
-        try dst.writeAll(buf[0..n]);
-    }
+    return file_ops.copyFile(src_path, dst_path);
 }
 
 fn buildSourceLlCachePath(
@@ -742,13 +715,14 @@ fn getOrBuildTranslatedObject(
     cwd: []const u8,
     timeout_ms: u64,
 ) ![]const u8 {
+    _ = cwd;
     const ll_hash = try hashFileXx64(ll_path);
     const obj_cache_path = try buildTranslatedObjCachePath(allocator, cache_dir, ll_hash);
     errdefer allocator.free(obj_cache_path);
     if (fileExistsAbsolute(obj_cache_path)) return obj_cache_path;
 
     const compile_translated = [_][]const u8{ "zig", "cc", "-O0", "-c", "-o", obj_cache_path, ll_path };
-    const result = runProcessCaptureWithInput(allocator, &compile_translated, cwd, null, timeout_ms) catch |err| {
+    const result = runProcessCaptureWithInput(allocator, &compile_translated, null, null, timeout_ms) catch |err| {
         std.log.err("zig cc invoke error: {s}\n", .{@errorName(err)});
         return err;
     };
@@ -765,116 +739,19 @@ fn getOrBuildTranslatedObject(
 }
 
 pub fn computeRuntimeCacheKey(allocator: std.mem.Allocator, root_path: []const u8) ![]const u8 {
-    const runtime_dir = try std.fs.path.join(allocator, &.{ root_path, "src", "runtime" });
-    defer allocator.free(runtime_dir);
-
-    var dir = try std.fs.openDirAbsolute(runtime_dir, .{ .iterate = true });
-    defer dir.close();
-
-    var walker = try dir.walk(allocator);
-    defer walker.deinit();
-
-    var files: std.ArrayList([]const u8) = .empty;
-    defer {
-        for (files.items) |p| allocator.free(p);
-        files.deinit(allocator);
-    }
-
-    while (try walker.next()) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.ascii.endsWithIgnoreCase(entry.path, ".zig")) continue;
-        if (!(std.mem.eql(u8, entry.path, "col6forge_rt.zig") or
-            std.mem.startsWith(u8, entry.path, "col6forge_rt/") or
-            std.mem.startsWith(u8, entry.path, "col6forge_rt\\")))
-        {
-            continue;
-        }
-        try files.append(allocator, try allocator.dupe(u8, entry.path));
-    }
-    std.sort.heap([]const u8, files.items, {}, struct {
-        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-            return std.mem.order(u8, a, b) == .lt;
-        }
-    }.lessThan);
-
-    var hasher = std.hash.XxHash64.init(0);
-    for (files.items) |rel_path| {
-        hasher.update(rel_path);
-        const abs_path = try std.fs.path.join(allocator, &.{ runtime_dir, rel_path });
-        defer allocator.free(abs_path);
-        var digest = try hashFileXx64(abs_path);
-        hasher.update(std.mem.asBytes(&digest));
-    }
-    const final = hasher.final();
-    return std.fmt.allocPrint(allocator, "{x:0>16}", .{final});
+    return cache_keys.computeRuntimeCacheKey(allocator, root_path);
 }
 
 pub fn computeCompilerCacheKey(allocator: std.mem.Allocator, root_path: []const u8) ![]const u8 {
-    const src_dir = try std.fs.path.join(allocator, &.{ root_path, "src" });
-    defer allocator.free(src_dir);
-
-    var dir = try std.fs.openDirAbsolute(src_dir, .{ .iterate = true });
-    defer dir.close();
-
-    var walker = try dir.walk(allocator);
-    defer walker.deinit();
-
-    var files: std.ArrayList([]const u8) = .empty;
-    defer {
-        for (files.items) |p| allocator.free(p);
-        files.deinit(allocator);
-    }
-
-    while (try walker.next()) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.ascii.endsWithIgnoreCase(entry.path, ".zig")) continue;
-        if (std.mem.startsWith(u8, entry.path, "runtime/") or std.mem.startsWith(u8, entry.path, "runtime\\")) continue;
-        try files.append(allocator, try allocator.dupe(u8, entry.path));
-    }
-    std.sort.heap([]const u8, files.items, {}, struct {
-        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-            return std.mem.order(u8, a, b) == .lt;
-        }
-    }.lessThan);
-
-    var hasher = std.hash.XxHash64.init(0);
-    for (files.items) |rel_path| {
-        hasher.update(rel_path);
-        const abs_path = try std.fs.path.join(allocator, &.{ src_dir, rel_path });
-        defer allocator.free(abs_path);
-        var digest = try hashFileXx64(abs_path);
-        hasher.update(std.mem.asBytes(&digest));
-    }
-    const final = hasher.final();
-    return std.fmt.allocPrint(allocator, "{x:0>16}", .{final});
+    return cache_keys.computeCompilerCacheKey(allocator, root_path);
 }
 
 fn printPipelineError(path: []const u8, diag_bag: *const Col6Forge.diag.Bag, err: anyerror) void {
-    var stderr = std.fs.File.stderr();
-    var buffer: [4096]u8 = undefined;
-    var writer = stderr.writer(&buffer);
-    Col6Forge.writePipelineErrorDiagnostic(&writer.interface, diag_bag, path, err) catch |write_err| {
-        std.log.err("pipeline error: {s} ({s}, {s})\n", .{ path, @errorName(err), @errorName(write_err) });
-        return;
-    };
-    writer.interface.flush() catch {};
+    pipeline_output.printPipelineError(path, diag_bag, err);
 }
 
 pub fn cleanupWorkDir(path: []const u8) void {
-    if (builtin.os.tag == .windows) {
-        // Avoid rare std.fs.deleteTree NTSTATUS panics on Windows paths.
-        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-        defer _ = gpa.deinit();
-        const allocator = gpa.allocator();
-        const args = [_][]const u8{ "cmd.exe", "/C", "rmdir", "/S", "/Q", path };
-        var child = std.process.Child.init(&args, allocator);
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Ignore;
-        _ = child.spawnAndWait() catch {};
-        return;
-    }
-    std.fs.cwd().deleteTree(path) catch {};
+    zig_api.cwd().deleteTree(path) catch {};
 }
 
 pub fn buildExePath(

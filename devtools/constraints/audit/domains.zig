@@ -8,6 +8,7 @@ const DomainSpec = struct {
 
 const prefix_specs = [_]DomainSpec{
     .{ .domain = .ast, .prefix = "src/ast/" },
+    .{ .domain = .common, .prefix = "src/compat/" },
     .{ .domain = .common, .prefix = "src/common/" },
     .{ .domain = .format, .prefix = "src/format/" },
     .{ .domain = .frontend, .prefix = "src/frontend/" },

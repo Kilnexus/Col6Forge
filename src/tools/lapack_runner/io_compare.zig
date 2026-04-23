@@ -2,7 +2,9 @@ const common = @import("common.zig");
 const std = common.std;
 const builtin = common.builtin;
 const Col6Forge = common.Col6Forge;
+const zig_api = Col6Forge.zig_api;
 const fallback_policy = common.fallback_policy;
+const process_timeout = @import("../process_timeout.zig");
 const RuntimeBackend = common.RuntimeBackend;
 const CACHE_SCHEMA_VERSION = common.CACHE_SCHEMA_VERSION;
 const HOST_CACHE_TAG = common.HOST_CACHE_TAG;
@@ -10,6 +12,9 @@ const MAX_RUN_INPUT_BYTES = common.MAX_RUN_INPUT_BYTES;
 const MAX_RUN_OUTPUT_BYTES = common.MAX_RUN_OUTPUT_BYTES;
 const LapackCase = common.LapackCase;
 const SupportLibs = common.SupportLibs;
+pub const timeoutMonitor = process_timeout.timeoutMonitor;
+pub const terminateChildNoWait = process_timeout.terminateChildNoWait;
+
 pub const ProcessResult = struct {
     stdout: []const u8,
     stderr: []const u8,
@@ -54,9 +59,9 @@ pub fn runProcessStreamToFilesWithInputPath(
     const input = try readFileLimitedAbsolute(allocator, input_path, MAX_RUN_INPUT_BYTES);
     defer allocator.free(input);
 
-    var stdout_file = try std.fs.createFileAbsolute(stdout_path, .{ .truncate = true });
+    var stdout_file = try zig_api.createFileAbsolute(stdout_path, .{ .truncate = true });
     defer stdout_file.close();
-    var stderr_file = try std.fs.createFileAbsolute(stderr_path, .{ .truncate = true });
+    var stderr_file = try zig_api.createFileAbsolute(stderr_path, .{ .truncate = true });
     defer stderr_file.close();
 
     return runProcessPipeToFiles(
@@ -75,57 +80,65 @@ pub fn runProcessPipeToFiles(
     argv: []const []const u8,
     cwd: ?[]const u8,
     input: []const u8,
-    stdout_file: *std.fs.File,
-    stderr_file: *std.fs.File,
+    stdout_file: *zig_api.File,
+    stderr_file: *zig_api.File,
     timeout_ms: u64,
 ) !ProcessRedirectResult {
-    var child = std.process.Child.init(argv, allocator);
-    child.cwd = cwd;
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
+    const io = zig_api.defaultIo();
+    var env_map = try buildChildEnv(allocator, cwd);
+    defer env_map.deinit();
+
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = if (cwd) |path| .{ .path = path } else .inherit,
+        .environ_map = &env_map,
+        .stdin = .pipe,
+        .stdout = .{ .file = stdout_file.raw },
+        .stderr = .{ .file = stderr_file.raw },
+        .create_no_window = builtin.os.tag == .windows,
+    });
+    defer child.kill(io);
 
     var done = std.atomic.Value(bool).init(false);
     var timed_out = std.atomic.Value(bool).init(false);
     var monitor: ?std.Thread = null;
+    var monitor_joined = false;
     if (timeout_ms > 0) {
         monitor = try std.Thread.spawn(.{}, timeoutMonitor, .{ &child, &done, &timed_out, timeout_ms });
     }
+    errdefer {
+        done.store(true, .seq_cst);
+        if (!monitor_joined) {
+            if (monitor) |thread| thread.join();
+            monitor_joined = true;
+        }
+    }
 
-    const stdout_pipe = child.stdout.?;
-    const stderr_pipe = child.stderr.?;
-    var stdout_pump = try std.Thread.spawn(.{}, pumpPipeToFile, .{ stdout_pipe, stdout_file.* });
-    var stderr_pump = try std.Thread.spawn(.{}, pumpPipeToFile, .{ stderr_pipe, stderr_file.* });
-
-    if (child.stdin) |*stdin_file| {
-        stdin_file.writeAll(input) catch |err| switch (err) {
+    if (child.stdin) |stdin_file| {
+        stdin_file.writeStreamingAll(io, input) catch |err| switch (err) {
             error.BrokenPipe, error.Unexpected => {},
             else => {
-                terminateChildNoWait(&child);
-                _ = child.wait() catch {};
+                child.kill(io);
+                _ = child.wait(io) catch {};
                 done.store(true, .seq_cst);
-                if (monitor) |t| t.join();
-                stdout_pump.join();
-                stderr_pump.join();
+                if (monitor) |thread| thread.join();
+                monitor_joined = true;
                 return err;
             },
         };
-        stdin_file.close();
+        stdin_file.close(io);
         child.stdin = null;
     }
 
-    const term = child.wait() catch |err| {
+    const term = child.wait(io) catch |err| {
         done.store(true, .seq_cst);
-        if (monitor) |t| t.join();
-        stdout_pump.join();
-        stderr_pump.join();
+        if (monitor) |thread| thread.join();
+        monitor_joined = true;
         return err;
     };
     done.store(true, .seq_cst);
-    if (monitor) |t| t.join();
-    stdout_pump.join();
-    stderr_pump.join();
+    if (monitor) |thread| thread.join();
+    monitor_joined = true;
 
     return .{
         .term = term,
@@ -133,12 +146,16 @@ pub fn runProcessPipeToFiles(
     };
 }
 
-pub fn pumpPipeToFile(src: std.fs.File, dst: std.fs.File) void {
+pub fn pumpPipeToFile(src: std.Io.File, dst: zig_api.File) void {
+    const io = zig_api.defaultIo();
     var reader_file = src;
     var writer_file = dst;
     var buf: [64 * 1024]u8 = undefined;
     while (true) {
-        const n = reader_file.read(&buf) catch break;
+        const n = reader_file.readStreaming(io, &.{&buf}) catch |err| switch (err) {
+            error.EndOfStream => 0,
+            else => break,
+        };
         if (n == 0) break;
         writer_file.writeAll(buf[0..n]) catch break;
     }
@@ -151,112 +168,107 @@ pub fn runProcessCaptureWithInput(
     input: ?[]const u8,
     timeout_ms: u64,
 ) !ProcessResult {
-    var child = std.process.Child.init(argv, allocator);
-    child.cwd = cwd;
-    child.stdin_behavior = if (input == null) .Ignore else .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
+    const io = zig_api.defaultIo();
+    var env_map = try buildChildEnv(allocator, cwd);
+    defer env_map.deinit();
+
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = if (cwd) |path| .{ .path = path } else .inherit,
+        .environ_map = &env_map,
+        .stdin = if (input == null) .ignore else .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .create_no_window = builtin.os.tag == .windows,
+    });
+    defer child.kill(io);
 
     var done = std.atomic.Value(bool).init(false);
     var timed_out = std.atomic.Value(bool).init(false);
     var monitor: ?std.Thread = null;
+    var monitor_joined = false;
     if (timeout_ms > 0) {
         monitor = try std.Thread.spawn(.{}, timeoutMonitor, .{ &child, &done, &timed_out, timeout_ms });
     }
+    errdefer {
+        done.store(true, .seq_cst);
+        if (!monitor_joined) {
+            if (monitor) |thread| thread.join();
+            monitor_joined = true;
+        }
+    }
 
-    if (input != null) {
-        if (child.stdin) |*stdin_file| {
-            const bytes = input.?;
-            stdin_file.writeAll(bytes) catch |err| switch (err) {
+    if (input) |bytes| {
+        if (child.stdin) |stdin_file| {
+            stdin_file.writeStreamingAll(io, bytes) catch |err| switch (err) {
                 error.BrokenPipe, error.Unexpected => {},
                 else => return err,
             };
-            stdin_file.close();
-            child.stdin = null;
+            stdin_file.close(io);
         }
-    } else if (child.stdin) |*stdin_file| {
-        // Defensive close in case stdlib behavior changes and still creates pipe.
-        stdin_file.close();
         child.stdin = null;
     }
 
-    var stdout_buf: std.ArrayList(u8) = .empty;
-    var stderr_buf: std.ArrayList(u8) = .empty;
-    errdefer stdout_buf.deinit(allocator);
-    errdefer stderr_buf.deinit(allocator);
+    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(allocator, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
 
-    child.collectOutput(allocator, &stdout_buf, &stderr_buf, 1024 * 1024 * 1024) catch |err| {
-        done.store(true, .seq_cst);
-        if (monitor) |t| t.join();
-        terminateChildNoWait(&child);
-        _ = child.wait() catch {};
-        return err;
-    };
+    while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
+    }
+    try multi_reader.checkAnyError();
 
     done.store(true, .seq_cst);
-    if (monitor) |t| t.join();
+    if (monitor) |thread| thread.join();
+    monitor_joined = true;
+
+    const stdout_slice = try multi_reader.toOwnedSlice(0);
+    errdefer allocator.free(stdout_slice);
+    const stderr_slice = try multi_reader.toOwnedSlice(1);
+    errdefer allocator.free(stderr_slice);
 
     return .{
-        .stdout = try stdout_buf.toOwnedSlice(allocator),
-        .stderr = try stderr_buf.toOwnedSlice(allocator),
-        .term = try child.wait(),
+        .stdout = stdout_slice,
+        .stderr = stderr_slice,
+        .term = try child.wait(io),
         .timed_out = timed_out.load(.seq_cst),
     };
 }
 
-pub fn timeoutMonitor(
-    child: *std.process.Child,
-    done: *std.atomic.Value(bool),
-    timed_out: *std.atomic.Value(bool),
-    timeout_ms: u64,
-) void {
-    const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
-    while (true) {
-        if (done.load(.seq_cst)) return;
-        const now = std.time.milliTimestamp();
-        if (now >= deadline) break;
-        const remain_ms = @as(u64, @intCast(deadline - now));
-        const sleep_ms = if (remain_ms > 50) 50 else remain_ms;
-        std.Thread.sleep(sleep_ms * std.time.ns_per_ms);
-    }
-    if (done.load(.seq_cst)) return;
-    timed_out.store(true, .seq_cst);
-    terminateChildNoWait(child);
-}
+fn buildChildEnv(allocator: std.mem.Allocator, cwd: ?[]const u8) !std.process.Environ.Map {
+    const base_dir = cwd orelse ".";
+    const temp_dir = try std.fs.path.join(allocator, &.{ base_dir, ".lapack-runner-tmp" });
+    defer allocator.free(temp_dir);
+    try zig_api.cwd().makePath(temp_dir);
 
-pub fn terminateChildNoWait(child: *std.process.Child) void {
-    if (builtin.os.tag == .windows) {
-        std.os.windows.TerminateProcess(child.id, 1) catch |err| switch (err) {
-            error.AccessDenied => {},
-            else => {},
-        };
-        return;
-    }
-
-    std.posix.kill(child.id, std.posix.SIG.KILL) catch |err| switch (err) {
-        error.ProcessNotFound => {},
-        else => {},
-    };
+    var env_map = try std.process.Environ.createMap(.{ .block = .global }, allocator);
+    errdefer env_map.deinit();
+    const temp_env = if (cwd != null) ".lapack-runner-tmp" else temp_dir;
+    try env_map.put("TMP", temp_env);
+    try env_map.put("TEMP", temp_env);
+    try env_map.put("TMPDIR", temp_env);
+    return env_map;
 }
 
 pub fn isZeroExit(term: std.process.Child.Term) bool {
     return switch (term) {
-        .Exited => |code| code == 0,
+        .exited => |code| code == 0,
         else => false,
     };
 }
 
 pub fn exitCode(term: std.process.Child.Term) u32 {
     return switch (term) {
-        .Exited => |code| code,
-        .Signal => |signal| 128 + signal,
+        .exited => |code| code,
+        .signal => |signal| 128 + @intFromEnum(signal),
         else => 255,
     };
 }
 
 pub fn fileExists(path: []const u8) bool {
-    std.fs.cwd().access(path, .{}) catch return false;
+    zig_api.cwd().access(path, .{}) catch return false;
     return true;
 }
 
@@ -276,7 +288,7 @@ pub fn readFileLimitedAbsolute(
     path: []const u8,
     max_bytes: usize,
 ) ![]u8 {
-    var file = try std.fs.openFileAbsolute(path, .{});
+    var file = try zig_api.openFileAbsolute(path, .{});
     defer file.close();
     return file.readToEndAlloc(allocator, max_bytes);
 }
@@ -313,8 +325,8 @@ pub fn outputsEquivalent(expected: []const u8, actual: []const u8) bool {
         if (exp_opt == null and act_opt == null) return true;
         if (exp_opt == null or act_opt == null) return false;
 
-        const exp_line = std.mem.trimRight(u8, trimCr(exp_opt.?), " \t");
-        const act_line = std.mem.trimRight(u8, trimCr(act_opt.?), " \t");
+        const exp_line = std.mem.trimEnd(u8, trimCr(exp_opt.?), " \t");
+        const act_line = std.mem.trimEnd(u8, trimCr(act_opt.?), " \t");
         if (std.mem.eql(u8, exp_line, act_line)) continue;
         if (equivalentTextWithNumericTolerance(exp_line, act_line)) continue;
         if (isTimingLine(exp_line) and isTimingLine(act_line)) continue;
@@ -471,7 +483,7 @@ pub fn isHorizontalSpace(ch: u8) bool {
 }
 
 pub fn trimCr(line: []const u8) []const u8 {
-    return std.mem.trimRight(u8, line, "\r");
+    return std.mem.trimEnd(u8, line, "\r");
 }
 
 pub fn isTimingLine(line: []const u8) bool {

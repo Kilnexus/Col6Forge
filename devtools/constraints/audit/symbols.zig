@@ -23,11 +23,11 @@ pub const MemberAccess = struct {
 };
 
 pub const Index = struct {
-    function_calls: std.ArrayListUnmanaged(FunctionCall) = .{},
-    function_definitions: std.ArrayListUnmanaged(FunctionDefinition) = .{},
-    symbol_aliases: std.ArrayListUnmanaged(SymbolAlias) = .{},
-    member_accesses: std.ArrayListUnmanaged(MemberAccess) = .{},
-    owned_strings: std.ArrayListUnmanaged([]u8) = .{},
+    function_calls: std.ArrayListUnmanaged(FunctionCall) = .empty,
+    function_definitions: std.ArrayListUnmanaged(FunctionDefinition) = .empty,
+    symbol_aliases: std.ArrayListUnmanaged(SymbolAlias) = .empty,
+    member_accesses: std.ArrayListUnmanaged(MemberAccess) = .empty,
+    owned_strings: std.ArrayListUnmanaged([]u8) = .empty,
 
     pub fn deinit(self: *Index, allocator: std.mem.Allocator) void {
         self.function_calls.deinit(allocator);

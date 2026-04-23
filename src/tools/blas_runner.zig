@@ -10,6 +10,10 @@ const ALL_CASES = common.ALL_CASES;
 
 const build_helpers = @import("blas_runner/build_helpers.zig");
 const io_compare = @import("blas_runner/io_compare.zig");
+const cli_args = Col6Forge.process_args;
+const allocArgs = cli_args.allocArgs;
+const freeArgs = cli_args.freeArgs;
+const getEnvVarOwned = cli_args.getEnvVarOwned;
 
 const RuntimeArtifacts = build_helpers.RuntimeArtifacts;
 const prepareRuntimeArtifacts = build_helpers.prepareRuntimeArtifacts;
@@ -28,6 +32,7 @@ const buildExePath = build_helpers.buildExePath;
 const ProcessResult = io_compare.ProcessResult;
 const runProcessCaptureWithInput = io_compare.runProcessCaptureWithInput;
 const Comparator = io_compare.Comparator;
+const zig_api = Col6Forge.zig_api;
 const Options = struct {
     blas_dir: []const u8,
     testing_dir: ?[]const u8,
@@ -56,41 +61,38 @@ const ParseArgsOutcome = union(enum) {
     failure: ParseArgError,
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var thread_safe = std.heap.ThreadSafeAllocator{ .child_allocator = gpa.allocator() };
-    const allocator = thread_safe.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const arena_allocator = arena.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try allocArgs(allocator, init.minimal.args);
+    defer freeArgs(allocator, args);
 
     const options = switch (parseArgs(args)) {
         .success => |value| value,
         .failure => |parse_err| {
-            try printUsage(std.fs.File.stderr());
-            try printParseArgError(std.fs.File.stderr(), parse_err);
+            try printUsage(zig_api.File.stderr());
+            try printParseArgError(zig_api.File.stderr(), parse_err);
             return error.InvalidArguments;
         },
     };
     if (options.show_help) {
-        try printUsage(std.fs.File.stdout());
+        try printUsage(zig_api.File.stdout());
         return;
     }
 
     const testing_dir = options.testing_dir orelse try std.fs.path.join(arena_allocator, &.{ options.blas_dir, "TESTING" });
 
-    const root_path = try std.fs.cwd().realpathAlloc(allocator, ".");
+    const root_path = try allocator.dupe(u8, ".");
     defer allocator.free(root_path);
 
     const cache_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "blas-verify", "cache", HOST_CACHE_TAG });
     defer allocator.free(cache_rel);
     if (options.clean_cache) cleanupWorkDir(cache_rel);
-    try std.fs.cwd().makePath(cache_rel);
+    try zig_api.cwd().makePath(cache_rel);
     const cache_dir = try std.fs.path.join(allocator, &.{ root_path, cache_rel });
     defer allocator.free(cache_dir);
     const runtime_cache_key = try computeRuntimeCacheKey(allocator, root_path);
@@ -100,10 +102,10 @@ pub fn main() !void {
 
     var gfortran_cmd = options.gfortran_path;
     if (std.mem.eql(u8, gfortran_cmd, defaultGfortran())) {
-        if (std.process.getEnvVarOwned(allocator, "GFORTRAN") catch null) |value| {
+        if (getEnvVarOwned(allocator, init, "GFORTRAN") catch null) |value| {
             defer allocator.free(value);
             gfortran_cmd = try arena_allocator.dupe(u8, value);
-        } else if (std.process.getEnvVarOwned(allocator, "FC") catch null) |value| {
+        } else if (getEnvVarOwned(allocator, init, "FC") catch null) |value| {
             defer allocator.free(value);
             gfortran_cmd = try arena_allocator.dupe(u8, value);
         }
@@ -263,7 +265,7 @@ fn parseArgs(args: []const []const u8) ParseArgsOutcome {
     } };
 }
 
-fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
+fn printParseArgError(file: zig_api.File, parse_err: ParseArgError) !void {
     var buffer: [512]u8 = undefined;
     var writer = file.writer(&buffer);
     switch (parse_err) {
@@ -275,7 +277,7 @@ fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
     try writer.interface.flush();
 }
 
-fn printUsage(file: std.fs.File) !void {
+fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage: blas_runner [--blas-dir <dir>] [--testing-dir <dir>] [--filter <text>] [--gfortran <path>] [--runtime-backend <c|zig>] [--timeout <ms>] [--keep-workdir] [--translate-f90] [--no-translate-f90] [--incremental|--no-incremental] [--clean-cache]
         \\Options:
@@ -341,7 +343,7 @@ fn processCase(
     defer allocator.free(work_dir_rel);
 
     cleanupWorkDir(work_dir_rel);
-    try std.fs.cwd().makePath(work_dir_rel);
+    try zig_api.cwd().makePath(work_dir_rel);
 
     const work_dir = try std.fs.path.join(allocator, &.{ root_path, work_dir_rel });
     defer allocator.free(work_dir);
@@ -353,15 +355,15 @@ fn processCase(
     const ll_dir = try std.fs.path.join(allocator, &.{ work_dir, "translated" });
     defer allocator.free(ll_dir);
 
-    try std.fs.cwd().makePath(ref_dir);
-    try std.fs.cwd().makePath(test_dir);
-    try std.fs.cwd().makePath(ll_dir);
+    try zig_api.cwd().makePath(ref_dir);
+    try zig_api.cwd().makePath(test_dir);
+    try zig_api.cwd().makePath(ll_dir);
 
     var input_data: ?[]const u8 = null;
     if (case.input) |input_name| {
         const input_path = try std.fs.path.join(allocator, &.{ testing_dir, input_name });
         defer allocator.free(input_path);
-        input_data = try std.fs.cwd().readFileAlloc(allocator, input_path, 16 * 1024 * 1024);
+        input_data = try zig_api.cwd().readFileAlloc(allocator, input_path, 16 * 1024 * 1024);
     }
     defer if (input_data) |buf| allocator.free(buf);
 
@@ -417,14 +419,14 @@ fn processCase(
         return false;
     }
 
-    const ref_run = try runProcessCaptureWithInput(allocator, &.{ref_exe}, ref_dir, input_data, options.timeout_ms);
+    const ref_run = try runProcessCaptureWithInput(allocator, &.{std.fs.path.basename(ref_exe)}, ref_dir, input_data, options.timeout_ms);
     defer ref_run.deinit(allocator);
     if (ref_run.timed_out) {
         std.log.warn("timeout: reference run {s}\n", .{case.name});
         return false;
     }
 
-    const test_run = try runProcessCaptureWithInput(allocator, &.{test_exe}, test_dir, input_data, options.timeout_ms);
+    const test_run = try runProcessCaptureWithInput(allocator, &.{std.fs.path.basename(test_exe)}, test_dir, input_data, options.timeout_ms);
     defer test_run.deinit(allocator);
     if (test_run.timed_out) {
         std.log.warn("timeout: translated run {s}\n", .{case.name});

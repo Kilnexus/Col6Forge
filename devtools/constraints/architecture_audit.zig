@@ -5,10 +5,8 @@ const facades = @import("audit/facades.zig");
 const file_sizes = @import("audit/file_sizes.zig");
 const thin_entries = @import("audit/thin_entries.zig");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var failures = try audit_engine.run(allocator, "src");
     failures += try aggregators.run(allocator);

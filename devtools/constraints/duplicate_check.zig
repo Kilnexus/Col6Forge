@@ -2,10 +2,8 @@ const std = @import("std");
 const baseline = @import("audit/duplicate_baseline.zig");
 const duplicates = @import("audit/duplicates.zig");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     try validateBaseline();
 

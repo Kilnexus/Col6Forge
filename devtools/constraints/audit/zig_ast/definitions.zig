@@ -9,8 +9,8 @@ pub const Definition = struct {
 };
 
 pub const Index = struct {
-    definitions: std.ArrayListUnmanaged(Definition) = .{},
-    owned_strings: std.ArrayListUnmanaged([]u8) = .{},
+    definitions: std.ArrayListUnmanaged(Definition) = .empty,
+    owned_strings: std.ArrayListUnmanaged([]u8) = .empty,
 
     pub fn deinit(self: *Index, allocator: std.mem.Allocator) void {
         self.definitions.deinit(allocator);

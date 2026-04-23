@@ -5,38 +5,39 @@ const has_legacy_fs = @hasDecl(std.fs, "cwd");
 threadlocal var threaded_io_ready: bool = false;
 threadlocal var threaded_io: if (has_legacy_fs) void else std.Io.Threaded = if (has_legacy_fs) {} else undefined;
 
+fn optionFieldOr(options: anytype, comptime field_name: []const u8, default_value: anytype) @TypeOf(default_value) {
+    const T = @TypeOf(options);
+    return if (@hasField(T, field_name)) @field(options, field_name) else default_value;
+}
+
 fn mapCreateFileOptions(flags: anytype) std.Io.Dir.CreateFileOptions {
-    const T = @TypeOf(flags);
     return .{
-        .read = if (@hasField(T, "read")) flags.read else false,
-        .truncate = if (@hasField(T, "truncate")) flags.truncate else true,
-        .exclusive = if (@hasField(T, "exclusive")) flags.exclusive else false,
+        .read = optionFieldOr(flags, "read", false),
+        .truncate = optionFieldOr(flags, "truncate", true),
+        .exclusive = optionFieldOr(flags, "exclusive", false),
     };
 }
 
 fn mapOpenFileOptions(flags: anytype) std.Io.Dir.OpenFileOptions {
-    const T = @TypeOf(flags);
     return .{
-        .mode = if (@hasField(T, "mode")) flags.mode else .read_only,
+        .mode = optionFieldOr(flags, "mode", .read_only),
     };
 }
 
 fn mapOpenDirOptions(options: anytype) std.Io.Dir.OpenOptions {
-    const T = @TypeOf(options);
     return .{
-        .access_sub_paths = if (@hasField(T, "access_sub_paths")) options.access_sub_paths else true,
-        .iterate = if (@hasField(T, "iterate")) options.iterate else false,
-        .follow_symlinks = if (@hasField(T, "follow_symlinks")) options.follow_symlinks else true,
+        .access_sub_paths = optionFieldOr(options, "access_sub_paths", true),
+        .iterate = optionFieldOr(options, "iterate", false),
+        .follow_symlinks = optionFieldOr(options, "follow_symlinks", true),
     };
 }
 
 fn mapAccessOptions(options: anytype) std.Io.Dir.AccessOptions {
-    const T = @TypeOf(options);
     return .{
-        .follow_symlinks = if (@hasField(T, "follow_symlinks")) options.follow_symlinks else true,
-        .read = if (@hasField(T, "read")) options.read else false,
-        .write = if (@hasField(T, "write")) options.write else false,
-        .execute = if (@hasField(T, "execute")) options.execute else false,
+        .follow_symlinks = optionFieldOr(options, "follow_symlinks", true),
+        .read = optionFieldOr(options, "read", false),
+        .write = optionFieldOr(options, "write", false),
+        .execute = optionFieldOr(options, "execute", false),
     };
 }
 

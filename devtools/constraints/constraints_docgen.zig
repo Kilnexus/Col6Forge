@@ -1,21 +1,19 @@
 const std = @import("std");
 const mapping = @import("mapping.zig");
+const fs_compat = @import("fs_compat.zig");
 
 const output_path = "docs/constraints.md";
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     try mapping.validateEntries();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const allocator = init.gpa;
 
     var mode: enum { check, write } = .check;
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+    const args = try allocArgs(allocator, init.minimal.args);
+    defer freeArgs(allocator, args);
 
-    _ = args.next();
-    while (args.next()) |arg| {
+    for (args[1..]) |arg| {
         if (std.mem.eql(u8, arg, "--check")) {
             mode = .check;
         } else if (std.mem.eql(u8, arg, "--write")) {
@@ -31,14 +29,14 @@ pub fn main() !void {
 
     switch (mode) {
         .write => {
-            try std.fs.cwd().writeFile(.{
+            try fs_compat.cwd().writeFile(.{
                 .sub_path = output_path,
                 .data = rendered,
             });
             std.log.info("wrote {s}", .{output_path});
         },
         .check => {
-            const current = std.fs.cwd().readFileAlloc(allocator, output_path, 8 * 1024 * 1024) catch |err| switch (err) {
+            const current = fs_compat.cwd().readFileAlloc(allocator, output_path, 8 * 1024 * 1024) catch |err| switch (err) {
                 error.FileNotFound => {
                     std.log.err("{s} is missing; run constraints-docs", .{output_path});
                     return error.ConstraintDocOutOfDate;
@@ -56,12 +54,33 @@ pub fn main() !void {
     }
 }
 
-fn render(allocator: std.mem.Allocator) ![]u8 {
-    var out = std.ArrayList(u8).empty;
-    errdefer out.deinit(allocator);
-    const writer = out.writer(allocator);
+fn allocArgs(allocator: std.mem.Allocator, args_src: std.process.Args) ![][]const u8 {
+    var it = try std.process.Args.Iterator.initAllocator(args_src, allocator);
+    defer it.deinit();
 
-    try writer.writeAll(
+    var args = std.array_list.Managed([]const u8).init(allocator);
+    errdefer {
+        for (args.items) |arg| allocator.free(arg);
+        args.deinit();
+    }
+
+    while (it.next()) |arg| {
+        try args.append(try allocator.dupe(u8, arg));
+    }
+
+    return args.toOwnedSlice();
+}
+
+fn freeArgs(allocator: std.mem.Allocator, args: [][]const u8) void {
+    for (args) |arg| allocator.free(arg);
+    allocator.free(args);
+}
+
+fn render(allocator: std.mem.Allocator) ![]u8 {
+    var out = std.array_list.Managed(u8).init(allocator);
+    errdefer out.deinit();
+
+    try out.appendSlice(
         "# Compiler Constraints\n\n" ++
             "This document is generated from the code-native constraint registry in `devtools/constraints/mapping.zig`.\n\n" ++
             "The registry is the executable source of truth for constraint metadata and enforcement wiring.\n" ++
@@ -75,13 +94,13 @@ fn render(allocator: std.mem.Allocator) ![]u8 {
         const secondary = try mapping.joinExecutors(allocator, entry.secondary);
         defer allocator.free(secondary);
 
-        try writer.print("### {s}: {s}\n\n", .{ entry.id, entry.summary });
-        try writer.print("- Class: {s}\n", .{mapping.classLabel(entry.class)});
-        try writer.print("- Blocking: {s}\n", .{mapping.blockingLabel(entry.blocking)});
-        try writer.print("- Primary Enforcers: {s}\n", .{primary});
-        try writer.print("- Secondary Enforcers: {s}\n", .{secondary});
-        try writer.print("- Rationale: {s}\n\n", .{entry.rationale});
+        try out.print("### {s}: {s}\n\n", .{ entry.id, entry.summary });
+        try out.print("- Class: {s}\n", .{mapping.classLabel(entry.class)});
+        try out.print("- Blocking: {s}\n", .{mapping.blockingLabel(entry.blocking)});
+        try out.print("- Primary Enforcers: {s}\n", .{primary});
+        try out.print("- Secondary Enforcers: {s}\n", .{secondary});
+        try out.print("- Rationale: {s}\n\n", .{entry.rationale});
     }
 
-    return out.toOwnedSlice(allocator);
+    return out.toOwnedSlice();
 }

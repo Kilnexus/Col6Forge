@@ -16,6 +16,7 @@ const expr_semantics = @import("expr_semantics.zig");
 const abstract_expr_use = @import("abstract_expr_use.zig");
 const static_shapes = @import("static_shapes.zig");
 const assumed_size = @import("../assumed_size.zig");
+const expr_diagnostics = @import("../expr_diagnostics.zig");
 
 pub const CheckError = anyerror;
 
@@ -711,15 +712,7 @@ fn emitCurrentStmtConstraint(self: *context.Context, message: []const u8) CheckE
 }
 
 fn emitExprConstraint(self: *context.Context, expr_node: *ast.Expr, message: []const u8) CheckError {
-    const source = self.sourceForExpr(expr_node) orelse ast.SourceRef{};
-    self.setDiagnostic(
-        if (source.line == 0) 1 else source.line,
-        if (source.column == 0) 1 else source.column,
-        catalog.semantic.assignment_type_mismatch.code,
-        message,
-        source.text,
-    );
-    return error.AssignmentTypeMismatch;
+    return expr_diagnostics.emitExprAssignmentMismatch(self, expr_node, message);
 }
 
 fn rejectProcedurePointerComponentIo(self: *context.Context, expr_node: *ast.Expr) CheckError!void {

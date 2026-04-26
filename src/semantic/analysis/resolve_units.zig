@@ -13,6 +13,7 @@ const rewrite_calls = @import("rewrite_calls.zig");
 const resolve_data = @import("resolve_data.zig");
 const constants = @import("resolve_const.zig");
 const array_dim_queries = @import("array_dim_queries.zig");
+const deferred_shape = @import("deferred_shape.zig");
 const bind_c_validation = @import("resolve_units_bind_c.zig");
 const bind_entities = @import("resolve_specs/bind_entities.zig");
 const generic_interface_ambiguity = @import("generic_interface_ambiguity.zig");
@@ -621,7 +622,7 @@ fn buildDerivedComponentInfo(
         ctx.setCurrentDeclSource(component_source);
         for (type_decl.items) |item| {
             try decls.validateDeclaratorInitializer(ctx, item.init);
-            if ((type_decl.allocatable or type_decl.pointer) and item.dims.len != 0 and !componentHasDeferredShape(item.dims)) {
+            if ((type_decl.allocatable or type_decl.pointer) and item.dims.len != 0 and !deferred_shape.hasDeferredShape(item.dims)) {
                 emitDescriptorComponentShapeDiagnostic(ctx, if (type_decl.allocatable) "ALLOCATABLE" else "POINTER");
                 if (!ctx.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
                 continue;
@@ -700,19 +701,6 @@ fn buildDerivedComponentInfo(
         ctx.setCurrentDeclSource(prior_decl_source);
     }
     return try components.toOwnedSlice();
-}
-
-fn componentHasDeferredShape(dims: []const *ast.Expr) bool {
-    for (dims) |dim| {
-        switch (dim.*) {
-            .dim_range => |range| {
-                if (range.assumed_shape and range.lower == null) continue;
-                return false;
-            },
-            else => return false,
-        }
-    }
-    return dims.len != 0;
 }
 
 fn emitDescriptorComponentShapeDiagnostic(ctx: *context.Context, attr_name: []const u8) void {

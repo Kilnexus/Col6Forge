@@ -7,6 +7,7 @@ const RuntimeBackend = common.RuntimeBackend;
 const CACHE_SCHEMA_VERSION = common.CACHE_SCHEMA_VERSION;
 const HOST_CACHE_TAG = common.HOST_CACHE_TAG;
 const zig_api = common.zig_api;
+const logged_pipeline_error = @import("../logged_pipeline_error.zig");
 
 fn openDirPath(path: []const u8, options: anytype) !zig_api.Dir {
     if (std.fs.path.isAbsolute(path)) return zig_api.openDirAbsolute(path, options);
@@ -433,13 +434,7 @@ fn buildExePath(
 }
 
 pub fn reportPipelineError(log_state: anytype, diag_bag: *const Col6Forge.diag.Bag, input_path: []const u8, err: anyerror) !void {
-    var stderr = zig_api.File.stderr();
-    var buffer: [4096]u8 = undefined;
-    var writer = stderr.writer(&buffer);
-    log_state.lock();
-    defer log_state.unlock();
-    try Col6Forge.writePipelineErrorDiagnostic(&writer.interface, diag_bag, input_path, err);
-    try writer.interface.flush();
+    return logged_pipeline_error.report(log_state, diag_bag, input_path, err);
 }
 
 pub const Stopwatch = struct {

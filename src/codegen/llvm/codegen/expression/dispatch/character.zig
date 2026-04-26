@@ -13,6 +13,7 @@ const memory = @import("../memory.zig");
 
 const int_eval = @import("int_eval.zig");
 const helpers = @import("character/helpers.zig");
+const lengths = @import("character/lengths.zig");
 const resolution = @import("resolution.zig");
 const shared = @import("shared.zig");
 
@@ -21,7 +22,6 @@ pub const CharacterValuePlan = shared.CharacterValuePlan;
 
 const Expr = shared.Expr;
 const Context = shared.Context;
-const DerivedBindingInfo = cg_context.DerivedBindingInfo;
 const ValueRef = shared.ValueRef;
 const EmitError = shared.EmitError;
 const copyCharacterBytesConst = helpers.copyCharacterBytesConst;
@@ -58,7 +58,7 @@ pub fn isCharacterExpr(ctx: *Context, expr: *Expr) bool {
         .literal => |lit| lit.kind == .string or lit.kind == .hollerith,
         .binary => |bin| bin.op == .concat,
         .component => |comp| characterComponentLayout(ctx, comp) != null or
-            (comp.has_parens and typeBoundCharacterResultLen(ctx, comp) != null),
+            (comp.has_parens and lengths.typeBoundCharacterResultLen(ctx, comp) != null),
         .implied_do => |implied| implied.items.len != 0 and isCharacterExpr(ctx, implied.items[0]),
         else => false,
     };
@@ -118,7 +118,7 @@ pub fn constantCharacterLenForExpr(ctx: *Context, expr: *Expr) ?usize {
             }
             return null;
         },
-        .substring => |sub| return substringLen(ctx, sub),
+        .substring => |sub| return lengths.substringLen(ctx, sub),
         .literal => |lit| switch (lit.kind) {
             .string => return utils.decodedStringLen(lit.text),
             .hollerith => {
@@ -139,7 +139,7 @@ pub fn constantCharacterLenForExpr(ctx: *Context, expr: *Expr) ?usize {
                 return componentCharacterConstLen(component);
             }
             if (!comp.has_parens) return null;
-            return typeBoundCharacterResultLen(ctx, comp);
+            return lengths.typeBoundCharacterResultLen(ctx, comp);
         },
         .implied_do => |implied| {
             if (implied.items.len == 0) return null;
@@ -419,7 +419,7 @@ pub fn emitCharacterValuePlanImpl(
             try builder.gep(gep, .i8, base_ptr, offset);
             const diff = try binary.emitSub(ctx, builder, end_val, start_val);
             const len_val = try binary.emitAdd(ctx, builder, diff, utils.oneValue());
-            const const_len = substringLen(ctx, sub);
+            const const_len = lengths.substringLen(ctx, sub);
             return try shared.validatedCharacterValuePlan(.{
                 .ptr = .{ .name = gep, .ty = .ptr, .is_ptr = true },
                 .logical_len = len_val,
@@ -482,7 +482,7 @@ pub fn emitCharacterValuePlanImpl(
                 return try emitCharacterComponentPlan(ctx, builder, comp, component);
             }
             if (!comp.has_parens) return null;
-            const info = typeBoundCharacterResultInfo(ctx, comp) orelse return null;
+            const info = lengths.typeBoundCharacterResultInfo(ctx, comp) orelse return null;
             const actuals = try resolution.buildTypeBoundProcedureActuals(ctx, comp, info.binding);
             defer ctx.allocator.free(actuals);
             const fn_name = try resolution.ensureExternalDeclForResolvedCall(ctx, info.lookup_name, info.ir_name, .void, actuals, true);
@@ -700,7 +700,7 @@ fn emitCharacterLenValueImpl(ctx: *Context, builder: anytype, expr: *Expr, subst
                 return emitCharacterComponentLenValue(ctx, builder, comp, component);
             }
             if (!comp.has_parens) return null;
-            const result_len = typeBoundCharacterResultLen(ctx, comp) orelse return null;
+            const result_len = lengths.typeBoundCharacterResultLen(ctx, comp) orelse return null;
             return try ctx.constI32(@intCast(result_len));
         },
         .implied_do => |implied| {
@@ -950,49 +950,6 @@ fn emitTrimmedCharacterPlan(
         .storage_len_const = base_plan.storage_len_const,
         .kind = .substring_view,
     });
-}
-
-fn substringLen(ctx: *Context, sub: ast.SubstringExpr) ?usize {
-    const sym = ctx.findSymbol(sub.name) orelse return null;
-    if (!sym.isCharacter()) return null;
-    const base_len_usize = common.constantCharacterLen(sym) orelse return null;
-    const base_len = std.math.cast(i64, base_len_usize) orelse return null;
-    const start_val = if (sub.start) |start_expr| int_eval.intLiteralValue(start_expr) orelse return null else 1;
-    const end_val = if (sub.end) |end_expr| int_eval.intLiteralValue(end_expr) orelse return null else base_len;
-    const span = int_eval.checkedSub(end_val, start_val) orelse return null;
-    const length = int_eval.checkedAdd(span, 1) orelse return null;
-    if (length <= 0) return null;
-    return std.math.cast(usize, length);
-}
-
-const TypeBoundCharacterResultInfo = struct {
-    binding: DerivedBindingInfo,
-    lookup_name: []const u8,
-    ir_name: []const u8,
-    result_len: usize,
-};
-
-fn typeBoundCharacterResultLen(ctx: *Context, comp: ast.ComponentExpr) ?usize {
-    const info = typeBoundCharacterResultInfo(ctx, comp) orelse return null;
-    return info.result_len;
-}
-
-fn typeBoundCharacterResultInfo(ctx: *Context, comp: ast.ComponentExpr) ?TypeBoundCharacterResultInfo {
-    const base_type_name = ctx.derivedTypeNameForExpr(comp.base) orelse return null;
-    const binding = ctx.lookupDerivedBinding(base_type_name, comp.name) orelse return null;
-    const proc_name = binding.implementation_name orelse binding.interface_name orelse binding.name;
-    const lookup_name = resolution.boundProcedureLookupName(ctx, binding, proc_name) catch return null;
-    const ir_name = resolution.boundProcedureIRName(ctx, binding, proc_name) catch return null;
-    const proc_sig = ctx.lookupKnownProcedureSig(lookup_name) orelse ctx.lookupKnownProcedureSig(proc_name) orelse return null;
-    const result_spec = resolution.boundProcedureResultSpec(ctx, binding, proc_sig) orelse return null;
-    if (result_spec.lowered_kind != .character) return null;
-    const result_len = result_spec.char_len orelse return null;
-    return .{
-        .binding = binding,
-        .lookup_name = lookup_name,
-        .ir_name = ir_name,
-        .result_len = result_len,
-    };
 }
 
 fn internalLiteralSubstringConstLen(ctx: *Context, args: []*Expr, base_len_override: ?usize) ?usize {

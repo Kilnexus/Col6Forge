@@ -4,6 +4,7 @@ const symbols = @import("../../symbol/mod.zig");
 const context = @import("../context.zig");
 const symbols_mod = @import("../resolve_symbols.zig");
 const type_bound_generics = @import("../type_bound_generics.zig");
+const operator_names = @import("../../../common/operator_names.zig");
 
 const ResolveError = anyerror;
 
@@ -250,30 +251,9 @@ fn procedureSigMatchesActuals(
 }
 
 fn unaryDefinedOperatorName(op: ast.UnaryOp) ?[]const u8 {
-    return switch (op) {
-        .plus => "operator(+)",
-        .minus => "operator(-)",
-        .not => "operator(.not.)",
-    };
+    return operator_names.unaryDefinedName(op);
 }
 
 fn binaryDefinedOperatorName(op: ast.BinaryOp) ?[]const u8 {
-    return switch (op) {
-        .add => "operator(+)",
-        .sub => "operator(-)",
-        .mul => "operator(*)",
-        .div => "operator(/)",
-        .concat => "operator(//)",
-        .power => "operator(**)",
-        .eq => "operator(==)",
-        .ne => "operator(/=)",
-        .lt => "operator(<)",
-        .le => "operator(<=)",
-        .gt => "operator(>)",
-        .ge => "operator(>=)",
-        .and_ => "operator(.and.)",
-        .or_ => "operator(.or.)",
-        .eqv => "operator(.eqv.)",
-        .neqv => "operator(.neqv.)",
-    };
+    return operator_names.binaryDefinedName(op);
 }

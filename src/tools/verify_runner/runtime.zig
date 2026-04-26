@@ -8,6 +8,7 @@ const CACHE_SCHEMA_VERSION = common.CACHE_SCHEMA_VERSION;
 const HOST_CACHE_TAG = common.HOST_CACHE_TAG;
 const zig_api = common.zig_api;
 const runner_io = @import("runner_io.zig");
+const log_state_mod = @import("../log_state.zig");
 
 const ProcessResult = runner_io.ProcessResult;
 const runProcessCapture = runner_io.runProcessCapture;
@@ -17,34 +18,7 @@ const fileExistsAbsolute = runner_io.fileExistsAbsolute;
 const deleteFileAbsoluteIfExists = runner_io.deleteFileAbsoluteIfExists;
 const deleteWindowsLinkSidecarsIfExists = runner_io.deleteWindowsLinkSidecarsIfExists;
 const runtimeBackendTag = common.runtimeBackendTag;
-pub const LogState = struct {
-    mutex: std.Io.Mutex = .init,
-
-    pub fn lock(self: *LogState) void {
-        self.mutex.lockUncancelable(zig_api.defaultIo());
-    }
-
-    pub fn unlock(self: *LogState) void {
-        self.mutex.unlock(zig_api.defaultIo());
-    }
-
-    pub fn stdout(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(zig_api.File.stdout(), fmt, args);
-    }
-
-    pub fn stderr(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(zig_api.File.stderr(), fmt, args);
-    }
-
-    pub fn print(self: *LogState, file: zig_api.File, comptime fmt: []const u8, args: anytype) void {
-        self.mutex.lockUncancelable(zig_api.defaultIo());
-        defer self.mutex.unlock(zig_api.defaultIo());
-        var buffer: [4096]u8 = undefined;
-        var writer = file.writer(&buffer);
-        writer.interface.print(fmt, args) catch {};
-        writer.interface.flush() catch {};
-    }
-};
+pub const LogState = log_state_mod.LogState;
 
 const Stopwatch = struct {
     start_ns: i128,

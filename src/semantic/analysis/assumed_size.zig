@@ -5,6 +5,7 @@ const symbols = @import("../symbol/mod.zig");
 const context = @import("context.zig");
 const resolve_expr = @import("resolve_expr.zig");
 const resolve_symbols = @import("resolve_symbols.zig");
+const expr_diagnostics = @import("expr_diagnostics.zig");
 
 pub fn assumedSizeDimIndex(dims: []const *ast.Expr) ?usize {
     var found: ?usize = null;
@@ -96,15 +97,7 @@ pub fn shapeAssumedSizeMessage(self: *context.Context, expr: *ast.Expr) []const 
 }
 
 pub fn emitExprDiagnostic(self: *context.Context, expr: *ast.Expr, message: []const u8) anyerror {
-    const source = self.sourceForExpr(expr) orelse ast.SourceRef{};
-    self.setDiagnostic(
-        if (source.line == 0) 1 else source.line,
-        if (source.column == 0) 1 else source.column,
-        catalog.semantic.assignment_type_mismatch.code,
-        message,
-        source.text,
-    );
-    return error.AssignmentTypeMismatch;
+    return expr_diagnostics.emitExprAssignmentMismatch(self, expr, message);
 }
 
 fn emitCurrentDeclDiagnostic(self: *context.Context, message: []const u8) anyerror {

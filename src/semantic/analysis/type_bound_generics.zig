@@ -5,6 +5,7 @@ const context = @import("context.zig");
 const resolve_expr = @import("resolve_expr.zig");
 const resolve_symbols = @import("resolve_symbols.zig");
 const bound_helpers = @import("resolve_expr/calls/bound_helpers.zig");
+const binding_search = @import("type_bound_binding_search.zig");
 
 const BindingInfo = context.Context.DerivedTypeInfo.BindingInfo;
 
@@ -63,11 +64,7 @@ fn genericBindingTargetSpecific(
 }
 
 fn findSpecificBindingByName(bindings: []const BindingInfo, name: []const u8) ?BindingInfo {
-    for (bindings) |binding| {
-        if (binding.is_generic) continue;
-        if (std.ascii.eqlIgnoreCase(binding.name, name)) return binding;
-    }
-    return null;
+    return binding_search.findBindingByName(bindings, name, .{ .skip_generic = true });
 }
 
 fn findAncestorSpecificBindingByName(
@@ -75,13 +72,7 @@ fn findAncestorSpecificBindingByName(
     parent_name: ?[]const u8,
     name: []const u8,
 ) ?BindingInfo {
-    var current_name = parent_name;
-    while (current_name) |parent| {
-        const derived = resolve_symbols.lookupDerivedType(self, parent) orelse return null;
-        if (findSpecificBindingByName(derived.bindings, name)) |binding| return binding;
-        current_name = derived.parent_name;
-    }
-    return null;
+    return binding_search.findAncestorBindingByName(self, parent_name, name, .{ .skip_generic = true });
 }
 
 fn genericSpecificMatchesActuals(

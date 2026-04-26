@@ -14,15 +14,14 @@ const decl_diag = @import("resolve_decls_diag_helpers.zig");
 const decl_initializers = @import("resolve_decls_initializers.zig");
 const polymorphic_decls = @import("resolve_decls_polymorphic.zig");
 const assumed_size = @import("assumed_size.zig");
+const deferred_shape = @import("deferred_shape.zig");
 
 const StorageClass = symbols.StorageClass;
 const CharacterLengthKind = symbols.CharacterLengthKind;
-
 pub const DeclarationAspect = enum {
     explicit_type,
     dimensions,
 };
-
 pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
     var resolved_type = try resolvedDeclTypeSpec(self, decl.type_kind, decl.derived_type_name, decl.kind_selector, decl.polymorphic, decl.assumed_type);
     resolved_type = resolved_type.withPolymorphic(decl.polymorphic).withAssumedType(decl.assumed_type);
@@ -76,7 +75,6 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
 pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Expr) !void {
     return decl_initializers.validateDeclaratorInitializer(self, init_expr);
 }
-
 fn characterExprLogicalLen(self: *context.Context, expr: *ast.Expr) ?usize {
     return decl_initializers.characterExprLogicalLen(self, expr);
 }
@@ -209,14 +207,14 @@ pub fn applyDeclarator(
     }
     if (allocatable) {
         sym.is_allocatable = true;
-        if (sym.dims.len != 0 and !hasDeferredShapeDeclarator(sym.dims)) {
+        if (sym.dims.len != 0 and !deferred_shape.hasDeferredShape(sym.dims)) {
             emitDescriptorArrayShapeDiagnostic(self, "ALLOCATABLE");
             return error.DuplicateDeclaration;
         }
     }
     if (pointer) {
         sym.is_pointer = true;
-        if (sym.dims.len != 0 and !hasDeferredShapeDeclarator(sym.dims)) {
+        if (sym.dims.len != 0 and !deferred_shape.hasDeferredShape(sym.dims)) {
             emitDescriptorArrayShapeDiagnostic(self, "POINTER");
             return error.DuplicateDeclaration;
         }
@@ -315,19 +313,6 @@ pub fn applyDeclarator(
         }
     }
     sym.applyTypeSpec(sym.type_spec.withCharacterLength(.constant, length));
-}
-
-fn hasDeferredShapeDeclarator(dims: []*ast.Expr) bool {
-    for (dims) |dim| {
-        switch (dim.*) {
-            .dim_range => |range| {
-                if (range.assumed_shape and range.lower == null) continue;
-                return false;
-            },
-            else => return false,
-        }
-    }
-    return dims.len != 0;
 }
 
 fn emitDescriptorArrayShapeDiagnostic(self: *context.Context, attr_name: []const u8) void {

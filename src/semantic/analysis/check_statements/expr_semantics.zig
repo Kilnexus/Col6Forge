@@ -15,6 +15,9 @@ const procedure_interfaces = @import("procedure_interfaces.zig");
 const procedure_calls = @import("procedure_calls.zig");
 const type_bound_generics = @import("../type_bound_generics.zig");
 const assumed_size = @import("../assumed_size.zig");
+const array_constructor_items = @import("array_constructor_items.zig");
+const expr_attributes = @import("../expr_attributes.zig");
+const expr_diagnostics = @import("../expr_diagnostics.zig");
 
 const ResolvedRefKind = symbols.ResolvedRefKind;
 pub const CheckError = anyerror;
@@ -378,8 +381,8 @@ pub fn checkExprType(self: *context.Context, expr: *ast.Expr, comptime deps: any
         },
         .array_constructor => |ctor| {
             for (ctor.items) |item| _ = try checkExprType(self, item, deps);
-            try checkArrayConstructorAbstractItems(self, expr, ctor.items);
-            try checkTypedArrayConstructorItems(self, expr, ctor, deps);
+            try array_constructor_items.checkAbstractItems(self, expr, ctor.items);
+            try array_constructor_items.checkTypedItems(self, expr, ctor, deps);
             return try resolve_expr.exprType(self, expr);
         },
         .unary => |un| {
@@ -906,154 +909,15 @@ fn emitExprConstraintDiagnostic(
     expr_node: *ast.Expr,
     message: []const u8,
 ) CheckError {
-    const source = self.sourceForExpr(expr_node) orelse ast.SourceRef{};
-    self.setDiagnostic(
-        if (source.line == 0) 1 else source.line,
-        if (source.column == 0) 1 else source.column,
-        catalog.semantic.assignment_type_mismatch.code,
-        message,
-        source.text,
-    );
-    return error.AssignmentTypeMismatch;
-}
-
-fn checkTypedArrayConstructorItems(
-    self: *context.Context,
-    expr_node: *ast.Expr,
-    ctor: ast.ArrayConstructor,
-    comptime deps: anytype,
-) CheckError!void {
-    if (ctor.type_spec == null) return;
-    const target_spec = try resolve_expr.exprTypeSpec(self, expr_node);
-    for (ctor.items) |item| {
-        const actual_spec = try resolve_expr.exprTypeSpec(self, item);
-        try checkAbstractArrayConstructorItem(self, item, actual_spec, expr_node);
-        if (target_spec.lowered_kind == .derived or actual_spec.lowered_kind == .derived) {
-            if (!deps.dummyArgTypeCompatible(self, target_spec, actual_spec)) {
-                const source = self.sourceForExpr(item) orelse self.sourceForExpr(expr_node) orelse ast.SourceRef{};
-                self.setDiagnostic(
-                    if (source.line == 0) 1 else source.line,
-                    if (source.column == 0) 1 else source.column,
-                    catalog.semantic.assignment_type_mismatch.code,
-                    "cannot convert TYPE in array constructor",
-                    source.text,
-                );
-                return error.AssignmentTypeMismatch;
-            }
-            continue;
-        }
-        try checkTypedArrayConstructorConstConversion(self, target_spec, item);
-    }
-}
-
-fn checkArrayConstructorAbstractItems(
-    self: *context.Context,
-    expr_node: *ast.Expr,
-    items: []const *ast.Expr,
-) CheckError!void {
-    for (items) |item| {
-        const actual_spec = try resolve_expr.exprTypeSpec(self, item);
-        try checkAbstractArrayConstructorItem(self, item, actual_spec, expr_node);
-    }
-}
-
-fn checkAbstractArrayConstructorItem(
-    self: *context.Context,
-    item: *ast.Expr,
-    actual_spec: symbols.TypeSpec,
-    fallback_expr: *ast.Expr,
-) CheckError!void {
-    if (actual_spec.lowered_kind != .derived) return;
-    const derived_name = actual_spec.derived_type_name orelse return;
-    const derived_info = resolve_symbols.lookupDerivedType(self, derived_name) orelse return;
-    if (!derived_info.abstract) return;
-
-    const source = self.sourceForExpr(item) orelse self.sourceForExpr(fallback_expr) orelse ast.SourceRef{};
-    const message = std.fmt.allocPrint(self.arena, "is of the ABSTRACT type '{s}'", .{derived_name}) catch "is of the ABSTRACT type";
-    self.setDiagnostic(
-        if (source.line == 0) 1 else source.line,
-        if (source.column == 0) 1 else source.column,
-        catalog.semantic.assignment_type_mismatch.code,
-        message,
-        source.text,
-    );
-    return error.AssignmentTypeMismatch;
-}
-
-fn checkTypedArrayConstructorConstConversion(
-    self: *context.Context,
-    target_spec: symbols.TypeSpec,
-    item: *ast.Expr,
-) CheckError!void {
-    if (!self.range_check) return;
-    if (target_spec.lowered_kind != .integer) return;
-    const value = (try constants.evalConst(self, item)) orelse return;
-    const int_value = switch (value) {
-        .integer => |v| v,
-        .real => |v| blk: {
-            if (!std.math.isFinite(v.value)) return;
-            break :blk @as(i64, @intFromFloat(@trunc(v.value)));
-        },
-        else => return,
-    };
-    const bounds = integerBoundsForTypeSpec(self, target_spec);
-    if (int_value >= bounds.min and int_value <= bounds.max) return;
-    const source = self.sourceForExpr(item) orelse ast.SourceRef{};
-    self.setDiagnostic(
-        if (source.line == 0) 1 else source.line,
-        if (source.column == 0) 1 else source.column,
-        catalog.semantic.assignment_type_mismatch.code,
-        "overflow converting INTEGER in array constructor",
-        source.text,
-    );
-    return error.AssignmentTypeMismatch;
-}
-
-fn integerBoundsForTypeSpec(self: *context.Context, spec: symbols.TypeSpec) context.Context.IntegerBounds {
-    const bits: u16 = blk: {
-        const kind_value = spec.kind_value orelse break :blk self.target_layout.default_integer_bits;
-        if (kind_value <= 0) break :blk self.target_layout.default_integer_bits;
-        if (kind_value <= 16) break :blk @intCast(kind_value * 8);
-        break :blk @intCast(@min(kind_value, 64));
-    };
-    const layout: context.Context.TargetLayout = .{ .default_integer_bits = bits };
-    return layout.integerBounds(.integer);
+    return expr_diagnostics.emitExprAssignmentMismatch(self, expr_node, message);
 }
 
 fn exprIsAllocatableEntity(self: *context.Context, expr_node: *ast.Expr) bool {
-    return switch (expr_node.*) {
-        .identifier => |name| blk: {
-            const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;
-            break :blk self.symbols.items[idx].is_allocatable;
-        },
-        .component => |comp| blk: {
-            if (comp.has_parens) break :blk false;
-            const base_spec = resolve_expr.exprTypeSpec(self, comp.base) catch break :blk false;
-            if (base_spec.lowered_kind != .derived) break :blk false;
-            const derived_name = base_spec.derived_type_name orelse break :blk false;
-            const component = resolve_symbols.lookupDerivedComponent(self, derived_name, comp.name) orelse break :blk false;
-            break :blk component.allocatable;
-        },
-        else => false,
-    };
+    return expr_attributes.isAllocatableEntity(self, expr_node);
 }
 
 fn exprIsPointerEntity(self: *context.Context, expr_node: *ast.Expr) bool {
-    return switch (expr_node.*) {
-        .identifier => |name| blk: {
-            const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;
-            break :blk self.symbols.items[idx].is_pointer;
-        },
-        .component => |comp| blk: {
-            if (comp.has_parens) break :blk false;
-            const base_spec = resolve_expr.exprTypeSpec(self, comp.base) catch break :blk false;
-            if (base_spec.lowered_kind != .derived) break :blk false;
-            const derived_name = base_spec.derived_type_name orelse break :blk false;
-            const component = resolve_symbols.lookupDerivedComponent(self, derived_name, comp.name) orelse break :blk false;
-            break :blk component.pointer;
-        },
-        else => false,
-    };
+    return expr_attributes.isPointerEntity(self, expr_node);
 }
 
 fn procedureSigMatchesActuals(

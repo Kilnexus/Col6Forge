@@ -3,6 +3,7 @@ pub const diag = @import("common/diagnostic.zig");
 pub const diagnostic_render = @import("common/diagnostic_render.zig");
 pub const error_catalog = @import("common/error_catalog.zig");
 pub const file_ops = @import("common/file_ops.zig");
+pub const operator_names = @import("common/operator_names.zig");
 pub const process_args = @import("common/process_args.zig");
 pub const ast = @import("ast/mod.zig");
 pub const frontend = @import("frontend/mod.zig");

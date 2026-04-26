@@ -7,6 +7,7 @@ const std = @import("std");
 const Col6Forge = @import("Col6Forge");
 const zig_api = Col6Forge.zig_api;
 const cli_args = Col6Forge.process_args;
+const LogState = @import("log_state.zig").LogState;
 const allocArgs = cli_args.allocArgs;
 const freeArgs = cli_args.freeArgs;
 
@@ -458,35 +459,6 @@ fn runCcTranslateDiagnosticPipeline(
     try out.writer.flush();
     return .{ .output = try allocator.dupe(u8, out.writer.buffered()) };
 }
-
-const LogState = struct {
-    mutex: std.Io.Mutex = .init,
-
-    fn lock(self: *LogState) void {
-        self.mutex.lockUncancelable(zig_api.defaultIo());
-    }
-
-    fn unlock(self: *LogState) void {
-        self.mutex.unlock(zig_api.defaultIo());
-    }
-
-    fn stdout(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(zig_api.File.stdout(), fmt, args);
-    }
-
-    fn stderr(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(zig_api.File.stderr(), fmt, args);
-    }
-
-    fn print(self: *LogState, file: zig_api.File, comptime fmt: []const u8, args: anytype) void {
-        self.mutex.lockUncancelable(zig_api.defaultIo());
-        defer self.mutex.unlock(zig_api.defaultIo());
-        var buffer: [4096]u8 = undefined;
-        var writer = file.writer(&buffer);
-        writer.interface.print(fmt, args) catch {};
-        writer.interface.flush() catch {};
-    }
-};
 
 const Progress = struct {
     total: usize,

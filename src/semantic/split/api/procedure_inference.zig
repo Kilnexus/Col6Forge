@@ -3,6 +3,7 @@ const ast = @import("../../../ast/nodes.zig");
 const context = @import("../../context.zig");
 const evaluator = @import("../../evaluator.zig");
 const symbols = @import("../../symbol/mod.zig");
+const literal_expr = @import("../../literal_expr.zig");
 const shape_signatures = @import("procedure_inference/shape_signatures.zig");
 const type_kind_selector = @import("../../type_kind_selector.zig");
 
@@ -961,13 +962,7 @@ fn applyDummyDeclaratorCharLen(type_spec: symbols.TypeSpec, declarator: ast.Decl
 }
 
 fn inferConstantCharLen(expr_node: *ast.Expr) ?usize {
-    return switch (expr_node.*) {
-        .literal => |lit| switch (lit.kind) {
-            .integer => std.fmt.parseInt(usize, lit.text, 10) catch null,
-            else => null,
-        },
-        else => null,
-    };
+    return literal_expr.integer(usize, expr_node);
 }
 
 fn dummyArgRequiresDescriptor(dims: []const *ast.Expr) bool {

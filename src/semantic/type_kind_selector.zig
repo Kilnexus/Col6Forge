@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../ast/nodes.zig");
 const symbols = @import("symbol/mod.zig");
+const literal_expr = @import("literal_expr.zig");
 
 pub fn resolve(base: ast.TypeKind, selector: ?*ast.Expr) ast.TypeKind {
     return resolveSpecWithConst(base, selector, null).lowered_kind;
@@ -93,13 +94,7 @@ fn selectorValueAsInteger(value: ?symbols.ConstValue) ?i64 {
 }
 
 fn selectorExprAsInteger(selector: *ast.Expr) ?i64 {
-    return switch (selector.*) {
-        .literal => |lit| switch (lit.kind) {
-            .integer => std.fmt.parseInt(i64, lit.text, 10) catch null,
-            else => null,
-        },
-        else => null,
-    };
+    return literal_expr.integer(i64, selector);
 }
 
 fn selectorExprAsIdentifier(selector: *ast.Expr) ?[]const u8 {

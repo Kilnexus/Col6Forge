@@ -4,6 +4,7 @@ const procedure_pass = @import("../../../../common/procedure_pass.zig");
 const context = @import("../../context.zig");
 const symbols = @import("../../../symbol/mod.zig");
 const symbols_mod = @import("../../resolve_symbols.zig");
+const binding_search = @import("../../type_bound_binding_search.zig");
 const procedure_interfaces = @import("../../check_statements/procedure_interfaces.zig");
 const diagnostics = @import("diagnostics.zig");
 
@@ -894,10 +895,7 @@ fn findResolvedBindingByName(
     bindings: []const context.Context.DerivedTypeInfo.BindingInfo,
     name: []const u8,
 ) ?context.Context.DerivedTypeInfo.BindingInfo {
-    for (bindings) |binding| {
-        if (std.ascii.eqlIgnoreCase(binding.name, name)) return binding;
-    }
-    return null;
+    return binding_search.findBindingByName(bindings, name, .{});
 }
 
 fn findAncestorBindingByName(
@@ -905,13 +903,7 @@ fn findAncestorBindingByName(
     parent_name: ?[]const u8,
     name: []const u8,
 ) ?context.Context.DerivedTypeInfo.BindingInfo {
-    var current_name = parent_name;
-    while (current_name) |parent| {
-        const derived = symbols_mod.lookupDerivedType(self, parent) orelse return null;
-        if (findResolvedBindingByName(derived.bindings, name)) |binding| return binding;
-        current_name = derived.parent_name;
-    }
-    return null;
+    return binding_search.findAncestorBindingByName(self, parent_name, name, .{});
 }
 
 pub fn findParsedBindingByName(

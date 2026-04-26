@@ -7,6 +7,7 @@ const utils = @import("../../utils.zig");
 const procedure_pass = @import("../../../../../common/procedure_pass.zig");
 const procedure_name_resolution = @import("../procedure_name_resolution.zig");
 const type_specs = @import("../../../../../common/type_specs.zig");
+const operator_names = @import("../../../../../common/operator_names.zig");
 const type_kind_selector = @import("../../../../../semantic/type_kind_selector.zig");
 const ast_nodes = @import("../../../../../ast/nodes.zig");
 const character = @import("character.zig");
@@ -98,32 +99,11 @@ pub fn isNumericKind(kind: ast.TypeKind) bool {
 }
 
 pub fn unaryDefinedOperatorName(op: ast.UnaryOp) ?[]const u8 {
-    return switch (op) {
-        .plus => "operator(+)",
-        .minus => "operator(-)",
-        .not => "operator(.not.)",
-    };
+    return operator_names.unaryDefinedName(op);
 }
 
 pub fn binaryDefinedOperatorName(op: ast.BinaryOp) ?[]const u8 {
-    return switch (op) {
-        .add => "operator(+)",
-        .sub => "operator(-)",
-        .mul => "operator(*)",
-        .div => "operator(/)",
-        .concat => "operator(//)",
-        .power => "operator(**)",
-        .eq => "operator(==)",
-        .ne => "operator(/=)",
-        .lt => "operator(<)",
-        .le => "operator(<=)",
-        .gt => "operator(>)",
-        .ge => "operator(>=)",
-        .and_ => "operator(.and.)",
-        .or_ => "operator(.or.)",
-        .eqv => "operator(.eqv.)",
-        .neqv => "operator(.neqv.)",
-    };
+    return operator_names.binaryDefinedName(op);
 }
 
 pub fn resolveSingleTargetGenericProcedureName(ctx: *Context, generic_name: []const u8) ?[]const u8 {

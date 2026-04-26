@@ -8,6 +8,8 @@ const std = @import("std");
 const Col6Forge = @import("Col6Forge");
 const zig_api = Col6Forge.zig_api;
 const cli_args = Col6Forge.process_args;
+const LogState = @import("log_state.zig").LogState;
+const logged_pipeline_error = @import("logged_pipeline_error.zig");
 const allocArgs = cli_args.allocArgs;
 const freeArgs = cli_args.freeArgs;
 
@@ -262,13 +264,7 @@ fn writeFile(path: []const u8, contents: []const u8) !void {
 }
 
 fn reportPipelineError(log_state: *LogState, diag_bag: *const Col6Forge.diag.Bag, input_path: []const u8, err: anyerror) !void {
-    var stderr = zig_api.File.stderr();
-    var buffer: [4096]u8 = undefined;
-    var writer = stderr.writer(&buffer);
-    log_state.lock();
-    defer log_state.unlock();
-    try Col6Forge.writePipelineErrorDiagnostic(&writer.interface, diag_bag, input_path, err);
-    try writer.interface.flush();
+    return logged_pipeline_error.report(log_state, diag_bag, input_path, err);
 }
 
 const Comparator = struct {
@@ -433,35 +429,6 @@ fn runCaseParallel(
     }
     _ = progress.completed.fetchAdd(1, .seq_cst);
 }
-
-const LogState = struct {
-    mutex: std.Io.Mutex = .init,
-
-    fn lock(self: *LogState) void {
-        self.mutex.lockUncancelable(zig_api.defaultIo());
-    }
-
-    fn unlock(self: *LogState) void {
-        self.mutex.unlock(zig_api.defaultIo());
-    }
-
-    fn stdout(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(zig_api.File.stdout(), fmt, args);
-    }
-
-    fn stderr(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(zig_api.File.stderr(), fmt, args);
-    }
-
-    fn print(self: *LogState, file: zig_api.File, comptime fmt: []const u8, args: anytype) void {
-        self.mutex.lockUncancelable(zig_api.defaultIo());
-        defer self.mutex.unlock(zig_api.defaultIo());
-        var buffer: [4096]u8 = undefined;
-        var writer = file.writer(&buffer);
-        writer.interface.print(fmt, args) catch {};
-        writer.interface.flush() catch {};
-    }
-};
 
 const Progress = struct {
     total: usize,

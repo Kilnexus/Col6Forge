@@ -13,5 +13,6 @@ test {
     _ = @import("tests/assumed_charlen_procedure_args.zig");
     _ = @import("tests/intrinsic_character_results.zig");
     _ = @import("tests/nested_array_constructor_shapes.zig");
+    _ = @import("tests/procedure_decl_diagnostics.zig");
     _ = @import("mod_proc_component_tests.zig");
 }

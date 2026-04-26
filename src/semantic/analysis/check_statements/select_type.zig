@@ -10,6 +10,7 @@ const resolve_symbols = @import("../resolve_symbols.zig");
 const stmt_queries = @import("../../../common/stmt_queries.zig");
 const select_type_char_clause = @import("../select_type_char_clause.zig");
 const expr_semantics = @import("expr_semantics.zig");
+const expr_diagnostics = @import("../expr_diagnostics.zig");
 
 pub const CheckError = anyerror;
 
@@ -506,15 +507,7 @@ fn emitAssociateSelectorDiagnostic(
     selector: *ast.Expr,
     message: []const u8,
 ) CheckError {
-    const source = self.sourceForExpr(selector) orelse ast.SourceRef{};
-    self.setDiagnostic(
-        if (source.line == 0) 1 else source.line,
-        if (source.column == 0) 1 else source.column,
-        catalog.semantic.assignment_type_mismatch.code,
-        message,
-        source.text,
-    );
-    return error.AssignmentTypeMismatch;
+    return expr_diagnostics.emitExprAssignmentMismatch(self, selector, message);
 }
 
 fn validateSelectTypeSelector(

@@ -13,6 +13,7 @@ const constants = @import("../../../resolve_const.zig");
 const resolve_expr = @import("../../../resolve_expr.zig");
 const resolve_symbols = @import("../../../resolve_symbols.zig");
 const assumed_size = @import("../../../assumed_size.zig");
+const expr_attributes = @import("../../../expr_attributes.zig");
 const abstract_expr_use = @import("../../abstract_expr_use.zig");
 const leaf_helpers = @import("../../leaf_helpers.zig");
 const procedure_call_actual_traits = @import("../../procedure_call_actual_traits.zig");
@@ -484,21 +485,7 @@ fn checkAllocatablePolymorphicActualConstraint(
 }
 
 fn exprIsAllocatableActual(self: *context.Context, expr_node: *ast.Expr) bool {
-    return switch (expr_node.*) {
-        .identifier => |name| blk: {
-            const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;
-            break :blk self.symbols.items[idx].is_allocatable;
-        },
-        .component => |comp| blk: {
-            if (comp.has_parens) break :blk false;
-            const base_spec = resolve_expr.exprTypeSpec(self, comp.base) catch break :blk false;
-            if (base_spec.lowered_kind != .derived) break :blk false;
-            const derived_name = base_spec.derived_type_name orelse break :blk false;
-            const component = resolve_symbols.lookupDerivedComponent(self, derived_name, comp.name) orelse break :blk false;
-            break :blk component.allocatable;
-        },
-        else => false,
-    };
+    return expr_attributes.isAllocatableEntity(self, expr_node);
 }
 
 pub fn shouldWarnExternalExplicitInterfaceActualTypeMismatch(

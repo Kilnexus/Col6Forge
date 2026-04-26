@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("nodes.zig");
+const operator_names = @import("../common/operator_names.zig");
 
 pub fn printProgram(writer: anytype, program: ast.Program) !void {
     try writer.print("; AST units: {d}\n", .{program.units.len});
@@ -748,32 +749,11 @@ fn literalKindName(kind: ast.LiteralKind) []const u8 {
 }
 
 fn unaryOpName(op: ast.UnaryOp) []const u8 {
-    return switch (op) {
-        .plus => "plus",
-        .minus => "minus",
-        .not => "not",
-    };
+    return operator_names.unaryName(op);
 }
 
 fn binaryOpName(op: ast.BinaryOp) []const u8 {
-    return switch (op) {
-        .add => "add",
-        .sub => "sub",
-        .mul => "mul",
-        .div => "div",
-        .concat => "concat",
-        .power => "power",
-        .eq => "eq",
-        .ne => "ne",
-        .lt => "lt",
-        .le => "le",
-        .gt => "gt",
-        .ge => "ge",
-        .and_ => "and",
-        .or_ => "or",
-        .eqv => "eqv",
-        .neqv => "neqv",
-    };
+    return operator_names.binaryName(op);
 }
 
 fn tabControlName(kind: ast.TabControl) []const u8 {

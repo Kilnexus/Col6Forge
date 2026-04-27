@@ -29,6 +29,7 @@ const computeRuntimeCacheKey = build_helpers.computeRuntimeCacheKey;
 const computeCompilerCacheKey = build_helpers.computeCompilerCacheKey;
 const cleanupWorkDir = build_helpers.cleanupWorkDir;
 const buildExePath = build_helpers.buildExePath;
+const file_ops = Col6Forge.file_ops;
 const ProcessResult = io_compare.ProcessResult;
 const runProcessCaptureWithInput = io_compare.runProcessCaptureWithInput;
 const Comparator = io_compare.Comparator;
@@ -382,10 +383,18 @@ fn processCase(
 
     const ref_exe = try buildExePath(allocator, ref_dir, "ref");
     defer allocator.free(ref_exe);
-    const ref_ok = try compileReference(allocator, gfortran_cmd, ref_exe, source_paths, options.timeout_ms, ref_dir);
-    if (!ref_ok) {
-        std.log.err("reference compile failed: {s}\n", .{case.name});
-        return false;
+    const cached_ref_exe = try buildReferenceExePath(allocator, cache_dir, case.name, gfortran_cmd, source_paths, options.incremental);
+    defer allocator.free(cached_ref_exe);
+    if (options.incremental and file_ops.pathExists(cached_ref_exe)) {
+        try file_ops.copyFile(cached_ref_exe, ref_exe);
+    } else {
+        const compile_target = if (options.incremental) cached_ref_exe else ref_exe;
+        const ref_ok = try compileReference(allocator, gfortran_cmd, compile_target, source_paths, options.timeout_ms, ref_dir);
+        if (!ref_ok) {
+            std.log.err("reference compile failed: {s}\n", .{case.name});
+            return false;
+        }
+        if (options.incremental) try file_ops.copyFile(cached_ref_exe, ref_exe);
     }
 
     const trans_sources = try selectTranslatedSources(allocator, source_paths, options.translate_f90, options.translate_driver);
@@ -466,4 +475,36 @@ fn processCase(
     }
 
     return true;
+}
+
+fn buildReferenceExePath(
+    allocator: std.mem.Allocator,
+    cache_dir: []const u8,
+    case_name: []const u8,
+    gfortran_cmd: []const u8,
+    source_paths: []const []const u8,
+    incremental: bool,
+) ![]const u8 {
+    if (!incremental) return buildExePath(allocator, cache_dir, "ref_uncached");
+
+    const cache_key = try computeReferenceCacheKey(allocator, gfortran_cmd, source_paths);
+    defer allocator.free(cache_key);
+    const base_name = try std.fmt.allocPrint(allocator, "ref_v{d}_{s}_{s}", .{ CACHE_SCHEMA_VERSION, case_name, cache_key });
+    defer allocator.free(base_name);
+    return buildExePath(allocator, cache_dir, base_name);
+}
+
+fn computeReferenceCacheKey(
+    allocator: std.mem.Allocator,
+    gfortran_cmd: []const u8,
+    source_paths: []const []const u8,
+) ![]const u8 {
+    var hasher = std.hash.XxHash64.init(0);
+    hasher.update(gfortran_cmd);
+    for (source_paths) |path| {
+        hasher.update(std.fs.path.basename(path));
+        var digest = try file_ops.hashFileXx64(path);
+        hasher.update(std.mem.asBytes(&digest));
+    }
+    return std.fmt.allocPrint(allocator, "{x:0>16}", .{hasher.final()});
 }

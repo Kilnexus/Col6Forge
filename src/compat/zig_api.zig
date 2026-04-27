@@ -276,3 +276,10 @@ pub fn nowNs() i128 {
     }
     return @as(i128, @intCast(std.Io.Clock.awake.now(io()).nanoseconds));
 }
+
+pub fn unixMs() i64 {
+    if (@hasDecl(std.time, "milliTimestamp")) {
+        return std.time.milliTimestamp();
+    }
+    return @intCast(@divTrunc(std.Io.Clock.real.now(io()).nanoseconds, std.time.ns_per_ms));
+}

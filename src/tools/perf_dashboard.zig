@@ -94,7 +94,7 @@ pub fn main(init: std.process.Init) !void {
 
     try upsertHistoryEntry(allocator, &history.value, candidate.value, options);
     trimHistory(&history.value, options.max_runs);
-    history.value.updated_unix_ms = nowMs();
+    history.value.updated_unix_ms = zig_api.unixMs();
 
     try ensureParentDir(options.history_path);
     var history_file = try zig_api.cwd().createFile(options.history_path, .{ .truncate = true });
@@ -429,8 +429,4 @@ fn printUsage(file: zig_api.File) !void {
         \\  -h, --help             Show this help
         \\
     );
-}
-
-fn nowMs() i64 {
-    return @intCast(@divTrunc(zig_api.nowNs(), std.time.ns_per_ms));
 }

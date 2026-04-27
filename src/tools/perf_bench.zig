@@ -119,7 +119,7 @@ pub fn main(init: std.process.Init) !void {
 
     const report = BenchReport{
         .schema_version = 1,
-        .generated_unix_ms = nowMs(),
+        .generated_unix_ms = zig_api.unixMs(),
         .iterations = options.iterations,
         .warmup = options.warmup,
         .cases = reports.items,

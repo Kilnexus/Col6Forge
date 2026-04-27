@@ -4,6 +4,7 @@ const std = common.std;
 const Col6Forge = common.Col6Forge;
 const zig_api = Col6Forge.zig_api;
 const process_timeout = @import("../process_timeout.zig");
+const child_env = @import("../child_env.zig");
 const cli = @import("cli.zig");
 const Options = cli.Options;
 const directives = @import("directives.zig");
@@ -32,43 +33,6 @@ const ProcessResult = struct {
 
 var work_run_counter = std.atomic.Value(u64).init(0);
 
-fn isZigCommand(argv: []const []const u8) bool {
-    if (argv.len == 0) return false;
-    return std.mem.eql(u8, argv[0], "zig") or std.mem.eql(u8, argv[0], "zig.exe");
-}
-
-fn buildChildEnv(
-    allocator: std.mem.Allocator,
-    argv: []const []const u8,
-    cwd: ?[]const u8,
-) !std.process.Environ.Map {
-    const base_dir = cwd orelse ".";
-    const temp_dir = try std.fs.path.join(allocator, &.{ base_dir, ".gcc-dg-runner-tmp" });
-    defer allocator.free(temp_dir);
-    try zig_api.cwd().makePath(temp_dir);
-
-    var env_map = try std.process.Environ.createMap(.{ .block = .global }, allocator);
-    errdefer env_map.deinit();
-
-    const temp_env = if (cwd != null) ".gcc-dg-runner-tmp" else temp_dir;
-    try env_map.put("TMP", temp_env);
-    try env_map.put("TEMP", temp_env);
-    try env_map.put("TMPDIR", temp_env);
-
-    if (isZigCommand(argv)) {
-        const local_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-cache" });
-        defer allocator.free(local_cache_dir);
-        const global_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-global-cache" });
-        defer allocator.free(global_cache_dir);
-        try zig_api.cwd().makePath(local_cache_dir);
-        try zig_api.cwd().makePath(global_cache_dir);
-        try env_map.put("ZIG_LOCAL_CACHE_DIR", local_cache_dir);
-        try env_map.put("ZIG_GLOBAL_CACHE_DIR", global_cache_dir);
-    }
-
-    return env_map;
-}
-
 fn runProcessCapture(
     allocator: std.mem.Allocator,
     argv: []const []const u8,
@@ -76,7 +40,7 @@ fn runProcessCapture(
     timeout_ms: ?u64,
 ) !ProcessResult {
     const io = zig_api.defaultIo();
-    var env_map = try buildChildEnv(allocator, argv, cwd);
+    var env_map = try child_env.build(allocator, argv, cwd, ".gcc-dg-runner-tmp");
     defer env_map.deinit();
 
     var child = try std.process.spawn(io, .{

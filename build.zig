@@ -222,6 +222,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tools/test_harness.zig"),
             .target = target,
             .optimize = tools_optimize,
+            .imports = &.{
+                .{ .name = "Col6Forge", .module = mod },
+            },
         }),
     });
 
@@ -231,6 +234,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tools/perf_bench.zig"),
             .target = target,
             .optimize = tools_optimize,
+            .imports = &.{
+                .{ .name = "Col6Forge", .module = mod },
+            },
         }),
     });
 
@@ -240,6 +246,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tools/perf_compare.zig"),
             .target = target,
             .optimize = tools_optimize,
+            .imports = &.{
+                .{ .name = "Col6Forge", .module = mod },
+            },
         }),
     });
 
@@ -249,6 +258,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tools/perf_dashboard.zig"),
             .target = target,
             .optimize = tools_optimize,
+            .imports = &.{
+                .{ .name = "Col6Forge", .module = mod },
+            },
         }),
     });
 
@@ -320,6 +332,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = tools_optimize,
             .imports = &.{
+                .{ .name = "Col6Forge", .module = mod },
                 .{ .name = "constraints_devtools", .module = constraints_devtools },
             },
         }),

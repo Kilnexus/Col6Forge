@@ -1,43 +1,45 @@
 //! Unified test harness that orchestrates existing suite runners.
 const std = @import("std");
 const builtin = @import("builtin");
+const tool_args = @import("tool_args.zig");
+const child_env = @import("child_env.zig");
+const Col6Forge = @import("Col6Forge");
+const zig_api = Col6Forge.zig_api;
 
 const TimeoutConfig = struct {
     suite_timeout_ms: u64 = 0,
     test_timeout_ms: u64 = 30_000,
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try tool_args.allocArgs(allocator, init.minimal.args);
+    defer tool_args.freeArgs(allocator, args);
 
     const parsed = try parseArgs(allocator, args);
     const options = switch (parsed) {
         .success => |value| value,
         .failure => |parse_err| {
-            try printUsage(std.fs.File.stderr());
-            try printParseArgError(std.fs.File.stderr(), parse_err);
+            try printUsage(zig_api.File.stderr());
+            try printParseArgError(zig_api.File.stderr(), parse_err);
             return error.InvalidArguments;
         },
     };
     defer allocator.free(options.suite_names);
 
     if (options.show_help) {
-        try printUsage(std.fs.File.stdout());
+        try printUsage(zig_api.File.stdout());
         return;
     }
 
     const available_suites = getSuites();
     if (options.list_suites) {
-        try listSuites(available_suites, std.fs.File.stdout());
+        try listSuites(available_suites, zig_api.File.stdout());
         return;
     }
 
-    const exe_dir = try std.fs.selfExeDirPathAlloc(allocator);
+    const exe_dir = try allocator.dupe(u8, ".");
     defer allocator.free(exe_dir);
     const root_dir = try projectRootFromExeDir(allocator, exe_dir);
     defer allocator.free(root_dir);
@@ -56,53 +58,19 @@ pub fn main() !void {
     }
 
     const runner_jobs = @max(1, options.jobs / selected_suites.items.len);
-    const suite_jobs = if (options.jobs < selected_suites.items.len) options.jobs else selected_suites.items.len;
 
     var output: OutputMux = .{};
 
-    if (options.jobs == 1 or selected_suites.items.len == 1) {
-        var failures: usize = 0;
-        for (selected_suites.items) |suite| {
-            const ok = try runSuite(allocator, suite, options, exe_dir, root_dir, runner_jobs, &output);
-            if (!ok) {
-                failures += 1;
-                if (!options.keep_going) break;
-            }
-        }
-        if (failures > 0) {
-            try logStderr("test harness failed: {d}\n", .{failures});
-            return error.TestHarnessFailed;
-        }
-        return;
-    }
-
-    var failures = std.atomic.Value(usize).init(0);
-    var pool: std.Thread.Pool = undefined;
-    try pool.init(.{
-        .allocator = allocator,
-        .n_jobs = suite_jobs,
-    });
-    defer pool.deinit();
-
-    var wait_group = std.Thread.WaitGroup{};
+    var failures: usize = 0;
     for (selected_suites.items) |suite| {
-        pool.spawnWg(&wait_group, runSuiteParallel, .{
-            allocator,
-            suite,
-            options,
-            exe_dir,
-            root_dir,
-            runner_jobs,
-            &output,
-            &failures,
-        });
+        const ok = try runSuite(allocator, suite, options, exe_dir, root_dir, runner_jobs, &output);
+        if (!ok) {
+            failures += 1;
+            if (!options.keep_going) break;
+        }
     }
-
-    pool.waitAndWork(&wait_group);
-
-    const failure_count = failures.load(.seq_cst);
-    if (failure_count > 0) {
-        try logStderr("test harness failed: {d}\n", .{failure_count});
+    if (failures > 0) {
+        try logStderr("test harness failed: {d}\n", .{failures});
         return error.TestHarnessFailed;
     }
 }
@@ -433,10 +401,10 @@ fn runSuite(
 
 fn logSuiteTermFailure(suite_name: []const u8, term: std.process.Child.Term) !void {
     switch (term) {
-        .Exited => |code| try logStderr("suite failed: {s} (exit {d})\n", .{ suite_name, code }),
-        .Signal => |sig| try logStderr("suite failed: {s} (signal {d})\n", .{ suite_name, sig }),
-        .Stopped => |sig| try logStderr("suite failed: {s} (stopped {d})\n", .{ suite_name, sig }),
-        .Unknown => |code| try logStderr("suite failed: {s} (status {d})\n", .{ suite_name, code }),
+        .exited => |code| try logStderr("suite failed: {s} (exit {d})\n", .{ suite_name, code }),
+        .signal => |sig| try logStderr("suite failed: {s} (signal {d})\n", .{ suite_name, sig }),
+        .stopped => |sig| try logStderr("suite failed: {s} (stopped {d})\n", .{ suite_name, sig }),
+        .unknown => |code| try logStderr("suite failed: {s} (status {d})\n", .{ suite_name, code }),
     }
 }
 
@@ -460,44 +428,22 @@ fn runSuiteParallel(
 }
 
 fn projectRootFromExeDir(allocator: std.mem.Allocator, exe_dir: []const u8) ![]const u8 {
-    const cwd_root = try std.fs.cwd().realpathAlloc(allocator, ".");
-    errdefer allocator.free(cwd_root);
-    const cwd_build = try std.fs.path.join(allocator, &.{ cwd_root, "build.zig" });
-    defer allocator.free(cwd_build);
-    if (pathExists(cwd_build)) return cwd_root;
-    allocator.free(cwd_root);
-
-    const guess_two = try std.fs.path.join(allocator, &.{ exe_dir, "..", ".." });
-    defer allocator.free(guess_two);
-    const two_abs = try std.fs.cwd().realpathAlloc(allocator, guess_two);
-    defer allocator.free(two_abs);
-    const two_build = try std.fs.path.join(allocator, &.{ two_abs, "build.zig" });
-    defer allocator.free(two_build);
-    if (pathExists(two_build)) return try allocator.dupe(u8, two_abs);
-
-    const guess_three = try std.fs.path.join(allocator, &.{ exe_dir, "..", "..", ".." });
-    defer allocator.free(guess_three);
-    const three_abs = try std.fs.cwd().realpathAlloc(allocator, guess_three);
-    defer allocator.free(three_abs);
-    const three_build = try std.fs.path.join(allocator, &.{ three_abs, "build.zig" });
-    defer allocator.free(three_build);
-    if (pathExists(three_build)) return try allocator.dupe(u8, three_abs);
-
-    return error.FileNotFound;
+    _ = exe_dir;
+    return allocator.dupe(u8, ".");
 }
 
 fn exeName(comptime base: []const u8) []const u8 {
     return if (builtin.os.tag == .windows) base ++ ".exe" else base;
 }
 
-fn listSuites(available: []const Suite, file: std.fs.File) !void {
+fn listSuites(available: []const Suite, file: zig_api.File) !void {
     _ = file;
     for (available) |suite| {
         std.log.info("{s}: {s}\n", .{ suite.name, suite.description });
     }
 }
 
-fn printUsage(file: std.fs.File) !void {
+fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage: test_harness [options]
         \\Options:
@@ -520,7 +466,7 @@ fn printUsage(file: std.fs.File) !void {
     );
 }
 
-fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
+fn printParseArgError(file: zig_api.File, parse_err: ParseArgError) !void {
     var buffer: [512]u8 = undefined;
     var writer = file.writer(&buffer);
     switch (parse_err) {
@@ -545,31 +491,43 @@ fn runChildWithTimeoutStreaming(
     timeout_ms: u64,
     output: *OutputMux,
 ) !RunResult {
-    const started_ms: i64 = std.time.milliTimestamp();
-    var child = std.process.Child.init(argv, allocator);
-    child.cwd = cwd;
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    const io = zig_api.defaultIo();
+    var env_map = try child_env.build(allocator, argv, cwd, ".test-harness-tmp");
+    defer env_map.deinit();
 
-    try child.spawn();
-
-    const stdout_thread = try std.Thread.spawn(.{}, streamPipeTo, .{
-        child.stdout.?,
-        std.fs.File.stdout(),
-        output,
+    const started_ms: i64 = nowMs();
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = if (cwd) |path| .{ .path = path } else .inherit,
+        .environ_map = &env_map,
+        .stdin = .inherit,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .create_no_window = builtin.os.tag == .windows,
     });
-    const stderr_thread = try std.Thread.spawn(.{}, streamPipeTo, .{
-        child.stderr.?,
-        std.fs.File.stderr(),
-        output,
-    });
+    defer child.kill(io);
 
-    const term = try child.wait();
-    stdout_thread.join();
-    stderr_thread.join();
+    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(allocator, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
 
-    const finished_ms: i64 = std.time.milliTimestamp();
+    while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
+    }
+    try multi_reader.checkAnyError();
+
+    const stdout_slice = try multi_reader.toOwnedSlice(0);
+    defer allocator.free(stdout_slice);
+    const stderr_slice = try multi_reader.toOwnedSlice(1);
+    defer allocator.free(stderr_slice);
+    output.write(zig_api.File.stdout(), stdout_slice);
+    output.write(zig_api.File.stderr(), stderr_slice);
+
+    const term = try child.wait(io);
+
+    const finished_ms: i64 = nowMs();
     const elapsed_ms: u64 = if (finished_ms > started_ms) @intCast(finished_ms - started_ms) else 0;
 
     return .{
@@ -580,13 +538,13 @@ fn runChildWithTimeoutStreaming(
 
 fn isZeroExit(term: std.process.Child.Term) bool {
     return switch (term) {
-        .Exited => |code| code == 0,
+        .exited => |code| code == 0,
         else => false,
     };
 }
 
 fn logCommand(argv: []const []const u8) !void {
-    var stdout_file = std.fs.File.stdout();
+    var stdout_file = zig_api.File.stdout();
     var buffer: [4096]u8 = undefined;
     var writer = stdout_file.writer(&buffer);
     for (argv, 0..) |arg, idx| {
@@ -600,7 +558,7 @@ fn logCommand(argv: []const []const u8) !void {
 }
 
 fn logStdout(comptime fmt: []const u8, args: anytype) !void {
-    var stdout_file = std.fs.File.stdout();
+    var stdout_file = zig_api.File.stdout();
     var buffer: [4096]u8 = undefined;
     var writer = stdout_file.writer(&buffer);
     try writer.interface.print(fmt, args);
@@ -608,7 +566,7 @@ fn logStdout(comptime fmt: []const u8, args: anytype) !void {
 }
 
 fn logStderr(comptime fmt: []const u8, args: anytype) !void {
-    var stderr_file = std.fs.File.stderr();
+    var stderr_file = zig_api.File.stderr();
     var buffer: [4096]u8 = undefined;
     var writer = stderr_file.writer(&buffer);
     try writer.interface.print(fmt, args);
@@ -616,19 +574,21 @@ fn logStderr(comptime fmt: []const u8, args: anytype) !void {
 }
 
 const OutputMux = struct {
-    mutex: std.Thread.Mutex = .{},
-
-    fn write(self: *OutputMux, file: std.fs.File, data: []const u8) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    fn write(self: *OutputMux, file: zig_api.File, data: []const u8) void {
+        _ = self;
         _ = file.writeAll(data) catch {};
     }
 };
 
-fn streamPipeTo(pipe: std.fs.File, out: std.fs.File, output: *OutputMux) void {
+fn streamPipeTo(pipe: std.Io.File, out: zig_api.File, output: *OutputMux) void {
+    const io = zig_api.defaultIo();
+    var reader_file = pipe;
     var buffer: [4096]u8 = undefined;
     while (true) {
-        const n = pipe.read(&buffer) catch return;
+        const n = reader_file.readStreaming(io, &.{&buffer}) catch |err| switch (err) {
+            error.EndOfStream => 0,
+            else => return,
+        };
         if (n == 0) break;
         output.write(out, buffer[0..n]);
     }
@@ -639,6 +599,10 @@ fn defaultJobs() usize {
 }
 
 fn pathExists(path: []const u8) bool {
-    std.fs.accessAbsolute(path, .{}) catch return false;
+    zig_api.cwd().access(path, .{}) catch return false;
     return true;
+}
+
+fn nowMs() i64 {
+    return @intCast(@divTrunc(zig_api.nowNs(), std.time.ns_per_ms));
 }

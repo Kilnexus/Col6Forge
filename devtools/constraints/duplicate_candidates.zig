@@ -2,11 +2,10 @@ const std = @import("std");
 const model = @import("model.zig");
 const domains = @import("audit/domains.zig");
 const duplicates = @import("audit/duplicates.zig");
+const arg_utils = @import("args.zig");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var root: []const u8 = "src";
     var top: usize = 25;
@@ -15,33 +14,46 @@ pub fn main() !void {
     var selected_domain: ?model.SourceDomain = null;
     var selected_path_prefix: ?[]const u8 = null;
 
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+    const args = try arg_utils.allocArgs(allocator, init.minimal.args);
+    defer arg_utils.freeArgs(allocator, args);
 
-    _ = args.next();
-    while (args.next()) |arg| {
+    var arg_idx: usize = 1;
+    while (arg_idx < args.len) : (arg_idx += 1) {
+        const arg = args[arg_idx];
         if (std.mem.eql(u8, arg, "--root")) {
-            root = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            root = args[arg_idx];
         } else if (std.mem.eql(u8, arg, "--top")) {
-            const value = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            const value = args[arg_idx];
             top = try std.fmt.parseInt(usize, value, 10);
         } else if (std.mem.eql(u8, arg, "--min-normalized-len")) {
-            const value = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            const value = args[arg_idx];
             min_normalized_len = try std.fmt.parseInt(usize, value, 10);
         } else if (std.mem.eql(u8, arg, "--fingerprint")) {
-            const value = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            const value = args[arg_idx];
             fingerprint_mode = parseFingerprintMode(value) orelse {
                 std.log.err("unknown fingerprint mode: {s}", .{value});
                 return error.InvalidArgument;
             };
         } else if (std.mem.eql(u8, arg, "--domain")) {
-            const value = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            const value = args[arg_idx];
             selected_domain = parseDomainLabel(value) orelse {
                 std.log.err("unknown domain: {s}", .{value});
                 return error.InvalidArgument;
             };
         } else if (std.mem.eql(u8, arg, "--path-prefix")) {
-            selected_path_prefix = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            selected_path_prefix = args[arg_idx];
         } else {
             std.log.err("unknown arg: {s}", .{arg});
             return error.InvalidArgument;

@@ -1,13 +1,14 @@
 const std = @import("std");
 const baseline = @import("audit/duplicate_baseline.zig");
 const duplicates = @import("audit/duplicates.zig");
+const arg_utils = @import("args.zig");
+const Col6Forge = @import("Col6Forge");
+const zig_api = Col6Forge.zig_api;
 
 const baseline_path = "devtools/constraints/audit/duplicate_baseline.zig";
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     var root: []const u8 = baseline.root;
     var min_normalized_len: usize = baseline.min_normalized_len;
@@ -16,24 +17,33 @@ pub fn main() !void {
     var advisory_top_clusters: usize = baseline.advisory_top_clusters;
     var write = false;
 
-    var args = try std.process.argsWithAllocator(allocator);
-    defer args.deinit();
+    const args = try arg_utils.allocArgs(allocator, init.minimal.args);
+    defer arg_utils.freeArgs(allocator, args);
 
-    _ = args.next();
-    while (args.next()) |arg| {
+    var arg_idx: usize = 1;
+    while (arg_idx < args.len) : (arg_idx += 1) {
+        const arg = args[arg_idx];
         if (std.mem.eql(u8, arg, "--root")) {
-            root = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            root = args[arg_idx];
         } else if (std.mem.eql(u8, arg, "--min-normalized-len")) {
-            const value = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            const value = args[arg_idx];
             min_normalized_len = try std.fmt.parseInt(usize, value, 10);
         } else if (std.mem.eql(u8, arg, "--fingerprint")) {
-            const value = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            const value = args[arg_idx];
             fingerprint_mode = parseFingerprintMode(value) orelse {
                 std.log.err("unknown fingerprint mode: {s}", .{value});
                 return error.InvalidArgument;
             };
         } else if (std.mem.eql(u8, arg, "--advisory-fingerprint")) {
-            const value = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            const value = args[arg_idx];
             if (std.mem.eql(u8, value, "none")) {
                 advisory_fingerprint_mode = null;
             } else {
@@ -43,7 +53,9 @@ pub fn main() !void {
                 };
             }
         } else if (std.mem.eql(u8, arg, "--advisory-top")) {
-            const value = args.next() orelse return error.MissingArgumentValue;
+            arg_idx += 1;
+            if (arg_idx >= args.len) return error.MissingArgumentValue;
+            const value = args[arg_idx];
             advisory_top_clusters = try std.fmt.parseInt(usize, value, 10);
         } else if (std.mem.eql(u8, arg, "--write")) {
             write = true;
@@ -80,7 +92,7 @@ pub fn main() !void {
     );
     defer allocator.free(rendered);
 
-    const cwd = std.fs.cwd();
+    const cwd = zig_api.cwd();
     const current = cwd.readFileAlloc(allocator, baseline_path, 16 * 1024 * 1024) catch null;
     defer if (current) |buf| allocator.free(buf);
 
@@ -91,10 +103,9 @@ pub fn main() !void {
         }
     }
 
-    try cwd.writeFile(.{
-        .sub_path = baseline_path,
-        .data = rendered,
-    });
+    var out_file = try cwd.createFile(baseline_path, .{ .truncate = true });
+    defer out_file.close();
+    try out_file.writeAll(rendered);
     std.log.info(
         "wrote duplicate baseline: {d} clusters to {s} (fingerprint={s})",
         .{ clusters.len, baseline_path, @tagName(fingerprint_mode) },
@@ -110,11 +121,11 @@ fn renderBaseline(
     advisory_fingerprint_mode: ?duplicates.FingerprintMode,
     advisory_top_clusters: usize,
 ) ![]u8 {
-    var out = std.ArrayList(u8).empty;
-    defer out.deinit(allocator);
-    const writer = out.writer(allocator);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    const writer = &out.writer;
 
-    try out.appendSlice(allocator,
+    try writer.writeAll(
         \\const duplicates = @import("duplicates.zig");
         \\
     );
@@ -127,7 +138,7 @@ fn renderBaseline(
         try writer.writeAll("pub const advisory_fingerprint_mode: ?duplicates.FingerprintMode = null;\n");
     }
     try writer.print("pub const advisory_top_clusters: usize = {d};\n\n", .{advisory_top_clusters});
-    try out.appendSlice(allocator,
+    try writer.writeAll(
         \\pub const AllowedCluster = struct {
         \\    body_hash: u64,
         \\    max_members: usize,
@@ -145,7 +156,8 @@ fn renderBaseline(
         );
     }
     try writer.writeAll("};\n");
-    return out.toOwnedSlice(allocator);
+    try writer.flush();
+    return allocator.dupe(u8, writer.buffered());
 }
 
 fn parseFingerprintMode(value: []const u8) ?duplicates.FingerprintMode {

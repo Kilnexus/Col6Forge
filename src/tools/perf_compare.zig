@@ -1,4 +1,8 @@
 const std = @import("std");
+const tool_args = @import("tool_args.zig");
+const tool_json = @import("tool_json.zig");
+const Col6Forge = @import("Col6Forge");
+const zig_api = Col6Forge.zig_api;
 
 const InputCase = struct {
     name: []const u8,
@@ -34,24 +38,22 @@ const ParseArgsOutcome = union(enum) {
     failure: ParseArgError,
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try tool_args.allocArgs(allocator, init.minimal.args);
+    defer tool_args.freeArgs(allocator, args);
 
     const options = switch (parseArgs(args)) {
         .success => |value| value,
         .failure => |parse_err| {
-            try printUsage(std.fs.File.stderr());
-            try printParseArgError(std.fs.File.stderr(), parse_err);
+            try printUsage(zig_api.File.stderr());
+            try printParseArgError(zig_api.File.stderr(), parse_err);
             return error.InvalidArguments;
         },
     };
     if (options.show_help) {
-        try printUsage(std.fs.File.stdout());
+        try printUsage(zig_api.File.stdout());
         return;
     }
 
@@ -158,12 +160,7 @@ fn parseArgs(args: []const []const u8) ParseArgsOutcome {
 }
 
 fn readReport(allocator: std.mem.Allocator, path: []const u8) !std.json.Parsed(InputReport) {
-    const data = try std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024);
-    defer allocator.free(data);
-    return std.json.parseFromSlice(InputReport, allocator, data, .{
-        .ignore_unknown_fields = true,
-        .allocate = .alloc_always,
-    });
+    return tool_json.readReport(InputReport, allocator, path);
 }
 
 fn findCase(cases: []const InputCase, name: []const u8) ?InputCase {
@@ -173,7 +170,7 @@ fn findCase(cases: []const InputCase, name: []const u8) ?InputCase {
     return null;
 }
 
-fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
+fn printParseArgError(file: zig_api.File, parse_err: ParseArgError) !void {
     var buffer: [512]u8 = undefined;
     var writer = file.writer(&buffer);
     switch (parse_err) {
@@ -186,7 +183,7 @@ fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
     try writer.interface.flush();
 }
 
-fn printUsage(file: std.fs.File) !void {
+fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage: perf_compare --base <path> --candidate <path> [--max-regression-pct <value>] [--allow-missing-base]
         \\Options:

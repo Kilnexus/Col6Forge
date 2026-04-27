@@ -1,4 +1,8 @@
 const std = @import("std");
+const tool_args = @import("tool_args.zig");
+const tool_json = @import("tool_json.zig");
+const Col6Forge = @import("Col6Forge");
+const zig_api = Col6Forge.zig_api;
 
 const BenchCase = struct {
     name: []const u8,
@@ -61,26 +65,24 @@ const ParseArgsOutcome = union(enum) {
     failure: ParseArgError,
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+pub fn main(init: std.process.Init) !void {
+    var arena = std.heap.ArenaAllocator.init(init.gpa);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try tool_args.allocArgs(allocator, init.minimal.args);
+    defer tool_args.freeArgs(allocator, args);
 
     const options = switch (parseArgs(args)) {
         .success => |value| value,
         .failure => |parse_err| {
-            try printUsage(std.fs.File.stderr());
-            try printParseArgError(std.fs.File.stderr(), parse_err);
+            try printUsage(zig_api.File.stderr());
+            try printParseArgError(zig_api.File.stderr(), parse_err);
             return error.InvalidArguments;
         },
     };
     if (options.show_help) {
-        try printUsage(std.fs.File.stdout());
+        try printUsage(zig_api.File.stdout());
         return;
     }
 
@@ -92,15 +94,15 @@ pub fn main() !void {
 
     try upsertHistoryEntry(allocator, &history.value, candidate.value, options);
     trimHistory(&history.value, options.max_runs);
-    history.value.updated_unix_ms = std.time.milliTimestamp();
+    history.value.updated_unix_ms = nowMs();
 
     try ensureParentDir(options.history_path);
-    var history_file = try std.fs.cwd().createFile(options.history_path, .{ .truncate = true });
+    var history_file = try zig_api.cwd().createFile(options.history_path, .{ .truncate = true });
     defer history_file.close();
     try writeJson(history_file, history.value);
 
     try ensureParentDir(options.markdown_path);
-    var markdown_file = try std.fs.cwd().createFile(options.markdown_path, .{ .truncate = true });
+    var markdown_file = try zig_api.cwd().createFile(options.markdown_path, .{ .truncate = true });
     defer markdown_file.close();
     try writeMarkdown(markdown_file, history.value);
 }
@@ -181,16 +183,11 @@ fn parseArgs(args: []const []const u8) ParseArgsOutcome {
 }
 
 fn readReport(allocator: std.mem.Allocator, path: []const u8) !std.json.Parsed(BenchReport) {
-    const data = try std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024);
-    defer allocator.free(data);
-    return std.json.parseFromSlice(BenchReport, allocator, data, .{
-        .ignore_unknown_fields = true,
-        .allocate = .alloc_always,
-    });
+    return tool_json.readReport(BenchReport, allocator, path);
 }
 
 fn readHistoryOrEmpty(allocator: std.mem.Allocator, path: []const u8) !std.json.Parsed(HistoryReport) {
-    const data = std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| switch (err) {
+    const data = zig_api.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| switch (err) {
         error.FileNotFound => {
             const empty =
                 \\{
@@ -274,7 +271,7 @@ fn trimHistory(history: *HistoryReport, max_runs: usize) void {
     history.entries = history.entries[history.entries.len - max_runs ..];
 }
 
-fn writeJson(file: std.fs.File, value: HistoryReport) !void {
+fn writeJson(file: zig_api.File, value: HistoryReport) !void {
     var buffer: [64 * 1024]u8 = undefined;
     var writer = file.writer(&buffer);
     try std.json.Stringify.value(value, .{ .whitespace = .indent_2 }, &writer.interface);
@@ -282,7 +279,7 @@ fn writeJson(file: std.fs.File, value: HistoryReport) !void {
     try writer.interface.flush();
 }
 
-fn writeMarkdown(file: std.fs.File, history: HistoryReport) !void {
+fn writeMarkdown(file: zig_api.File, history: HistoryReport) !void {
     var buffer: [64 * 1024]u8 = undefined;
     var writer = file.writer(&buffer);
 
@@ -400,10 +397,10 @@ fn formatDeltaPercent(current: f64, previous: f64, scratch: []u8) ![]const u8 {
 fn ensureParentDir(path: []const u8) !void {
     const dir = std.fs.path.dirname(path) orelse return;
     if (dir.len == 0) return;
-    try std.fs.cwd().makePath(dir);
+    try zig_api.cwd().makePath(dir);
 }
 
-fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
+fn printParseArgError(file: zig_api.File, parse_err: ParseArgError) !void {
     var buffer: [512]u8 = undefined;
     var writer = file.writer(&buffer);
     switch (parse_err) {
@@ -419,7 +416,7 @@ fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
     try writer.interface.flush();
 }
 
-fn printUsage(file: std.fs.File) !void {
+fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage: perf_dashboard --history <path> --candidate <path> --markdown <path> --commit-sha <sha> --label <text> [--max-runs <n>]
         \\Options:
@@ -432,4 +429,8 @@ fn printUsage(file: std.fs.File) !void {
         \\  -h, --help             Show this help
         \\
     );
+}
+
+fn nowMs() i64 {
+    return @intCast(@divTrunc(zig_api.nowNs(), std.time.ns_per_ms));
 }

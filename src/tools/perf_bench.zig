@@ -1,4 +1,8 @@
 const std = @import("std");
+const tool_args = @import("tool_args.zig");
+const child_env = @import("child_env.zig");
+const Col6Forge = @import("Col6Forge");
+const zig_api = Col6Forge.zig_api;
 
 const BenchCaseSpec = struct {
     name: []const u8,
@@ -50,24 +54,22 @@ const default_cases = [_]BenchCaseSpec{
     .{ .name = "lapack:xlintstds", .step = "lapack-verify", .filter = "xlintstds" },
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try tool_args.allocArgs(allocator, init.minimal.args);
+    defer tool_args.freeArgs(allocator, args);
 
     const options = switch (parseArgs(args)) {
         .success => |value| value,
         .failure => |parse_err| {
-            try printUsage(std.fs.File.stderr());
-            try printParseArgError(std.fs.File.stderr(), parse_err);
+            try printUsage(zig_api.File.stderr());
+            try printParseArgError(zig_api.File.stderr(), parse_err);
             return error.InvalidArguments;
         },
     };
     if (options.show_help) {
-        try printUsage(std.fs.File.stdout());
+        try printUsage(zig_api.File.stdout());
         return;
     }
 
@@ -89,14 +91,14 @@ pub fn main() !void {
 
         var warmup_idx: u32 = 0;
         while (warmup_idx < options.warmup) : (warmup_idx += 1) {
-            _ = try runCaseOnce(allocator, case_spec, options.timeout_ms);
+            _ = try runCaseOnce(allocator, init, case_spec, options.timeout_ms);
         }
 
         var samples: std.ArrayList(u64) = .empty;
         defer samples.deinit(allocator);
         var iter_idx: u32 = 0;
         while (iter_idx < options.iterations) : (iter_idx += 1) {
-            const elapsed_ms = try runCaseOnce(allocator, case_spec, options.timeout_ms);
+            const elapsed_ms = try runCaseOnce(allocator, init, case_spec, options.timeout_ms);
             std.log.info("  run {d}/{d}: {d} ms\n", .{ iter_idx + 1, options.iterations, elapsed_ms });
             try samples.append(allocator, elapsed_ms);
         }
@@ -117,7 +119,7 @@ pub fn main() !void {
 
     const report = BenchReport{
         .schema_version = 1,
-        .generated_unix_ms = std.time.milliTimestamp(),
+        .generated_unix_ms = nowMs(),
         .iterations = options.iterations,
         .warmup = options.warmup,
         .cases = reports.items,
@@ -125,12 +127,12 @@ pub fn main() !void {
 
     if (options.output_path) |path| {
         try ensureParentDir(path);
-        var out_file = try std.fs.cwd().createFile(path, .{ .truncate = true });
+        var out_file = try zig_api.cwd().createFile(path, .{ .truncate = true });
         defer out_file.close();
         try writeJsonReport(out_file, report);
         std.log.info("wrote benchmark report: {s}\n", .{path});
     } else {
-        try writeJsonReport(std.fs.File.stdout(), report);
+        try writeJsonReport(zig_api.File.stdout(), report);
     }
 }
 
@@ -199,7 +201,7 @@ fn parseArgs(args: []const []const u8) ParseArgsOutcome {
     } };
 }
 
-fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
+fn printParseArgError(file: zig_api.File, parse_err: ParseArgError) !void {
     var buffer: [512]u8 = undefined;
     var writer = file.writer(&buffer);
     switch (parse_err) {
@@ -212,7 +214,7 @@ fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
     try writer.interface.flush();
 }
 
-fn printUsage(file: std.fs.File) !void {
+fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage: perf_bench [--output <path>] [--iterations <n>] [--warmup <n>] [--timeout <ms>] [--case-filter <text>]
         \\Options:
@@ -240,12 +242,12 @@ fn collectSelectedCases(allocator: std.mem.Allocator, case_filter: ?[]const u8) 
     return list.toOwnedSlice(allocator);
 }
 
-fn runCaseOnce(allocator: std.mem.Allocator, case_spec: BenchCaseSpec, timeout_ms: u64) !u64 {
+fn runCaseOnce(allocator: std.mem.Allocator, init: std.process.Init, case_spec: BenchCaseSpec, timeout_ms: u64) !u64 {
     const timeout_arg = try std.fmt.allocPrint(allocator, "{d}", .{timeout_ms});
     defer allocator.free(timeout_arg);
-    const cache_dir = std.process.getEnvVarOwned(allocator, "COL6FORGE_ZIG_CACHE_DIR") catch null;
+    const cache_dir = Col6Forge.process_args.getEnvVarOwned(allocator, init, "COL6FORGE_ZIG_CACHE_DIR") catch null;
     defer if (cache_dir) |value| allocator.free(value);
-    const global_cache_dir = std.process.getEnvVarOwned(allocator, "COL6FORGE_ZIG_GLOBAL_CACHE_DIR") catch null;
+    const global_cache_dir = Col6Forge.process_args.getEnvVarOwned(allocator, init, "COL6FORGE_ZIG_GLOBAL_CACHE_DIR") catch null;
     defer if (global_cache_dir) |value| allocator.free(value);
 
     var argv: std.ArrayList([]const u8) = .empty;
@@ -270,15 +272,24 @@ fn runCaseOnce(allocator: std.mem.Allocator, case_spec: BenchCaseSpec, timeout_m
         timeout_arg,
     });
 
-    const started_ms = std.time.milliTimestamp();
+    var env_map = try child_env.build(allocator, argv.items, null, ".perf-bench-tmp");
+    defer env_map.deinit();
 
-    var child = std.process.Child.init(argv.items, allocator);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-    const term = try child.spawnAndWait();
+    const started_ms = nowMs();
 
-    const finished_ms = std.time.milliTimestamp();
+    const io = zig_api.defaultIo();
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .environ_map = &env_map,
+        .stdin = .ignore,
+        .stdout = .inherit,
+        .stderr = .inherit,
+        .create_no_window = false,
+    });
+    defer child.kill(io);
+    const term = try child.wait(io);
+
+    const finished_ms = nowMs();
     const elapsed_ms: u64 = if (finished_ms > started_ms) @intCast(finished_ms - started_ms) else 0;
 
     if (!isZeroExit(term)) {
@@ -314,7 +325,7 @@ fn computeMedian(allocator: std.mem.Allocator, values: []const u64) !f64 {
     return (@as(f64, @floatFromInt(sorted[mid - 1])) + @as(f64, @floatFromInt(sorted[mid]))) / 2.0;
 }
 
-fn writeJsonReport(file: std.fs.File, report: BenchReport) !void {
+fn writeJsonReport(file: zig_api.File, report: BenchReport) !void {
     var buffer: [64 * 1024]u8 = undefined;
     var writer = file.writer(&buffer);
     try std.json.Stringify.value(report, .{ .whitespace = .indent_2 }, &writer.interface);
@@ -325,12 +336,16 @@ fn writeJsonReport(file: std.fs.File, report: BenchReport) !void {
 fn ensureParentDir(path: []const u8) !void {
     const dir = std.fs.path.dirname(path) orelse return;
     if (dir.len == 0) return;
-    try std.fs.cwd().makePath(dir);
+    try zig_api.cwd().makePath(dir);
 }
 
 fn isZeroExit(term: std.process.Child.Term) bool {
     return switch (term) {
-        .Exited => |code| code == 0,
+        .exited => |code| code == 0,
         else => false,
     };
+}
+
+fn nowMs() i64 {
+    return @intCast(@divTrunc(zig_api.nowNs(), std.time.ns_per_ms));
 }

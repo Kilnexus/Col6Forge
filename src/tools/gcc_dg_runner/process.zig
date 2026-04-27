@@ -2,6 +2,8 @@ const builtin = @import("builtin");
 const common = @import("common.zig");
 const std = common.std;
 const Col6Forge = common.Col6Forge;
+const zig_api = Col6Forge.zig_api;
+const process_timeout = @import("../process_timeout.zig");
 const cli = @import("cli.zig");
 const Options = cli.Options;
 const directives = @import("directives.zig");
@@ -30,19 +32,63 @@ const ProcessResult = struct {
 
 var work_run_counter = std.atomic.Value(u64).init(0);
 
+fn isZigCommand(argv: []const []const u8) bool {
+    if (argv.len == 0) return false;
+    return std.mem.eql(u8, argv[0], "zig") or std.mem.eql(u8, argv[0], "zig.exe");
+}
+
+fn buildChildEnv(
+    allocator: std.mem.Allocator,
+    argv: []const []const u8,
+    cwd: ?[]const u8,
+) !std.process.Environ.Map {
+    const base_dir = cwd orelse ".";
+    const temp_dir = try std.fs.path.join(allocator, &.{ base_dir, ".gcc-dg-runner-tmp" });
+    defer allocator.free(temp_dir);
+    try zig_api.cwd().makePath(temp_dir);
+
+    var env_map = try std.process.Environ.createMap(.{ .block = .global }, allocator);
+    errdefer env_map.deinit();
+
+    const temp_env = if (cwd != null) ".gcc-dg-runner-tmp" else temp_dir;
+    try env_map.put("TMP", temp_env);
+    try env_map.put("TEMP", temp_env);
+    try env_map.put("TMPDIR", temp_env);
+
+    if (isZigCommand(argv)) {
+        const local_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-cache" });
+        defer allocator.free(local_cache_dir);
+        const global_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-global-cache" });
+        defer allocator.free(global_cache_dir);
+        try zig_api.cwd().makePath(local_cache_dir);
+        try zig_api.cwd().makePath(global_cache_dir);
+        try env_map.put("ZIG_LOCAL_CACHE_DIR", local_cache_dir);
+        try env_map.put("ZIG_GLOBAL_CACHE_DIR", global_cache_dir);
+    }
+
+    return env_map;
+}
+
 fn runProcessCapture(
     allocator: std.mem.Allocator,
     argv: []const []const u8,
     cwd: ?[]const u8,
     timeout_ms: ?u64,
 ) !ProcessResult {
-    var child = std.process.Child.init(argv, allocator);
-    child.cwd = cwd;
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    const io = zig_api.defaultIo();
+    var env_map = try buildChildEnv(allocator, argv, cwd);
+    defer env_map.deinit();
 
-    try child.spawn();
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .cwd = if (cwd) |path| .{ .path = path } else .inherit,
+        .environ_map = &env_map,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .create_no_window = builtin.os.tag == .windows,
+    });
+    defer child.kill(io);
 
     var done = std.atomic.Value(bool).init(false);
     var timed_out = std.atomic.Value(bool).init(false);
@@ -50,7 +96,7 @@ fn runProcessCapture(
     var monitor_joined = false;
     if (timeout_ms) |limit| {
         if (limit > 0) {
-            monitor = try std.Thread.spawn(.{}, timeoutMonitor, .{ &child, &done, &timed_out, limit });
+            monitor = try std.Thread.spawn(.{}, process_timeout.timeoutMonitor, .{ &child, &done, &timed_out, limit });
         }
     }
     errdefer {
@@ -61,46 +107,36 @@ fn runProcessCapture(
         }
     }
 
-    var stdout_buf: std.ArrayList(u8) = .empty;
-    var stderr_buf: std.ArrayList(u8) = .empty;
-    errdefer stdout_buf.deinit(allocator);
-    errdefer stderr_buf.deinit(allocator);
-    try child.collectOutput(allocator, &stdout_buf, &stderr_buf, 64 * 1024 * 1024);
+    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(allocator, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
+
+    while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => return err,
+    }
+    try multi_reader.checkAnyError();
     done.store(true, .seq_cst);
     if (monitor) |thread| thread.join();
     monitor_joined = true;
 
+    const stdout_slice = try multi_reader.toOwnedSlice(0);
+    errdefer allocator.free(stdout_slice);
+    const stderr_slice = try multi_reader.toOwnedSlice(1);
+    errdefer allocator.free(stderr_slice);
+
     return .{
-        .stdout = try stdout_buf.toOwnedSlice(allocator),
-        .stderr = try stderr_buf.toOwnedSlice(allocator),
-        .term = try child.wait(),
+        .stdout = stdout_slice,
+        .stderr = stderr_slice,
+        .term = try child.wait(io),
         .timed_out = timed_out.load(.seq_cst),
     };
 }
 
-fn timeoutMonitor(
-    child: *std.process.Child,
-    done: *std.atomic.Value(bool),
-    timed_out: *std.atomic.Value(bool),
-    timeout_ms: u64,
-) void {
-    const deadline = std.time.milliTimestamp() + @as(i64, @intCast(timeout_ms));
-    while (true) {
-        if (done.load(.seq_cst)) return;
-        const now = std.time.milliTimestamp();
-        if (now >= deadline) break;
-        const remaining_ms = @as(u64, @intCast(deadline - now));
-        const sleep_ms = if (remaining_ms > 50) 50 else remaining_ms;
-        std.Thread.sleep(sleep_ms * std.time.ns_per_ms);
-    }
-    if (done.load(.seq_cst)) return;
-    timed_out.store(true, .seq_cst);
-    _ = child.kill() catch {};
-}
-
 fn isZeroExit(term: std.process.Child.Term) bool {
     return switch (term) {
-        .Exited => |code| code == 0,
+        .exited => |code| code == 0,
         else => false,
     };
 }
@@ -131,7 +167,7 @@ fn emitPipelineToFile(
         diag_bag,
     );
     defer allocator.free(result.output);
-    var out_file = try std.fs.cwd().createFile(output_path, .{ .truncate = true });
+    var out_file = try zig_api.cwd().createFile(output_path, .{ .truncate = true });
     defer out_file.close();
     try out_file.writeAll(result.output);
 }
@@ -347,7 +383,7 @@ fn joinDiagnosticStreams(allocator: std.mem.Allocator, stderr_text: []const u8, 
 
 fn cleanupWorkDir(path: []const u8) void {
     if (builtin.os.tag == .windows) return;
-    std.fs.cwd().deleteTree(path) catch {};
+    zig_api.cwd().deleteTree(path) catch {};
 }
 
 pub fn processCase(
@@ -371,7 +407,7 @@ pub fn processCase(
 
     const work_dir_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "gcc-dg", case.work_name, work_run_component });
     defer allocator.free(work_dir_rel);
-    try std.fs.cwd().makePath(work_dir_rel);
+    try zig_api.cwd().makePath(work_dir_rel);
 
     const work_dir = try std.fs.path.join(allocator, &.{ root_path, work_dir_rel });
     defer allocator.free(work_dir);
@@ -398,7 +434,7 @@ pub fn processCase(
         const compile = runProcessCapture(
             allocator,
             &.{ "zig", "cc", "-O0", "-c", "-o", obj_path, ll_path },
-            work_dir,
+            null,
             options.timeout_ms,
         ) catch |err| {
             log_state.stderr("zig cc failed: {s} ({s})\n", .{ case.rel_path, @errorName(err) });
@@ -525,7 +561,7 @@ test "processCase accepts repository c_ptr_tests_16 case" {
     const testing = std.testing;
     const allocator = testing.allocator;
 
-    const root_path = try std.fs.cwd().realpathAlloc(allocator, ".");
+    const root_path = try allocator.dupe(u8, ".");
     defer allocator.free(root_path);
 
     const tests_dir = "tests/gcc-tests/gfortran.dg";

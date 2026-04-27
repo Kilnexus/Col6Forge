@@ -1,6 +1,7 @@
 const common = @import("common.zig");
 const std = common.std;
 const Col6Forge = common.Col6Forge;
+const zig_api = Col6Forge.zig_api;
 pub const Options = struct {
     tests_dir: []const u8,
     filter: ?[]const u8,
@@ -132,7 +133,7 @@ pub fn parseArgs(args: []const []const u8) ParseArgsOutcome {
     } };
 }
 
-pub fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
+pub fn printParseArgError(file: zig_api.File, parse_err: ParseArgError) !void {
     var buffer: [512]u8 = undefined;
     var writer = file.writer(&buffer);
     switch (parse_err) {
@@ -144,7 +145,7 @@ pub fn printParseArgError(file: std.fs.File, parse_err: ParseArgError) !void {
     try writer.interface.flush();
 }
 
-pub fn printUsage(file: std.fs.File) !void {
+pub fn printUsage(file: zig_api.File) !void {
     try file.writeAll(
         \\Usage: gcc_dg_runner [--tests-dir <dir>] [--filter <text>] [--timeout <ms>] [--jobs <n>] [--keep-work] [--strict-diagnostics] [--strict-level <off|error|warning|full>] [-emit-llvm]
         \\Options:

@@ -1,5 +1,7 @@
 const common = @import("common.zig");
 const std = common.std;
+const Col6Forge = common.Col6Forge;
+const zig_api = Col6Forge.zig_api;
 const cli = @import("cli.zig");
 const Options = cli.Options;
 const strictLevelLabel = cli.strictLevelLabel;
@@ -40,27 +42,27 @@ pub fn printSummary(
 }
 
 pub const LogState = struct {
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
 
     pub fn lock(self: *LogState) void {
-        self.mutex.lock();
+        self.mutex.lockUncancelable(zig_api.defaultIo());
     }
 
     pub fn unlock(self: *LogState) void {
-        self.mutex.unlock();
+        self.mutex.unlock(zig_api.defaultIo());
     }
 
     pub fn stdout(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(std.fs.File.stdout(), fmt, args);
+        self.print(zig_api.File.stdout(), fmt, args);
     }
 
     pub fn stderr(self: *LogState, comptime fmt: []const u8, args: anytype) void {
-        self.print(std.fs.File.stderr(), fmt, args);
+        self.print(zig_api.File.stderr(), fmt, args);
     }
 
-    pub fn print(self: *LogState, file: std.fs.File, comptime fmt: []const u8, args: anytype) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+    pub fn print(self: *LogState, file: zig_api.File, comptime fmt: []const u8, args: anytype) void {
+        self.lock();
+        defer self.unlock();
         var buffer: [4096]u8 = undefined;
         var writer = file.writer(&buffer);
         writer.interface.print(fmt, args) catch {};
@@ -72,14 +74,14 @@ pub const Progress = struct {
     total: usize,
     started: std.atomic.Value(usize),
     completed: std.atomic.Value(usize),
-    timer: std.time.Timer,
+    start_ns: i128,
 
     pub fn init(total: usize) !Progress {
         return .{
             .total = total,
             .started = std.atomic.Value(usize).init(0),
             .completed = std.atomic.Value(usize).init(0),
-            .timer = try std.time.Timer.start(),
+            .start_ns = zig_api.nowNs(),
         };
     }
 
@@ -89,7 +91,8 @@ pub const Progress = struct {
 pub fn logProgress(log_state: *LogState, progress: *Progress, path: []const u8) void {
     const started = progress.started.fetchAdd(1, .seq_cst) + 1;
     const completed = progress.completed.load(.seq_cst);
-    const elapsed_ms = progress.timer.read() / std.time.ns_per_ms;
+    const elapsed_ns = zig_api.nowNs() - progress.start_ns;
+    const elapsed_ms: u64 = @intCast(@divTrunc(if (elapsed_ns > 0) elapsed_ns else 0, std.time.ns_per_ms));
     const eta_ms = estimateEtaMs(elapsed_ms, completed, progress.total);
 
     var elapsed_buf: [32]u8 = undefined;

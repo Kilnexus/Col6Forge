@@ -1,5 +1,7 @@
 const common = @import("common.zig");
 const std = common.std;
+const Col6Forge = common.Col6Forge;
+const zig_api = Col6Forge.zig_api;
 const DgDoKind = enum {
     none,
     compile,
@@ -154,13 +156,13 @@ pub fn collectRunnableCases(
     skips: *SkipCounts,
 ) ![]TestCase {
     var list: std.ArrayList(TestCase) = .empty;
-    var dir = try std.fs.cwd().openDir(tests_dir, .{ .iterate = true });
+    var dir = try zig_api.cwd().openDir(tests_dir, .{ .iterate = true });
     defer dir.close();
 
     var walker = try dir.walk(temp_allocator);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(zig_api.defaultIo())) |entry| {
         if (entry.kind != .file) continue;
         if (!isFortranSource(entry.path)) continue;
         if (filter) |needle| {
@@ -218,7 +220,7 @@ pub fn classifyCase(
     const input_path = try std.fs.path.join(temp_allocator, &.{ tests_dir, rel_path });
     defer temp_allocator.free(input_path);
 
-    const bytes = std.fs.cwd().readFileAlloc(temp_allocator, input_path, 8 * 1024 * 1024) catch |err| switch (err) {
+    const bytes = zig_api.cwd().readFileAlloc(temp_allocator, input_path, 8 * 1024 * 1024) catch |err| switch (err) {
         error.FileTooBig => return .{ .skip = .unsupported_dejagnu },
         else => return err,
     };
@@ -282,7 +284,7 @@ fn dgDoHasTargetGuard(text: []const u8) bool {
 fn extractTargetExpr(line: []const u8) ?[]const u8 {
     const idx = indexOfNoCase(line, "target") orelse return null;
     var rest = line[idx + "target".len ..];
-    rest = std.mem.trimLeft(u8, rest, " \t");
+    rest = std.mem.trimStart(u8, rest, " \t");
     if (rest.len == 0) return null;
 
     if (rest[0] == '{') {
@@ -565,7 +567,7 @@ fn normalizeExpectedPattern(allocator: std.mem.Allocator, pattern: []const u8) !
 }
 
 fn trimCr(line: []const u8) []const u8 {
-    return std.mem.trimRight(u8, line, "\r");
+    return std.mem.trimEnd(u8, line, "\r");
 }
 
 fn indexOfNoCase(haystack: []const u8, needle: []const u8) ?usize {

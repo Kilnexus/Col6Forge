@@ -142,10 +142,13 @@ pub fn main(init: std.process.Init) !void {
 
     const root_path = try allocator.dupe(u8, ".");
     defer allocator.free(root_path);
+    const ci_env = getEnvVarOwned(allocator, init, "CI") catch null;
+    defer if (ci_env) |value| allocator.free(value);
+    const use_native_temp_dirs = builtin.os.tag == .linux and (ci_env == null or ci_env.?.len == 0);
 
     const cache_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "lapack-verify", "cache", HOST_CACHE_TAG });
     defer allocator.free(cache_rel);
-    const cache_dir = if (builtin.os.tag == .linux)
+    const cache_dir = if (use_native_temp_dirs)
         try zig_api.runnerWorkDir(allocator, root_path, "lapack-verify-cache", HOST_CACHE_TAG)
     else
         try std.fs.path.join(allocator, &.{ root_path, cache_rel });
@@ -183,7 +186,7 @@ pub fn main(init: std.process.Init) !void {
 
     const common_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "lapack-verify", "common", HOST_CACHE_TAG });
     defer allocator.free(common_rel);
-    const common_abs = if (builtin.os.tag == .linux)
+    const common_abs = if (use_native_temp_dirs)
         try zig_api.runnerWorkDir(allocator, root_path, "lapack-verify-common", HOST_CACHE_TAG)
     else
         try std.fs.path.join(allocator, &.{ root_path, common_rel });

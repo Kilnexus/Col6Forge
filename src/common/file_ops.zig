@@ -47,3 +47,25 @@ pub fn copyFile(src_path: []const u8, dst_path: []const u8) !void {
         try dst.writeAll(buf[0..n]);
     }
 }
+
+pub fn copyExecutable(src_path: []const u8, dst_path: []const u8) !void {
+    var src = if (std.fs.path.isAbsolute(src_path))
+        try zig_api.openFileAbsolute(src_path, .{})
+    else
+        try zig_api.cwd().openFile(src_path, .{});
+    defer src.close();
+
+    var dst = if (std.fs.path.isAbsolute(dst_path))
+        try zig_api.createFileAbsolute(dst_path, .{ .truncate = true })
+    else
+        try zig_api.cwd().createFile(dst_path, .{ .truncate = true });
+    defer dst.close();
+
+    var buf: [64 * 1024]u8 = undefined;
+    while (true) {
+        const n = try src.read(&buf);
+        if (n == 0) break;
+        try dst.writeAll(buf[0..n]);
+    }
+    try dst.setExecutable();
+}

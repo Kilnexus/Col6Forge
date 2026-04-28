@@ -26,11 +26,13 @@ pub fn runProcessCaptureWithInput(
     timeout_ms: u64,
 ) !ProcessResult {
     const io = zig_api.defaultIo();
+    const resolved_argv = try zig_api.resolveZigArgv(allocator, argv);
+    defer resolved_argv.deinit(allocator);
     const base_dir = cwd orelse ".";
     const temp_dir = try std.fs.path.join(allocator, &.{ base_dir, ".blas-runner-tmp" });
     defer allocator.free(temp_dir);
     try zig_api.cwd().makePath(temp_dir);
-    var env_map = try std.process.Environ.createMap(.{ .block = .global }, allocator);
+    var env_map = try zig_api.createProcessEnvMap(allocator);
     defer env_map.deinit();
     const temp_env = if (cwd != null) ".blas-runner-tmp" else temp_dir;
     try env_map.put("TMP", temp_env);
@@ -38,7 +40,7 @@ pub fn runProcessCaptureWithInput(
     try env_map.put("TMPDIR", temp_env);
 
     var child = try std.process.spawn(io, .{
-        .argv = argv,
+        .argv = resolved_argv.argv,
         .cwd = if (cwd) |path| .{ .path = path } else .inherit,
         .environ_map = &env_map,
         .stdin = if (input == null) .ignore else .pipe,

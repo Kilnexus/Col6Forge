@@ -272,14 +272,16 @@ fn runCaseOnce(allocator: std.mem.Allocator, init: std.process.Init, case_spec: 
         timeout_arg,
     });
 
-    var env_map = try child_env.build(allocator, argv.items, null, ".perf-bench-tmp");
+    const resolved_argv = try zig_api.resolveZigArgv(allocator, argv.items);
+    defer resolved_argv.deinit(allocator);
+    var env_map = try child_env.build(allocator, resolved_argv.argv, null, ".perf-bench-tmp");
     defer env_map.deinit();
 
     const started_ms = nowMs();
 
     const io = zig_api.defaultIo();
     var child = try std.process.spawn(io, .{
-        .argv = argv.items,
+        .argv = resolved_argv.argv,
         .environ_map = &env_map,
         .stdin = .ignore,
         .stdout = .inherit,

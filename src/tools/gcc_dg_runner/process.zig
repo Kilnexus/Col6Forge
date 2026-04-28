@@ -40,11 +40,13 @@ fn runProcessCapture(
     timeout_ms: ?u64,
 ) !ProcessResult {
     const io = zig_api.defaultIo();
-    var env_map = try child_env.build(allocator, argv, cwd, ".gcc-dg-runner-tmp");
+    const resolved_argv = try zig_api.resolveZigArgv(allocator, argv);
+    defer resolved_argv.deinit(allocator);
+    var env_map = try child_env.build(allocator, resolved_argv.argv, cwd, ".gcc-dg-runner-tmp");
     defer env_map.deinit();
 
     var child = try std.process.spawn(io, .{
-        .argv = argv,
+        .argv = resolved_argv.argv,
         .cwd = if (cwd) |path| .{ .path = path } else .inherit,
         .environ_map = &env_map,
         .stdin = .ignore,

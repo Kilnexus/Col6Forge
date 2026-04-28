@@ -144,12 +144,16 @@ pub fn main(init: std.process.Init) !void {
             &log_state,
             &dir_locks,
             &profile_collector,
-        ) catch {
+        ) catch |err| {
+            log_state.stderr("case failed with internal error: {s} ({s})\n", .{ case.input_path, @errorName(err) });
             failures += 1;
             _ = progress.completed.fetchAdd(1, .seq_cst);
             continue;
         };
-        if (!ok) failures += 1;
+        if (!ok) {
+            log_state.stderr("case returned failure: {s}\n", .{case.input_path});
+            failures += 1;
+        }
         _ = progress.completed.fetchAdd(1, .seq_cst);
     }
     if (failures > 0) {

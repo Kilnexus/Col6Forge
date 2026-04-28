@@ -24,9 +24,8 @@ pub const LogState = struct {
     pub fn print(self: *LogState, file: zig_api.File, comptime fmt: []const u8, args: anytype) void {
         self.mutex.lockUncancelable(zig_api.defaultIo());
         defer self.mutex.unlock(zig_api.defaultIo());
-        var buffer: [4096]u8 = undefined;
-        var writer = file.writer(&buffer);
-        writer.interface.print(fmt, args) catch {};
-        writer.interface.flush() catch {};
+        const message = std.fmt.allocPrint(std.heap.page_allocator, fmt, args) catch return;
+        defer std.heap.page_allocator.free(message);
+        file.writeAll(message) catch {};
     }
 };

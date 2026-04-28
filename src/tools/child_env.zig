@@ -4,7 +4,8 @@ const zig_api = Col6Forge.zig_api;
 
 fn isZigCommand(argv: []const []const u8) bool {
     if (argv.len == 0) return false;
-    return std.mem.eql(u8, argv[0], "zig") or std.mem.eql(u8, argv[0], "zig.exe");
+    const base = std.fs.path.basename(argv[0]);
+    return std.mem.eql(u8, base, "zig") or std.mem.eql(u8, base, "zig.exe");
 }
 
 pub fn build(
@@ -18,7 +19,7 @@ pub fn build(
     defer allocator.free(temp_dir);
     try zig_api.cwd().makePath(temp_dir);
 
-    var env_map = try std.process.Environ.createMap(.{ .block = .global }, allocator);
+    var env_map = try zig_api.createProcessEnvMap(allocator);
     errdefer env_map.deinit();
 
     const temp_env = if (cwd != null) temp_name else temp_dir;
@@ -27,9 +28,9 @@ pub fn build(
     try env_map.put("TMPDIR", temp_env);
 
     if (isZigCommand(argv)) {
-        const local_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-cache" });
+        const local_cache_dir = try zig_api.runnerCacheDir(allocator, base_dir, ".zig-runner-cache");
         defer allocator.free(local_cache_dir);
-        const global_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-global-cache" });
+        const global_cache_dir = try zig_api.runnerCacheDir(allocator, base_dir, ".zig-runner-global-cache");
         defer allocator.free(global_cache_dir);
         try zig_api.cwd().makePath(local_cache_dir);
         try zig_api.cwd().makePath(global_cache_dir);

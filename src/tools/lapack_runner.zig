@@ -145,10 +145,13 @@ pub fn main(init: std.process.Init) !void {
 
     const cache_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "lapack-verify", "cache", HOST_CACHE_TAG });
     defer allocator.free(cache_rel);
-    if (options.clean_cache) cleanupWorkDir(cache_rel);
-    try zig_api.cwd().makePath(cache_rel);
-    const cache_dir = try std.fs.path.join(allocator, &.{ root_path, cache_rel });
+    const cache_dir = if (builtin.os.tag == .linux)
+        try zig_api.runnerWorkDir(allocator, root_path, "lapack-verify-cache", HOST_CACHE_TAG)
+    else
+        try std.fs.path.join(allocator, &.{ root_path, cache_rel });
     defer allocator.free(cache_dir);
+    if (options.clean_cache) cleanupWorkDir(cache_dir);
+    try zig_api.cwd().makePath(cache_dir);
     const runtime_cache_key = try computeRuntimeCacheKey(allocator, root_path);
     defer allocator.free(runtime_cache_key);
     const compiler_cache_key = try computeCompilerCacheKey(allocator, root_path);
@@ -180,9 +183,12 @@ pub fn main(init: std.process.Init) !void {
 
     const common_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "lapack-verify", "common", HOST_CACHE_TAG });
     defer allocator.free(common_rel);
-    try zig_api.cwd().makePath(common_rel);
-    const common_abs = try std.fs.path.join(allocator, &.{ root_path, common_rel });
+    const common_abs = if (builtin.os.tag == .linux)
+        try zig_api.runnerWorkDir(allocator, root_path, "lapack-verify-common", HOST_CACHE_TAG)
+    else
+        try std.fs.path.join(allocator, &.{ root_path, common_rel });
     defer allocator.free(common_abs);
+    try zig_api.cwd().makePath(common_abs);
 
     const libs = try buildSupportLibs(
         allocator,
@@ -525,13 +531,10 @@ fn processCase(
     fallback_tracker: *fallback_policy.Tracker,
 ) !bool {
     _ = lin_dir;
-    const work_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "lapack-verify", case.name });
-    defer allocator.free(work_rel);
-    cleanupWorkDir(work_rel);
-    try zig_api.cwd().makePath(work_rel);
-
-    const work_abs = try std.fs.path.join(allocator, &.{ root_path, work_rel });
+    const work_abs = try zig_api.runnerWorkDir(allocator, root_path, "lapack-verify", case.name);
     defer allocator.free(work_abs);
+    cleanupWorkDir(work_abs);
+    try zig_api.cwd().makePath(work_abs);
     const ref_dir = try std.fs.path.join(allocator, &.{ work_abs, "ref" });
     defer allocator.free(ref_dir);
     const test_dir = try std.fs.path.join(allocator, &.{ work_abs, "test" });
@@ -712,7 +715,7 @@ fn processCase(
         }
     }
 
-    if (!options.keep_workdir) cleanupWorkDir(work_rel);
+    if (!options.keep_workdir) cleanupWorkDir(work_abs);
     return true;
 }
 

@@ -62,6 +62,12 @@ const ParseArgsOutcome = union(enum) {
     failure: ParseArgError,
 };
 
+fn workDirExeArg(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    const base = std.fs.path.basename(path);
+    if (builtin.os.tag == .windows) return allocator.dupe(u8, base);
+    return std.fmt.allocPrint(allocator, "./{s}", .{base});
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
@@ -92,10 +98,13 @@ pub fn main(init: std.process.Init) !void {
 
     const cache_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "blas-verify", "cache", HOST_CACHE_TAG });
     defer allocator.free(cache_rel);
-    if (options.clean_cache) cleanupWorkDir(cache_rel);
-    try zig_api.cwd().makePath(cache_rel);
-    const cache_dir = try std.fs.path.join(allocator, &.{ root_path, cache_rel });
+    const cache_dir = if (builtin.os.tag == .linux)
+        try zig_api.runnerWorkDir(allocator, root_path, "blas-verify-cache", HOST_CACHE_TAG)
+    else
+        try std.fs.path.join(allocator, &.{ root_path, cache_rel });
     defer allocator.free(cache_dir);
+    if (options.clean_cache) cleanupWorkDir(cache_dir);
+    try zig_api.cwd().makePath(cache_dir);
     const runtime_cache_key = try computeRuntimeCacheKey(allocator, root_path);
     defer allocator.free(runtime_cache_key);
     const compiler_cache_key = try computeCompilerCacheKey(allocator, root_path);
@@ -340,14 +349,10 @@ fn processCase(
     case: BlasCase,
     options: Options,
 ) !bool {
-    const work_dir_rel = try std.fs.path.join(allocator, &.{ "zig-cache", "blas-verify", case.name });
-    defer allocator.free(work_dir_rel);
-
-    cleanupWorkDir(work_dir_rel);
-    try zig_api.cwd().makePath(work_dir_rel);
-
-    const work_dir = try std.fs.path.join(allocator, &.{ root_path, work_dir_rel });
+    const work_dir = try zig_api.runnerWorkDir(allocator, root_path, "blas-verify", case.name);
     defer allocator.free(work_dir);
+    cleanupWorkDir(work_dir);
+    try zig_api.cwd().makePath(work_dir);
 
     const ref_dir = try std.fs.path.join(allocator, &.{ work_dir, "ref" });
     defer allocator.free(ref_dir);
@@ -386,7 +391,7 @@ fn processCase(
     const cached_ref_exe = try buildReferenceExePath(allocator, cache_dir, case.name, gfortran_cmd, source_paths, options.incremental);
     defer allocator.free(cached_ref_exe);
     if (options.incremental and file_ops.pathExists(cached_ref_exe)) {
-        try file_ops.copyFile(cached_ref_exe, ref_exe);
+        try file_ops.copyExecutable(cached_ref_exe, ref_exe);
     } else {
         const compile_target = if (options.incremental) cached_ref_exe else ref_exe;
         const ref_ok = try compileReference(allocator, gfortran_cmd, compile_target, source_paths, options.timeout_ms, ref_dir);
@@ -394,7 +399,7 @@ fn processCase(
             std.log.err("reference compile failed: {s}\n", .{case.name});
             return false;
         }
-        if (options.incremental) try file_ops.copyFile(cached_ref_exe, ref_exe);
+        if (options.incremental) try file_ops.copyExecutable(cached_ref_exe, ref_exe);
     }
 
     const trans_sources = try selectTranslatedSources(allocator, source_paths, options.translate_f90, options.translate_driver);
@@ -428,14 +433,18 @@ fn processCase(
         return false;
     }
 
-    const ref_run = try runProcessCaptureWithInput(allocator, &.{std.fs.path.basename(ref_exe)}, ref_dir, input_data, options.timeout_ms);
+    const ref_run_arg = try workDirExeArg(allocator, ref_exe);
+    defer allocator.free(ref_run_arg);
+    const ref_run = try runProcessCaptureWithInput(allocator, &.{ref_run_arg}, ref_dir, input_data, options.timeout_ms);
     defer ref_run.deinit(allocator);
     if (ref_run.timed_out) {
         std.log.warn("timeout: reference run {s}\n", .{case.name});
         return false;
     }
 
-    const test_run = try runProcessCaptureWithInput(allocator, &.{std.fs.path.basename(test_exe)}, test_dir, input_data, options.timeout_ms);
+    const test_run_arg = try workDirExeArg(allocator, test_exe);
+    defer allocator.free(test_run_arg);
+    const test_run = try runProcessCaptureWithInput(allocator, &.{test_run_arg}, test_dir, input_data, options.timeout_ms);
     defer test_run.deinit(allocator);
     if (test_run.timed_out) {
         std.log.warn("timeout: translated run {s}\n", .{case.name});
@@ -471,7 +480,7 @@ fn processCase(
     }
 
     if (!options.keep_workdir) {
-        cleanupWorkDir(work_dir_rel);
+        cleanupWorkDir(work_dir);
     }
 
     return true;

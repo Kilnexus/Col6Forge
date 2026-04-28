@@ -17,6 +17,10 @@ fn addFallbackGateArgs(run: *std.Build.Step.Run, gate: FallbackGate) void {
     }
 }
 
+fn propagateZigExe(run: *std.Build.Step.Run) void {
+    run.setEnvironmentVariable("COL6FORGE_ZIG_EXE", run.step.owner.graph.zig_exe);
+}
+
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
 // executed by an external runner. The functions in `std.Build` implement a DSL
@@ -583,6 +587,7 @@ pub fn build(b: *std.Build) void {
         @panic("choose at most one of -Dfcvs21_f95 or -Dfcsv78");
     }
     const run_verify = b.addRunArtifact(verify_runner);
+    propagateZigExe(run_verify);
     verify_step.dependOn(&run_verify.step);
     if (verify_fcvs21_f95) {
         run_verify.addArgs(&.{ "--tests-dir", "tests/NIST_F78_test_suite/fcvs21_f95" });
@@ -599,6 +604,7 @@ pub fn build(b: *std.Build) void {
 
     const verify_strict_step = b.step("verify-strict", "Run NIST F78 verification tests and fail on any fallback path");
     const run_verify_strict = b.addRunArtifact(verify_runner);
+    propagateZigExe(run_verify_strict);
     verify_strict_step.dependOn(&run_verify_strict.step);
     if (verify_fcvs21_f95) {
         run_verify_strict.addArgs(&.{ "--tests-dir", "tests/NIST_F78_test_suite/fcvs21_f95" });
@@ -612,6 +618,7 @@ pub fn build(b: *std.Build) void {
 
     const gcc_dg_verify_step = b.step("gcc-dg-verify", "Run GCC gfortran.dg compile verification tests");
     const run_gcc_dg_verify = b.addRunArtifact(gcc_dg_runner);
+    propagateZigExe(run_gcc_dg_verify);
     gcc_dg_verify_step.dependOn(&run_gcc_dg_verify.step);
     if (b.args) |args| {
         run_gcc_dg_verify.addArgs(args);
@@ -619,6 +626,7 @@ pub fn build(b: *std.Build) void {
 
     const blas_verify_step = b.step("blas-verify", "Run BLAS 3.12.0 verification tests");
     const run_blas_verify = b.addRunArtifact(blas_runner);
+    propagateZigExe(run_blas_verify);
     blas_verify_step.dependOn(&run_blas_verify.step);
     if (b.args) |args| {
         run_blas_verify.addArgs(args);
@@ -628,6 +636,7 @@ pub fn build(b: *std.Build) void {
     const lapack_fail_on_fallback = b.option(bool, "lapack_fail_on_fallback", "Fail LAPACK verification immediately when any fallback path is taken") orelse false;
     const lapack_max_fallbacks = b.option(usize, "lapack_max_fallbacks", "Fail LAPACK verification if total fallback count exceeds this budget");
     const run_lapack_verify = b.addRunArtifact(lapack_runner);
+    propagateZigExe(run_lapack_verify);
     lapack_verify_step.dependOn(&run_lapack_verify.step);
     addFallbackGateArgs(run_lapack_verify, .{
         .fail_on_fallback = lapack_fail_on_fallback,
@@ -639,6 +648,7 @@ pub fn build(b: *std.Build) void {
 
     const lapack_verify_strict_step = b.step("lapack-verify-strict", "Run LAPACK-lite verification and fail on any fallback path");
     const run_lapack_verify_strict = b.addRunArtifact(lapack_runner);
+    propagateZigExe(run_lapack_verify_strict);
     lapack_verify_strict_step.dependOn(&run_lapack_verify_strict.step);
     addFallbackGateArgs(run_lapack_verify_strict, .{ .fail_on_fallback = true });
     if (b.args) |args| {
@@ -647,6 +657,7 @@ pub fn build(b: *std.Build) void {
 
     const test_all_step = b.step("test-all", "Run unified test harness");
     const run_test_all = b.addRunArtifact(test_harness);
+    propagateZigExe(run_test_all);
     test_all_step.dependOn(&run_test_all.step);
     if (b.args) |args| {
         run_test_all.addArgs(args);
@@ -654,6 +665,7 @@ pub fn build(b: *std.Build) void {
 
     const perf_bench_step = b.step("perf-bench", "Run BLAS/LAPACK benchmark sampling and emit JSON");
     const run_perf_bench = b.addRunArtifact(perf_bench);
+    propagateZigExe(run_perf_bench);
     perf_bench_step.dependOn(&run_perf_bench.step);
     if (b.args) |args| {
         run_perf_bench.addArgs(args);

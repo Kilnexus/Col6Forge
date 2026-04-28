@@ -480,6 +480,8 @@ pub fn runProcessCaptureWithInput(
 ) !ProcessResult {
     const io = zig_api.defaultIo();
     const base_dir = cwd orelse ".";
+    const resolved_argv = try zig_api.resolveZigArgv(allocator, argv);
+    defer resolved_argv.deinit(allocator);
     var local_cache_dir: ?[]u8 = null;
     defer if (local_cache_dir) |path| allocator.free(path);
     var global_cache_dir: ?[]u8 = null;
@@ -489,7 +491,7 @@ pub fn runProcessCaptureWithInput(
     var env_map_storage: ?std.process.Environ.Map = null;
     defer if (env_map_storage) |*map| map.deinit();
 
-    env_map_storage = try std.process.Environ.createMap(.{ .block = .global }, allocator);
+    env_map_storage = try zig_api.createProcessEnvMap(allocator);
     temp_dir = try std.fs.path.join(allocator, &.{ base_dir, ".verify-runner-tmp" });
     try zig_api.cwd().makePath(temp_dir.?);
     const temp_env = if (cwd != null) ".verify-runner-tmp" else temp_dir.?;
@@ -497,9 +499,9 @@ pub fn runProcessCaptureWithInput(
     try env_map_storage.?.put("TEMP", temp_env);
     try env_map_storage.?.put("TMPDIR", temp_env);
 
-    if (argv.len != 0 and std.mem.eql(u8, argv[0], "zig")) {
-        local_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-cache" });
-        global_cache_dir = try std.fs.path.join(allocator, &.{ base_dir, ".zig-runner-global-cache" });
+    if (resolved_argv.argv.len != 0 and isZigCommand(resolved_argv.argv[0])) {
+        local_cache_dir = try zig_api.runnerCacheDir(allocator, base_dir, ".zig-runner-cache");
+        global_cache_dir = try zig_api.runnerCacheDir(allocator, base_dir, ".zig-runner-global-cache");
         try zig_api.cwd().makePath(local_cache_dir.?);
         try zig_api.cwd().makePath(global_cache_dir.?);
 
@@ -508,7 +510,7 @@ pub fn runProcessCaptureWithInput(
     }
 
     var child = try std.process.spawn(io, .{
-        .argv = argv,
+        .argv = resolved_argv.argv,
         .cwd = if (cwd) |path| .{ .path = path } else .inherit,
         .environ_map = &env_map_storage.?,
         .stdin = if (stdin_path == null) .ignore else .pipe,
@@ -574,6 +576,11 @@ pub fn runProcessCaptureWithInput(
         .term = term,
         .timed_out = timed_out.load(.seq_cst),
     };
+}
+
+fn isZigCommand(arg0: []const u8) bool {
+    const base = std.fs.path.basename(arg0);
+    return std.mem.eql(u8, base, "zig") or std.mem.eql(u8, base, "zig.exe");
 }
 
 pub fn runZigCcLinkWithWindowsRetry(

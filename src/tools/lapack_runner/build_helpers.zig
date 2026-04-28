@@ -849,5 +849,5 @@ pub fn printPipelineError(path: []const u8, diag_bag: *const Col6Forge.diag.Bag,
 }
 
 pub fn cleanupWorkDir(path: []const u8) void {
-    zig_api.cwd().deleteTree(path) catch {};
+    zig_api.deleteTreePath(path) catch {};
 }

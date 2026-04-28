@@ -39,12 +39,25 @@ pub fn runProcessCaptureWithInputPath(
     input_path: []const u8,
     timeout_ms: u64,
 ) !ProcessResult {
-    const cmd = try std.fmt.allocPrint(allocator, "\"{s}\" < \"{s}\"", .{ exe_path, input_path });
+    const exe_arg = try exeArgForCwd(allocator, exe_path, cwd);
+    defer allocator.free(exe_arg);
+    const cmd = try std.fmt.allocPrint(allocator, "\"{s}\" < \"{s}\"", .{ exe_arg, input_path });
     defer allocator.free(cmd);
     if (builtin.os.tag == .windows) {
         return runProcessCaptureWithInput(allocator, &.{ "cmd.exe", "/D", "/C", cmd }, cwd, null, timeout_ms);
     }
     return runProcessCaptureWithInput(allocator, &.{ "sh", "-c", cmd }, cwd, null, timeout_ms);
+}
+
+fn exeArgForCwd(allocator: std.mem.Allocator, exe_path: []const u8, cwd: ?[]const u8) ![]const u8 {
+    if (builtin.os.tag == .windows) return allocator.dupe(u8, exe_path);
+    if (cwd) |dir| {
+        const exe_dir = std.fs.path.dirname(exe_path) orelse "";
+        if (std.mem.eql(u8, exe_dir, dir)) {
+            return std.fmt.allocPrint(allocator, "./{s}", .{std.fs.path.basename(exe_path)});
+        }
+    }
+    return allocator.dupe(u8, exe_path);
 }
 
 pub fn runProcessStreamToFilesWithInputPath(
@@ -59,14 +72,17 @@ pub fn runProcessStreamToFilesWithInputPath(
     const input = try readFileLimitedAbsolute(allocator, input_path, MAX_RUN_INPUT_BYTES);
     defer allocator.free(input);
 
-    var stdout_file = try zig_api.createFileAbsolute(stdout_path, .{ .truncate = true });
+    var stdout_file = try createFilePath(stdout_path, .{ .truncate = true });
     defer stdout_file.close();
-    var stderr_file = try zig_api.createFileAbsolute(stderr_path, .{ .truncate = true });
+    var stderr_file = try createFilePath(stderr_path, .{ .truncate = true });
     defer stderr_file.close();
+
+    const exe_arg = try exeArgForCwd(allocator, exe_path, cwd);
+    defer allocator.free(exe_arg);
 
     return runProcessPipeToFiles(
         allocator,
-        &.{exe_path},
+        &.{exe_arg},
         cwd,
         input,
         &stdout_file,
@@ -85,11 +101,13 @@ pub fn runProcessPipeToFiles(
     timeout_ms: u64,
 ) !ProcessRedirectResult {
     const io = zig_api.defaultIo();
+    const resolved_argv = try zig_api.resolveZigArgv(allocator, argv);
+    defer resolved_argv.deinit(allocator);
     var env_map = try buildChildEnv(allocator, cwd);
     defer env_map.deinit();
 
     var child = try std.process.spawn(io, .{
-        .argv = argv,
+        .argv = resolved_argv.argv,
         .cwd = if (cwd) |path| .{ .path = path } else .inherit,
         .environ_map = &env_map,
         .stdin = .pipe,
@@ -169,11 +187,13 @@ pub fn runProcessCaptureWithInput(
     timeout_ms: u64,
 ) !ProcessResult {
     const io = zig_api.defaultIo();
+    const resolved_argv = try zig_api.resolveZigArgv(allocator, argv);
+    defer resolved_argv.deinit(allocator);
     var env_map = try buildChildEnv(allocator, cwd);
     defer env_map.deinit();
 
     var child = try std.process.spawn(io, .{
-        .argv = argv,
+        .argv = resolved_argv.argv,
         .cwd = if (cwd) |path| .{ .path = path } else .inherit,
         .environ_map = &env_map,
         .stdin = if (input == null) .ignore else .pipe,
@@ -243,7 +263,7 @@ fn buildChildEnv(allocator: std.mem.Allocator, cwd: ?[]const u8) !std.process.En
     defer allocator.free(temp_dir);
     try zig_api.cwd().makePath(temp_dir);
 
-    var env_map = try std.process.Environ.createMap(.{ .block = .global }, allocator);
+    var env_map = try zig_api.createProcessEnvMap(allocator);
     errdefer env_map.deinit();
     const temp_env = if (cwd != null) ".lapack-runner-tmp" else temp_dir;
     try env_map.put("TMP", temp_env);
@@ -288,9 +308,19 @@ pub fn readFileLimitedAbsolute(
     path: []const u8,
     max_bytes: usize,
 ) ![]u8 {
-    var file = try zig_api.openFileAbsolute(path, .{});
+    var file = try openFilePath(path, .{});
     defer file.close();
     return file.readToEndAlloc(allocator, max_bytes);
+}
+
+fn openFilePath(path: []const u8, options: anytype) !zig_api.File {
+    if (std.fs.path.isAbsolute(path)) return zig_api.openFileAbsolute(path, options);
+    return zig_api.cwd().openFile(path, options);
+}
+
+fn createFilePath(path: []const u8, options: anytype) !zig_api.File {
+    if (std.fs.path.isAbsolute(path)) return zig_api.createFileAbsolute(path, options);
+    return zig_api.cwd().createFile(path, options);
 }
 
 pub fn retryStdoutComparisonWithCapturedRuns(

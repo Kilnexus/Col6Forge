@@ -48,8 +48,10 @@ const allowsProcessorDependentOutputDiff = compare.allowsProcessorDependentOutpu
 const tryRecoverRuntimeCacheAndRelink = runtime.tryRecoverRuntimeCacheAndRelink;
 const logProgress = runtime.logProgress;
 
-fn workDirArg(path: []const u8) []const u8 {
-    return std.fs.path.basename(path);
+fn workDirArg(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+    const base = std.fs.path.basename(path);
+    if (builtin.os.tag == .windows) return allocator.dupe(u8, base);
+    return std.fmt.allocPrint(allocator, "./{s}", .{base});
 }
 
 fn emitTranslatedLl(
@@ -123,10 +125,12 @@ pub fn processCase(
     defer allocator.free(translated_obj_path);
     const ref_exe = try prepareExePath(allocator, work_dir, "ref");
     defer allocator.free(ref_exe);
-    const ref_exe_arg = workDirArg(ref_exe);
+    const ref_exe_arg = try workDirArg(allocator, ref_exe);
+    defer allocator.free(ref_exe_arg);
     const test_exe = try prepareExePath(allocator, work_dir, "test");
     defer allocator.free(test_exe);
-    const test_exe_arg = workDirArg(test_exe);
+    const test_exe_arg = try workDirArg(allocator, test_exe);
+    defer allocator.free(test_exe_arg);
     if (isTimedOut(options.timeout_ms, &timer)) {
         log_state.stderr("timeout: {s}\n", .{abs_input_path});
         cleanupWorkDir(work_dir);
@@ -623,12 +627,16 @@ pub fn runCaseParallel(
         log_state,
         dir_locks,
         profile_collector,
-    ) catch {
+    ) catch |err| {
+        log_state.stderr("case failed with internal error: {s} ({s})\n", .{ case.input_path, @errorName(err) });
         _ = failures.fetchAdd(1, .seq_cst);
         _ = progress.completed.fetchAdd(1, .seq_cst);
         return;
     };
-    if (!ok) _ = failures.fetchAdd(1, .seq_cst);
+    if (!ok) {
+        log_state.stderr("case returned failure: {s}\n", .{case.input_path});
+        _ = failures.fetchAdd(1, .seq_cst);
+    }
     _ = progress.completed.fetchAdd(1, .seq_cst);
 }
 

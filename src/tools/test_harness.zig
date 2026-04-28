@@ -492,12 +492,14 @@ fn runChildWithTimeoutStreaming(
     output: *OutputMux,
 ) !RunResult {
     const io = zig_api.defaultIo();
-    var env_map = try child_env.build(allocator, argv, cwd, ".test-harness-tmp");
+    const resolved_argv = try zig_api.resolveZigArgv(allocator, argv);
+    defer resolved_argv.deinit(allocator);
+    var env_map = try child_env.build(allocator, resolved_argv.argv, cwd, ".test-harness-tmp");
     defer env_map.deinit();
 
     const started_ms: i64 = nowMs();
     var child = try std.process.spawn(io, .{
-        .argv = argv,
+        .argv = resolved_argv.argv,
         .cwd = if (cwd) |path| .{ .path = path } else .inherit,
         .environ_map = &env_map,
         .stdin = .inherit,

@@ -577,6 +577,12 @@ fn isImportedPreludeDecl(self: *context.Context) bool {
 fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDef) !void {
     var first_error: ?anyerror = null;
 
+    if (derivedTypeNameIsIntrinsicType(derived.name)) {
+        setAttributeConflictDiagnostic(self, "cannot be the same as an intrinsic type");
+        if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+        first_error = error.DuplicateDeclaration;
+    }
+
     if (derived.abstract and (derived.bind_c or derived.sequence)) {
         setAttributeConflictDiagnostic(self, "must not be ABSTRACT");
         first_error = error.DuplicateDeclaration;
@@ -746,6 +752,17 @@ fn validateDerivedOldStyleComponentInitializers(self: *context.Context, derived:
         }
     }
     return first_error;
+}
+
+fn derivedTypeNameIsIntrinsicType(name: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(name, "integer") or
+        std.ascii.eqlIgnoreCase(name, "real") or
+        std.ascii.eqlIgnoreCase(name, "complex") or
+        std.ascii.eqlIgnoreCase(name, "character") or
+        std.ascii.eqlIgnoreCase(name, "logical") or
+        std.ascii.eqlIgnoreCase(name, "doubleprecision") or
+        std.ascii.eqlIgnoreCase(name, "doublecomplex") or
+        std.ascii.eqlIgnoreCase(name, "double");
 }
 
 fn equivalenceNameHasBindC(unit: ast.ProgramUnit, name: []const u8) bool {

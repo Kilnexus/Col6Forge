@@ -638,7 +638,7 @@ pub fn parseProgramUnitBody(
                 !root_control.isEndIfLine(stmt_lp) and
                 !root_control.isEndBlockLine(stmt_lp)))
             {
-                if (explicit_program_unit_end) saw_program_unit_end = true;
+                saw_program_unit_end = true;
                 if (implicit_program_recovery and recovered_stmt_error) {
                     self.diag_bag.set(
                         line.span.start_line,

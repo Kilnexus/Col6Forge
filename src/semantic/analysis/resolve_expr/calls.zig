@@ -169,6 +169,9 @@ pub fn resolveCallOrSubscriptExpr(
             self.symbols.items[idx] = sym;
             resolved_spec = sym.type_spec;
         } else if (sym.is_external or sym.is_intrinsic or sym.kind == .function) {
+            if (sym.is_external and !sym.type_explicit and implicitNoneActive(self)) {
+                return emitInvalidArgumentDiagnostic(self, expr_node, catalog.semantic.unexpected_type_decl.code, "has no IMPLICIT type");
+            }
             kind = .call;
         } else if (self.unit.owner_name != null and sym.type_explicit and sym.kind == .variable and sym.dims.len == 0 and call.args.len == 0) {
             return emitInvalidArgumentDiagnostic(self, expr_node, catalog.semantic.actual_argument_not_function.code, "is not a function");
@@ -256,6 +259,15 @@ fn emitNonRecursiveProcedureReferenceDiagnostic(self: *context.Context, expr_nod
         source.text,
     );
     return error.InvalidArgumentCount;
+}
+
+fn implicitNoneActive(self: *const context.Context) bool {
+    var active = false;
+    for (self.unit.decls) |decl| {
+        if (decl != .implicit) continue;
+        active = decl.implicit.rules.len == 0;
+    }
+    return active;
 }
 
 pub fn resolveSubstringExpr(

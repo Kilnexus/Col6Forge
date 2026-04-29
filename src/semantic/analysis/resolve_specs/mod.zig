@@ -240,6 +240,12 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                             continue;
                         }
                     }
+                    if (implicitNoneActive(self) and symbols_mod.findSymbolIndex(self, item.name) == null and !declaresNameLaterInCurrentUnit(self, item.name)) {
+                        setAttributeConflictDiagnostic(self, "has no IMPLICIT type");
+                        if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                        if (first_error == null) first_error = error.DuplicateDeclaration;
+                        continue;
+                    }
                     var key_buf: [64]u8 = undefined;
                     const key = lowerCommonName(self, item.name, &key_buf) catch item.name;
                     if (seen_common_items.contains(key)) {
@@ -396,6 +402,10 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                 for (save_decl.items) |save_item| {
                     switch (save_item) {
                         .name => |name| {
+                            if (implicitNoneActive(self) and symbols_mod.findSymbolIndex(self, name) == null and !declaresNameLaterInCurrentUnit(self, name)) {
+                                setAttributeConflictDiagnostic(self, "has no IMPLICIT type");
+                                return error.DuplicateDeclaration;
+                            }
                             _ = try symbols_mod.ensureDeclaredSymbol(self, name);
                         },
                         .common => |block_name| {
@@ -417,6 +427,45 @@ fn lowerCommonName(self: *context.Context, name: []const u8, buf: *[64]u8) ![]co
     const owned = try self.arena.alloc(u8, name.len);
     for (name, 0..) |ch, idx| owned[idx] = std.ascii.toLower(ch);
     return owned;
+}
+
+fn implicitNoneActive(self: *const context.Context) bool {
+    const limit = self.current_decl_index orelse self.unit.decls.len;
+    var active = false;
+    var decl_idx: usize = 0;
+    while (decl_idx < limit and decl_idx < self.unit.decls.len) : (decl_idx += 1) {
+        const decl = self.unit.decls[decl_idx];
+        if (decl != .implicit) continue;
+        active = decl.implicit.rules.len == 0;
+    }
+    return active;
+}
+
+fn declaresNameLaterInCurrentUnit(self: *const context.Context, name: []const u8) bool {
+    const start_idx = if (self.current_decl_index) |idx| idx + 1 else 0;
+    var decl_idx = start_idx;
+    while (decl_idx < self.unit.decls.len) : (decl_idx += 1) {
+        const decl = self.unit.decls[decl_idx];
+        switch (decl) {
+            .type_decl => |type_decl| {
+                for (type_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            .procedure => |procedure_decl| {
+                for (procedure_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            .dimension => |dimension_decl| {
+                for (dimension_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
 }
 
 fn emitDuplicateDimensionDiagnostic(self: *context.Context, target_name: []const u8) void {

@@ -170,6 +170,8 @@ pub fn resolveCallOrSubscriptExpr(
             resolved_spec = sym.type_spec;
         } else if (sym.is_external or sym.is_intrinsic or sym.kind == .function) {
             kind = .call;
+        } else if (self.unit.owner_name != null and sym.type_explicit and sym.kind == .variable and sym.dims.len == 0 and call.args.len == 0) {
+            return emitInvalidArgumentDiagnostic(self, expr_node, catalog.semantic.actual_argument_not_function.code, "is not a function");
         } else if (sym.type_explicit and call.args.len > 0) {
             if (isStatementFunctionDefinitionTarget(self, expr_node, call.args)) {
                 kind = .call;

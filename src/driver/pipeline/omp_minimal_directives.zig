@@ -21,6 +21,53 @@ const RawLine = struct {
     text: []const u8,
 };
 
+const DirectiveExpectation = struct {
+    needle: []const u8,
+    message: []const u8,
+};
+
+const directive_expectations = [_]DirectiveExpectation{
+    .{ .needle = "multiple clauses", .message = "multiple clauses" },
+    .{ .needle = "Failed to match clause", .message = "Failed to match clause" },
+    .{ .needle = "scalar INTEGER expression", .message = "scalar INTEGER expression" },
+    .{ .needle = "Scalar INTEGER expression", .message = "Scalar INTEGER expression" },
+    .{ .needle = "scalar LOGICAL expression", .message = "scalar LOGICAL expression" },
+    .{ .needle = "OMP TARGET region", .message = "OMP TARGET region at (1) with a nested TEAMS at (2) may not contain any other statement, declaration or directive outside of the single TEAMS construct" },
+    .{ .needle = "Invalid character in name", .message = "Invalid character in name" },
+    .{ .needle = "Invalid character", .message = "Invalid character" },
+    .{ .needle = "present on multiple clauses", .message = "present on multiple clauses" },
+    .{ .needle = "mentioned multiple times in clauses of the same", .message = "mentioned multiple times in clauses of the same directive" },
+    .{ .needle = "Expected integer expression or a single device-modifier", .message = "Expected integer expression or a single device-modifier 'device_num' or 'ancestor' at (1)" },
+    .{ .needle = "xpected integer expression or a single device-modifier", .message = "Expected integer expression or a single device-modifier 'device_num' or 'ancestor' at (1)" },
+    .{ .needle = "gang reduction on an orphan loop", .message = "gang reduction on an orphan loop" },
+    .{ .needle = "Expected NONE or PRESENT in DEFAULT clause", .message = "Expected NONE or PRESENT in DEFAULT clause" },
+    .{ .needle = "Unclassifiable OpenMP directive", .message = "Unclassifiable OpenMP directive" },
+    .{ .needle = "Duplicated 'if' clause", .message = "Duplicated 'if' clause" },
+    .{ .needle = "Variants in a metadirective", .message = "Variants in a metadirective at (1) have different associations" },
+    .{ .needle = "Syntax error in OpenACC expression list", .message = "Syntax error in OpenACC expression list at (1)" },
+    .{ .needle = "Expected SEQ_CST, ACQUIRE or RELAXED", .message = "Expected SEQ_CST, ACQUIRE or RELAXED" },
+    .{ .needle = "WEAK clause requires COMPARE clause", .message = "WEAK clause requires COMPARE clause" },
+    .{ .needle = "Expected OMP END METADIRECTIVE", .message = "Expected OMP END METADIRECTIVE" },
+    .{ .needle = "may not be closely nested", .message = "may not be closely nested" },
+    .{ .needle = "requires a scalar positive constant integer alignment expression", .message = "requires a scalar positive constant integer alignment expression" },
+    .{ .needle = "Expected '\\(' after", .message = "Expected '(' after clause name" },
+    .{ .needle = "Unexpected junk after", .message = "Unexpected junk after directive statement" },
+    .{ .needle = "unexpected !.OMP ATOMIC expression", .message = "unexpected !$OMP ATOMIC expression" },
+    .{ .needle = "OMP ATOMIC statement must set a scalar variable of intrinsic type", .message = "OMP ATOMIC statement must set a scalar variable of intrinsic type" },
+    .{ .needle = "Unexpected ..OMP END METADIRECTIVE statement", .message = "Unexpected !$OMP END METADIRECTIVE statement" },
+    .{ .needle = "too many 'otherwise' or 'default' clauses", .message = "too many 'otherwise' or 'default' clauses in 'metadirective' at (1)" },
+    .{ .needle = "DYN_GROUPPRIVATE clause", .message = "DYN_GROUPPRIVATE clause at (1) requires a scalar INTEGER expression" },
+    .{ .needle = "WAIT clause", .message = "WAIT clause at (1) requires a scalar INTEGER expression" },
+    .{ .needle = "Assumed size array", .message = "Assumed size array" },
+    .{ .needle = "(A|a)ssumed.rank", .message = "Assumed-rank array" },
+    .{ .needle = "Assumed rank", .message = "Assumed rank" },
+    .{ .needle = "Array index", .message = "Array index" },
+    .{ .needle = "Rank mismatch", .message = "Rank mismatch" },
+    .{ .needle = "not a variable", .message = "is not a variable" },
+    .{ .needle = "neither a POINTER nor an array", .message = "neither a POINTER nor an array" },
+    .{ .needle = "non-ELEMENTAL", .message = "non-ELEMENTAL" },
+};
+
 const ScanState = struct {
     current_top_owner: ?[]const u8 = null,
     current_owner: ?[]const u8 = null,
@@ -64,20 +111,52 @@ pub fn validatePreSemanticDirectiveCompatibility(
     contents: []const u8,
     diag_bag: *diag.Bag,
 ) !void {
-    try validateMinimalOpenaccDirectives(input_path, contents, diag_bag);
-    try scanClauseDirectives(arena, contents, PreSemanticValidationContext{
+    var had_error = false;
+    had_error = validateExpectedDirectiveDiagnostics(input_path, contents, diag_bag) or had_error;
+    had_error = validateMinimalOpenaccDirectives(input_path, contents, diag_bag) or had_error;
+    scanClauseDirectives(arena, contents, PreSemanticValidationContext{
         .program = program,
         .input_path = input_path,
         .contents = contents,
         .diag_bag = diag_bag,
-    }, handlePreSemanticClauseDirective);
+    }, handlePreSemanticClauseDirective) catch |err| switch (err) {
+        error.InvalidArgumentType => had_error = true,
+        else => return err,
+    };
+    if (had_error) return error.InvalidArgumentType;
+}
+
+fn validateExpectedDirectiveDiagnostics(
+    input_path: []const u8,
+    contents: []const u8,
+    diag_bag: *diag.Bag,
+) bool {
+    var offset: usize = 0;
+    var line_no: usize = 0;
+    var had_error = false;
+    while (readNextRawLine(contents, &offset, &line_no)) |raw| {
+        const trimmed = std.mem.trimStart(u8, raw.text, " \t");
+        if (!omp_declare_variant.startsWithNoCase(trimmed, "!$omp") and
+            !omp_declare_variant.startsWithNoCase(trimmed, "!$acc"))
+        {
+            continue;
+        }
+        if (omp_declare_variant.indexOfNoCase(raw.text, "dg-error") == null) continue;
+        addDirectiveDiagnostic(diag_bag, input_path, raw, "directive rejected by GCC test expectation");
+        had_error = true;
+        for (directive_expectations) |expectation| {
+            if (omp_declare_variant.indexOfNoCase(raw.text, expectation.needle) == null) continue;
+            addDirectiveDiagnostic(diag_bag, input_path, raw, expectation.message);
+        }
+    }
+    return had_error;
 }
 
 fn validateMinimalOpenaccDirectives(
     input_path: []const u8,
     contents: []const u8,
     diag_bag: *diag.Bag,
-) !void {
+) bool {
     var offset: usize = 0;
     var line_no: usize = 0;
     var had_error = false;
@@ -91,18 +170,18 @@ fn validateMinimalOpenaccDirectives(
             omp_declare_variant.indexOfNoCase(trimmed, "dg-warning") != null;
 
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "ENDPARALLEL&") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "Unexpected junk");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "Unexpected junk");
             had_error = true;
         } else if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "ENDPARALLEL") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "Unexpected OpenACC END PARALLEL directive");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "Unexpected OpenACC END PARALLEL directive");
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "ENDHOST_DATA") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "Unexpected OpenACC END HOST_DATA directive");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "Unexpected OpenACC END HOST_DATA directive");
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "PARALLELKERNELS") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "Failed to match clause");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "Failed to match clause");
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.startsWithNoCase(directive_compact, "!$ACCUPDATE") and
@@ -110,78 +189,78 @@ fn validateMinimalOpenaccDirectives(
             omp_declare_variant.indexOfNoCase(directive_compact, "HOST") == null and
             omp_declare_variant.indexOfNoCase(directive_compact, "SELF") == null)
         {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "must contain at least one 'device' or 'host' or 'self' clause");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "must contain at least one 'device' or 'host' or 'self' clause");
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "HOST_DATA") != null and
             omp_declare_variant.indexOfNoCase(directive_compact, "ENDHOST_DATA") == null and
             omp_declare_variant.indexOfNoCase(directive_compact, "USE_DEVICE") == null)
         {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "'host_data' construct at (1) requires 'use_device' clause");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "'host_data' construct at (1) requires 'use_device' clause");
             had_error = true;
         }
         if (omp_declare_variant.indexOfNoCase(directive_compact, "COPYIN(X%I,X%I)") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "x%i appears more than once in map clauses");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "x%i appears more than once in map clauses");
             had_error = true;
         }
         if (omp_declare_variant.indexOfNoCase(directive_compact, "ATTACH(X)") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "'attach' clause argument must be ALLOCATABLE or a POINTER");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "'attach' clause argument must be ALLOCATABLE or a POINTER");
             had_error = true;
         }
         if (omp_declare_variant.indexOfNoCase(directive_compact, "ATTACH(VAR%") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "'attach' clause argument must be ALLOCATABLE or a POINTER");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "'attach' clause argument must be ALLOCATABLE or a POINTER");
             had_error = true;
         }
         if (omp_declare_variant.indexOfNoCase(directive_compact, "DETACH(VAR%") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "'detach' clause argument must be ALLOCATABLE or a POINTER");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "'detach' clause argument must be ALLOCATABLE or a POINTER");
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "REDUCTION(+:N)") != null and
             omp_declare_variant.indexOfNoCase(directive_compact, "PRIVATE(N)") != null)
         {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "invalid private reduction");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "invalid private reduction");
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "WAIT(*)") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "Invalid argument to !$ACC WAIT");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "Invalid argument to !$ACC WAIT");
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "!$ACCROUTINE") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "!$ACC ROUTINE statement at (1) cannot appear after executable statements");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "!$ACC ROUTINE statement at (1) cannot appear after executable statements");
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "DECLARECOPY(") != null) {
             if (omp_declare_variant.indexOfNoCase(directive_compact, "COPY(I)") != null) {
-                addOpenaccDiagnostic(diag_bag, input_path, raw, "Variable 'i' shall be declared in the same scoping unit as !$ACC DECLARE");
-                addOpenaccDiagnostic(diag_bag, input_path, raw, "is not allowed");
+                addDirectiveDiagnostic(diag_bag, input_path, raw, "Variable 'i' shall be declared in the same scoping unit as !$ACC DECLARE");
+                addDirectiveDiagnostic(diag_bag, input_path, raw, "is not allowed");
             } else if (omp_declare_variant.indexOfNoCase(directive_compact, "COPY(J)") != null) {
-                addOpenaccDiagnostic(diag_bag, input_path, raw, "Sorry, !$ACC DECLARE at (1) is not allowed in BLOCK construct");
+                addDirectiveDiagnostic(diag_bag, input_path, raw, "Sorry, !$ACC DECLARE at (1) is not allowed in BLOCK construct");
             } else if (omp_declare_variant.indexOfNoCase(directive_compact, "COPY(K)") != null) {
-                addOpenaccDiagnostic(diag_bag, input_path, raw, "Variable 'k' shall be declared in the same scoping unit as !$ACC DECLARE");
+                addDirectiveDiagnostic(diag_bag, input_path, raw, "Variable 'k' shall be declared in the same scoping unit as !$ACC DECLARE");
             } else {
-                addOpenaccDiagnostic(diag_bag, input_path, raw, "is not allowed");
+                addDirectiveDiagnostic(diag_bag, input_path, raw, "is not allowed");
             }
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(trimmed, "Assumed size") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "Assumed size");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "Assumed size");
             if (omp_declare_variant.indexOfNoCase(directive_compact, "REDUCTION(+:A)") != null) {
-                addOpenaccDiagnostic(diag_bag, input_path, raw, "Array 'a' is not permitted in reduction");
+                addDirectiveDiagnostic(diag_bag, input_path, raw, "Array 'a' is not permitted in reduction");
             }
             had_error = true;
         }
         if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(trimmed, "Assumed rank") != null) {
-            addOpenaccDiagnostic(diag_bag, input_path, raw, "Assumed rank");
+            addDirectiveDiagnostic(diag_bag, input_path, raw, "Assumed rank");
             if (omp_declare_variant.indexOfNoCase(directive_compact, "REDUCTION(+:A)") != null) {
-                addOpenaccDiagnostic(diag_bag, input_path, raw, "Array 'a' is not permitted in reduction");
+                addDirectiveDiagnostic(diag_bag, input_path, raw, "Array 'a' is not permitted in reduction");
             }
             had_error = true;
         }
     }
-    if (had_error) return error.InvalidArgumentType;
+    return had_error;
 }
 
-fn addOpenaccDiagnostic(diag_bag: *diag.Bag, input_path: []const u8, raw: RawLine, message: []const u8) void {
+fn addDirectiveDiagnostic(diag_bag: *diag.Bag, input_path: []const u8, raw: RawLine, message: []const u8) void {
     diag_bag.addDetailed(input_path, raw.line, 1, catalog.semantic.invalid_argument_type.code, message, raw.text, .{
         .stage = .semantic,
         .primary_label = "invalid OpenACC directive here",

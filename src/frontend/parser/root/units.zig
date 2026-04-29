@@ -596,6 +596,7 @@ pub fn parseProgramUnitBody(
     const implicit_program_recovery = header.kind == .program and std.mem.startsWith(u8, header.name, "__COL6FORGE_PROGRAM");
     var recovered_stmt_error = false;
     var saw_unexpected_end_recovery = false;
+    var saw_program_unit_end = false;
     if (header.type_decl) |type_decl| {
         try decls.append(type_decl);
         try decl_sources.append(root_diagnostics.sourceFromLine(header_line));
@@ -637,6 +638,7 @@ pub fn parseProgramUnitBody(
                 !root_control.isEndIfLine(stmt_lp) and
                 !root_control.isEndBlockLine(stmt_lp)))
             {
+                if (explicit_program_unit_end) saw_program_unit_end = true;
                 if (implicit_program_recovery and recovered_stmt_error) {
                     self.diag_bag.set(
                         line.span.start_line,
@@ -752,6 +754,16 @@ pub fn parseProgramUnitBody(
     }
 
     if (implicit_program_recovery and recovered_stmt_error and saw_unexpected_end_recovery and self.lines.len != 0) {
+        const eof_line = self.lines[self.lines.len - 1];
+        self.diag_bag.set(
+            eof_line.span.start_line,
+            if (eof_line.segments.len > 0) eof_line.segments[0].column else 1,
+            catalog.parser.unexpected_eof.code,
+            "Unexpected end of file",
+            eof_line.text,
+        );
+    }
+    if (!implicit_program_recovery and !saw_program_unit_end and self.lines.len != 0) {
         const eof_line = self.lines[self.lines.len - 1];
         self.diag_bag.set(
             eof_line.span.start_line,

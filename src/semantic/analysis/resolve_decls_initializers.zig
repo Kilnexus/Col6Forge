@@ -99,6 +99,32 @@ pub fn validateProcedurePointerInitializer(
     }
 }
 
+pub fn validateOldStyleInitializer(
+    self: *context.Context,
+    item: ast.Declarator,
+    sym: symbols.Symbol,
+) !void {
+    const source = self.current_decl_source orelse return;
+    const initializer = oldStyleInitializerText(source.text, item.name) orelse return;
+    if (sym.storage == .dummy) {
+        emitDeclInitializerDiagnostic(self, "DATA attribute conflicts with DUMMY attribute");
+        return error.DuplicateDeclaration;
+    }
+    const element_count = declaratorElementCount(self, item) orelse return;
+    const value_count = oldStyleInitializerValueCount(initializer);
+    if (value_count < element_count) {
+        emitDeclInitializerDiagnostic(self, "more variables than values");
+        return error.InvalidArgumentCount;
+    }
+}
+
+pub fn validateDerivedOldStyleComponentInitializer(self: *context.Context, source: ast.DeclSource) ?anyerror {
+    if (std.mem.indexOf(u8, source.text, "/") == null) return null;
+    self.setCurrentDeclSource(source);
+    emitDeclInitializerDiagnostic(self, "Invalid old style initialization for derived type component");
+    return error.DuplicateDeclaration;
+}
+
 pub fn validateCharacterArrayConstructorInitializer(
     self: *context.Context,
     sym: symbols.Symbol,
@@ -221,6 +247,57 @@ fn emitDeclInitializerDiagnostic(self: *context.Context, message: []const u8) vo
         message,
         decl_source.text,
     );
+}
+
+fn oldStyleInitializerText(line: []const u8, name: []const u8) ?[]const u8 {
+    const name_pos = std.ascii.indexOfIgnoreCase(line, name) orelse return null;
+    const after_name = line[name_pos + name.len ..];
+    const first_slash_rel = std.mem.indexOf(u8, after_name, "/") orelse return null;
+    const first_slash = name_pos + name.len + first_slash_rel;
+    const rest = line[first_slash + 1 ..];
+    const last_slash_rel = std.mem.indexOf(u8, rest, "/") orelse return null;
+    return rest[0..last_slash_rel];
+}
+
+fn oldStyleInitializerValueCount(text: []const u8) usize {
+    const trimmed = std.mem.trim(u8, text, " \t");
+    if (trimmed.len == 0) return 0;
+    var count: usize = 1;
+    for (trimmed) |ch| {
+        if (ch == ',') count += 1;
+    }
+    return count;
+}
+
+fn declaratorElementCount(self: *context.Context, item: ast.Declarator) ?usize {
+    if (item.dims.len == 0) return 1;
+    var total: usize = 1;
+    for (item.dims) |dim| {
+        const extent = dimensionElementCount(self, dim) orelse return null;
+        total = std.math.mul(usize, total, extent) catch return null;
+    }
+    return total;
+}
+
+fn dimensionElementCount(self: *context.Context, dim: *ast.Expr) ?usize {
+    if (dim.* == .dim_range) {
+        const range = dim.dim_range;
+        const upper = constInteger(self, range.upper) orelse return null;
+        const lower = if (range.lower) |lower_expr| constInteger(self, lower_expr) orelse return null else 1;
+        if (upper < lower) return 0;
+        return @intCast(upper - lower + 1);
+    }
+    const value = constInteger(self, dim) orelse return null;
+    if (value < 0) return null;
+    return @intCast(value);
+}
+
+fn constInteger(self: *context.Context, expr: *ast.Expr) ?i64 {
+    const value = constants.evalConst(self, expr) catch return null;
+    return switch (value orelse return null) {
+        .integer => |v| v,
+        else => null,
+    };
 }
 
 pub fn isoCBindingCharacterKindShorthandType(

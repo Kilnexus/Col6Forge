@@ -613,6 +613,11 @@ fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDef) !
         if (first_error == null) first_error = err;
     }
 
+    if (validateDerivedOldStyleComponentInitializers(self, derived)) |err| {
+        if (!self.usesExplicitDiagnosticBag()) return err;
+        if (first_error == null) first_error = err;
+    }
+
     if (validateDerivedDuplicateComponents(self, derived)) |err| {
         if (!self.usesExplicitDiagnosticBag()) return err;
         if (first_error == null) first_error = err;
@@ -724,6 +729,20 @@ fn validateDerivedPointerComponentInitializers(self: *context.Context, derived: 
                 if (first_error == null) first_error = err;
                 continue;
             };
+        }
+    }
+    return first_error;
+}
+
+fn validateDerivedOldStyleComponentInitializers(self: *context.Context, derived: ast.DerivedTypeDef) ?anyerror {
+    var first_error: ?anyerror = null;
+    const original_source = self.current_decl_source;
+    defer self.setCurrentDeclSource(original_source);
+
+    for (derived.component_sources) |source| {
+        if (decl_initializers.validateDerivedOldStyleComponentInitializer(self, source)) |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_error == null) first_error = err;
         }
     }
     return first_error;

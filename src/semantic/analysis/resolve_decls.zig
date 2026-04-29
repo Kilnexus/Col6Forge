@@ -66,6 +66,11 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
             continue;
         };
         try assumed_size.validateDerivedIntentOutAssumedSizeDummy(self, decl, effective_item, effective_type);
+        decl_initializers.validateOldStyleInitializer(self, effective_item, self.symbols.items[idx]) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
         polymorphic_decls.validateTypeDecl(self, decl, effective_type, self.symbols.items[idx]) catch |err| {
             if (!self.usesExplicitDiagnosticBag()) return err;
             if (first_err == null) first_err = err;

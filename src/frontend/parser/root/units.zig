@@ -684,6 +684,16 @@ pub fn parseProgramUnitBody(
                 root_diagnostics.setParseDiagnosticFromStream(self.diag_bag, line, stmt_lp, err);
                 return err;
             };
+            if (do_ctx.isInsideBlock() and saveDeclSpecifiesCommonBlock(decl_node)) {
+                self.diag_bag.set(
+                    line.span.start_line,
+                    if (line.segments.len > 0) line.segments[0].column else 1,
+                    catalog.parser.unexpected_token.code,
+                    "SAVE of a COMMON block is not allowed in a BLOCK construct",
+                    line.text,
+                );
+                return error.UnexpectedToken;
+            }
             no_arg_check.applyPendingNoArgCheck(&decl_node, &pending_no_arg_check);
             if (decl_node == .parameter) {
                 try root_spec_eval.recordParamInts(&param_ints, decl_node.parameter.assigns);
@@ -772,6 +782,14 @@ pub fn parseProgramUnitBody(
     };
     unit = try self.importUsedModulePreludes(unit);
     return unit;
+}
+
+fn saveDeclSpecifiesCommonBlock(decl_node: Decl) bool {
+    if (decl_node != .save) return false;
+    for (decl_node.save.items) |item| {
+        if (item == .common) return true;
+    }
+    return false;
 }
 
 pub fn importUsedModulePreludes(self: anytype, unit: ProgramUnit) !ProgramUnit {

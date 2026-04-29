@@ -6,6 +6,7 @@ const procedure_pass = @import("../../../../../common/procedure_pass.zig");
 const free_form = @import("../../../../../frontend/free_form.zig");
 const parser = @import("../../../../../frontend/parser/mod.zig");
 const symbols = @import("../../../../symbol/mod.zig");
+const literal_utils = @import("../../../../evaluator/literals.zig");
 const procedure_inference = @import("../../../../split/api/procedure_inference.zig");
 const context = @import("../../../context.zig");
 const constants = @import("../../../resolve_const.zig");
@@ -137,6 +138,17 @@ fn checkIntrinsicSpecialActualRestriction(
     if (exprIsNoArgCheck(self, expr_node) and !intrinsicAllowsNoArgCheck(name)) {
         return emitIntrinsicArgDiagnostic(self, expr_node, "Variable with NO_ARG_CHECK attribute at (1) is only permitted as argument to the intrinsic functions C_LOC and PRESENT");
     }
+    if (exprIsBozLiteral(expr_node)) {
+        if (std.ascii.eqlIgnoreCase(name, "c_sizeof")) {
+            return emitIntrinsicArgDiagnostic(self, expr_node, "cannot appear");
+        }
+        if (std.ascii.eqlIgnoreCase(name, "sizeof") or
+            std.ascii.eqlIgnoreCase(name, "storage_size") or
+            std.ascii.eqlIgnoreCase(name, "transfer"))
+        {
+            return emitIntrinsicArgDiagnostic(self, expr_node, "cannot be an actual argument");
+        }
+    }
     if (exprIsAssumedRank(self, expr_node)) {
         if (intrinsicAllowsAssumedRank(name, actual_idx)) return;
         if (std.ascii.eqlIgnoreCase(name, "ubound")) {
@@ -172,6 +184,11 @@ fn checkIntrinsicSpecialActualRestriction(
             return emitIntrinsicArgDiagnostic(self, expr_node, "upper bound in the last dimension");
         }
     }
+}
+
+fn exprIsBozLiteral(expr_node: *ast.Expr) bool {
+    if (expr_node.* != .literal or expr_node.literal.kind != .string) return false;
+    return literal_utils.parseBozInt(expr_node.literal.text) catch null != null;
 }
 
 fn checkTransferExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {

@@ -5,6 +5,7 @@ const catalog = @import("../../../common/error_catalog.zig");
 const procedure_pass = @import("../../../common/procedure_pass.zig");
 const context = @import("../context.zig");
 const symbols = @import("../../symbol/mod.zig");
+const literal_utils = @import("../../evaluator/literals.zig");
 const symbols_mod = @import("../resolve_symbols.zig");
 const constants = @import("../resolve_const.zig");
 const expressions = @import("../resolve_expr.zig");
@@ -173,6 +174,10 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                         }
                     }
                     continue;
+                }
+                if (parameterValueIllegalBozIntrinsicMessage(assign.value)) |message| {
+                    setSourceDiagnostic(self, self.current_decl_source orelse ast.DeclSource{}, message);
+                    return error.InvalidArgumentCount;
                 }
                 const assigned_value = check_const.checkParameterAssign(self, assign) catch |err| {
                     if (err == error.ParameterNotConstant) {
@@ -546,6 +551,66 @@ fn exprMentionsIdentifierInSlice(items: []const *ast.Expr, name: []const u8) boo
         if (exprMentionsIdentifier(item, name)) return true;
     }
     return false;
+}
+
+fn parameterValueIllegalBozIntrinsicMessage(expr_node: *ast.Expr) ?[]const u8 {
+    switch (expr_node.*) {
+        .call_or_subscript => |call| {
+            if (call.args.len > 0 and exprIsBozLiteral(call.args[0])) {
+                if (std.ascii.eqlIgnoreCase(call.name, "c_sizeof")) return "cannot appear";
+                if (std.ascii.eqlIgnoreCase(call.name, "sizeof")) return "cannot be an actual";
+            }
+            for (call.args) |arg| {
+                if (parameterValueIllegalBozIntrinsicMessage(arg)) |message| return message;
+            }
+            return null;
+        },
+        .unary => |unary| return parameterValueIllegalBozIntrinsicMessage(unary.expr),
+        .binary => |binary| return parameterValueIllegalBozIntrinsicMessage(binary.left) orelse parameterValueIllegalBozIntrinsicMessage(binary.right),
+        .array_constructor => |ctor| {
+            for (ctor.items) |item| {
+                if (parameterValueIllegalBozIntrinsicMessage(item)) |message| return message;
+            }
+            return null;
+        },
+        .complex_literal => |lit| return parameterValueIllegalBozIntrinsicMessage(lit.real) orelse parameterValueIllegalBozIntrinsicMessage(lit.imag),
+        .substring => |sub| {
+            for (sub.args) |arg| {
+                if (parameterValueIllegalBozIntrinsicMessage(arg)) |message| return message;
+            }
+            if (sub.start) |start| if (parameterValueIllegalBozIntrinsicMessage(start)) |message| return message;
+            if (sub.end) |end| if (parameterValueIllegalBozIntrinsicMessage(end)) |message| return message;
+            return null;
+        },
+        .component => |comp| {
+            if (parameterValueIllegalBozIntrinsicMessage(comp.base)) |message| return message;
+            for (comp.args) |arg| {
+                if (parameterValueIllegalBozIntrinsicMessage(arg)) |message| return message;
+            }
+            return null;
+        },
+        .dim_range => |range| {
+            if (range.lower) |lower| if (parameterValueIllegalBozIntrinsicMessage(lower)) |message| return message;
+            if (parameterValueIllegalBozIntrinsicMessage(range.upper)) |message| return message;
+            if (range.stride) |stride| if (parameterValueIllegalBozIntrinsicMessage(stride)) |message| return message;
+            return null;
+        },
+        .implied_do => |implied_do| {
+            for (implied_do.items) |item| {
+                if (parameterValueIllegalBozIntrinsicMessage(item)) |message| return message;
+            }
+            if (parameterValueIllegalBozIntrinsicMessage(implied_do.start)) |message| return message;
+            if (parameterValueIllegalBozIntrinsicMessage(implied_do.end)) |message| return message;
+            if (implied_do.step) |step| if (parameterValueIllegalBozIntrinsicMessage(step)) |message| return message;
+            return null;
+        },
+        .identifier, .literal => return null,
+    }
+}
+
+fn exprIsBozLiteral(expr_node: *ast.Expr) bool {
+    if (expr_node.* != .literal or expr_node.literal.kind != .string) return false;
+    return literal_utils.parseBozInt(expr_node.literal.text) catch null != null;
 }
 
 fn commonNameIsUseAssociated(self: *context.Context, name: []const u8) bool {

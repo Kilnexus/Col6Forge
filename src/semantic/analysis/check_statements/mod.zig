@@ -66,14 +66,20 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 self.setCurrentSource(self.sourceForExpr(assign.target));
                 return error.AssignmentTypeMismatch;
             }
-            if (pureProcedureAssignsCommonObject(self, assign.target)) {
-                return emitExprConstraint(self, assign.target, "cannot be used in a variable definition context");
+            if (pureProcedureAssignsImpureVariable(self, assign.target)) {
+                return emitPureVariableDefinitionDiagnostic(self, assign.target);
             }
             try rejectCharacterLiteralAssignmentConversion(self, assign.value, target_spec, value_spec);
             try rejectMixedCharacterArrayConstructorLengths(self, assign.value, target_spec);
             const defined_assignment_compatible = expr_semantics.isDefinedAssignmentCompatible(self, assign.target, assign.value, .{
                 .dummyArgTypeCompatible = dummyArgTypeCompatible,
             });
+            if (self.unit.pure and defined_assignment_compatible and pureProcedureUsesImpureDefinedAssignment(self)) {
+                return emitExprConstraint(self, assign.target, "is not PURE");
+            }
+            if (pureProcedureReadsImpurePointerComponentValue(self, assign.value, value_spec)) {
+                return emitExprConstraint(self, assign.value, "pure subprogram");
+            }
             try rejectInvalidPolymorphicIntrinsicAssignment(self, assign.target, target_spec, defined_assignment_compatible);
             if ((!intrinsicAssignmentTypeCompatible(self, target_ty, value_ty, target_spec, value_spec)) and
                 !defined_assignment_compatible)
@@ -141,6 +147,9 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 );
                 return error.AssignmentTypeMismatch;
             }
+            if (pureProcedureAssignsImpureVariable(self, assign.target)) {
+                return emitPureVariableDefinitionDiagnostic(self, assign.target);
+            }
             if (!expr_semantics.isPointerTarget(self, assign.target)) {
                 const source = self.sourceForExpr(assign.target) orelse ast.SourceRef{};
                 self.setDiagnostic(
@@ -164,6 +173,9 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                     source.text,
                 );
                 return error.AssignmentTypeMismatch;
+            }
+            if (pureProcedureUsesImpurePointerTarget(self, assign.value)) {
+                return emitExprConstraint(self, assign.value, "Bad target");
             }
             try procedure_calls.rejectDefinitelyNoncontiguousPointerAssociation(self, assign.target, assign.value);
             try procedure_calls.checkProcedurePointerAssignmentCompatibility(self, assign.target, assign.value, .{
@@ -544,17 +556,98 @@ fn isSyntheticSiblingEntryProcedure(self: *context.Context, name: []const u8) bo
     return false;
 }
 
-fn pureProcedureAssignsCommonObject(self: *context.Context, target: *ast.Expr) bool {
+fn pureProcedureAssignsImpureVariable(self: *context.Context, target: *ast.Expr) bool {
     if (!self.unit.pure) return false;
     const name = switch (target.*) {
         .identifier => |ident| ident,
         .call_or_subscript => |call| call.name,
         .substring => |sub| sub.name,
-        .component => return pureProcedureAssignsCommonObject(self, target.component.base),
+        .component => return pureProcedureAssignsImpureVariable(self, target.component.base),
         else => return false,
     };
     const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
-    return self.symbols.items[idx].storage == .common;
+    const sym = self.symbols.items[idx];
+    if (sym.storage == .common or sym.is_host_associated) return true;
+    if (self.unit.kind == .function and sym.storage == .dummy) return true;
+    return dummyHasIntentIn(self, name);
+}
+
+fn pureProcedureUsesImpurePointerTarget(self: *context.Context, target: *ast.Expr) bool {
+    if (!self.unit.pure) return false;
+    const name = switch (target.*) {
+        .identifier => |ident| ident,
+        .call_or_subscript => |call| call.name,
+        .substring => |sub| sub.name,
+        .component => return pureProcedureUsesImpurePointerTarget(self, target.component.base),
+        else => return false,
+    };
+    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
+    const sym = self.symbols.items[idx];
+    if (sym.storage == .common or sym.is_host_associated) return true;
+    if (self.unit.kind == .function and sym.storage == .dummy) return true;
+    return dummyHasIntentIn(self, name);
+}
+
+fn pureProcedureReadsImpurePointerComponentValue(self: *context.Context, value: *ast.Expr, value_spec: symbols.TypeSpec) bool {
+    if (!self.unit.pure) return false;
+    if (value_spec.lowered_kind != .derived) return false;
+    const derived_name = value_spec.derived_type_name orelse return false;
+    if (!derivedTypeHasPointerComponent(self, derived_name)) return false;
+    return pureProcedureUsesImpurePointerTarget(self, value);
+}
+
+fn derivedTypeHasPointerComponent(self: *context.Context, type_name: []const u8) bool {
+    const derived = resolve_symbols.lookupDerivedType(self, type_name) orelse return false;
+    for (derived.components) |component| {
+        if (component.pointer) return true;
+    }
+    return false;
+}
+
+fn pureProcedureUsesImpureDefinedAssignment(self: *context.Context) bool {
+    const sig = resolve_symbols.lookupKnownProcedureSig(self, "assignment(=)") orelse return false;
+    return !sig.pure;
+}
+
+fn emitPureVariableDefinitionDiagnostic(self: *context.Context, target: *ast.Expr) CheckError {
+    const source = self.sourceForExpr(target) orelse blk: {
+        const stmt = self.current_stmt orelse break :blk ast.SourceRef{};
+        break :blk ast.SourceRef{
+            .line = stmt.source_line,
+            .column = stmt.source_column,
+            .text = stmt.source_text,
+        };
+    };
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.assignment_type_mismatch.code,
+        "cannot be used in a variable definition context",
+        source.text,
+    );
+    return error.AssignmentTypeMismatch;
+}
+
+fn dummyHasIntentIn(self: *context.Context, name: []const u8) bool {
+    for (self.unit.decls) |decl| {
+        switch (decl) {
+            .type_decl => |type_decl| {
+                const intent = type_decl.intent orelse continue;
+                if (intent != .in) continue;
+                for (type_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            .intent => |intent_decl| {
+                if (intent_decl.kind != .in) continue;
+                for (intent_decl.names) |intent_name| {
+                    if (std.ascii.eqlIgnoreCase(intent_name, name)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
 }
 
 fn rejectStaticShapeMismatch(

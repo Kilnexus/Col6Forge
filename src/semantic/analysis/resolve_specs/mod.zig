@@ -249,37 +249,97 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
             if (first_error) |err| return err;
         },
         .equivalence => |eqv| {
+            var first_error: ?anyerror = null;
             for (eqv.groups) |group| {
                 var root: ?EquivalenceDesignator = null;
                 var seen = std.AutoHashMap(EquivalenceDesignatorKey, void).init(self.arena);
                 for (group.items) |expr_node| {
-                    try expressions.resolveExpr(self, expr_node);
+                    expressions.resolveExpr(self, expr_node) catch |err| {
+                        if (!self.usesExplicitDiagnosticBag()) return err;
+                        if (first_error == null) first_error = err;
+                        continue;
+                    };
 
-                    const designator = try equivalence.equivalenceDesignator(self, expr_node);
+                    const designator = equivalence.equivalenceDesignator(self, expr_node) catch |err| {
+                        if (!self.usesExplicitDiagnosticBag()) return err;
+                        if (first_error == null) first_error = err;
+                        continue;
+                    };
                     const sym = self.symbols.items[designator.symbol_idx];
                     if (sym.kind == .parameter or sym.kind == .function or sym.is_intrinsic) {
-                        return error.InvalidEquivalence;
+                        setAttributeConflictDiagnostic(self, "EQUIVALENCE object is not a variable");
+                        if (!self.usesExplicitDiagnosticBag()) return error.InvalidEquivalence;
+                        if (first_error == null) first_error = error.InvalidEquivalence;
+                        continue;
+                    }
+                    if (sym.is_host_associated or equivalenceNameIsUseAssociated(self.unit, designator.name)) {
+                        setAttributeConflictDiagnostic(self, "conflicts with USE ASSOCIATED attribute");
+                        if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                        if (first_error == null) first_error = error.DuplicateDeclaration;
+                        continue;
+                    }
+                    if (sym.is_target) {
+                        setAttributeConflictDiagnostic(self, "conflicts with TARGET attribute");
+                        if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                        if (first_error == null) first_error = error.DuplicateDeclaration;
+                        continue;
+                    }
+                    if (equivalenceNameHasBindC(self.unit, designator.name)) {
+                        setAttributeConflictDiagnostic(self, "EQUIVALENCE attribute conflicts with BIND");
+                        if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                        if (first_error == null) first_error = error.DuplicateDeclaration;
+                        continue;
+                    }
+                    if (self.unit.pure and sym.storage == .common) {
+                        setAttributeConflictDiagnostic(self, "EQUIVALENCE object in the pure procedure");
+                        emitPureEquivalenceAssignmentDiagnostics(self, group);
+                        if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                        if (first_error == null) first_error = error.DuplicateDeclaration;
+                        continue;
                     }
                     const designator_key = EquivalenceDesignatorKey{
                         .symbol_idx = designator.symbol_idx,
                         .byte_offset = designator.byte_offset,
                     };
-                    if (seen.contains(designator_key)) return error.InvalidEquivalence;
+                    if (seen.contains(designator_key)) {
+                        setAttributeConflictDiagnostic(self, "Duplicate EQUIVALENCE object");
+                        if (!self.usesExplicitDiagnosticBag()) return error.InvalidEquivalence;
+                        if (first_error == null) first_error = error.InvalidEquivalence;
+                        continue;
+                    }
                     try seen.put(designator_key, {});
 
                     if (root) |base| {
                         if (!equivalenceTypeCompatible(base.type_spec, designator.type_spec)) {
-                            return error.InvalidEquivalence;
+                            setAttributeConflictDiagnostic(self, "EQUIVALENCE objects have incompatible types");
+                            if (!self.usesExplicitDiagnosticBag()) return error.InvalidEquivalence;
+                            if (first_error == null) first_error = error.InvalidEquivalence;
+                            continue;
+                        }
+                        if (equivalenceInitializersConflict(self, base.symbol_idx, designator.symbol_idx)) {
+                            setAttributeConflictDiagnostic(self, "Overlapping unequal initializers");
+                            if (!self.usesExplicitDiagnosticBag()) return error.InvalidEquivalence;
+                            if (first_error == null) first_error = error.InvalidEquivalence;
+                            continue;
                         }
                         const relation = subNoOverflow(base.byte_offset, designator.byte_offset) orelse
                             return error.InvalidEquivalence;
-                        const merged = try unionEquivalence(self, base.name, designator.name, relation);
-                        if (!merged) return error.EquivalenceCycle;
+                        const merged = unionEquivalence(self, base.name, designator.name, relation) catch |err| {
+                            if (!self.usesExplicitDiagnosticBag()) return err;
+                            if (first_error == null) first_error = err;
+                            continue;
+                        };
+                        if (!merged) {
+                            if (!self.usesExplicitDiagnosticBag()) return error.EquivalenceCycle;
+                            if (first_error == null) first_error = error.EquivalenceCycle;
+                            continue;
+                        }
                     } else {
                         root = designator;
                     }
                 }
             }
+            if (first_error) |err| return err;
         },
         .external => |ext| {
             for (ext.names) |name| {
@@ -667,6 +727,138 @@ fn validateDerivedPointerComponentInitializers(self: *context.Context, derived: 
         }
     }
     return first_error;
+}
+
+fn equivalenceNameHasBindC(unit: ast.ProgramUnit, name: []const u8) bool {
+    for (unit.decls) |decl| {
+        switch (decl) {
+            .bind_entity => |bind_entity| {
+                for (bind_entity.names) |bind_name| {
+                    if (std.ascii.eqlIgnoreCase(bind_name, name)) return true;
+                }
+            },
+            .type_decl => |type_decl| {
+                if (!type_decl.bind_c) continue;
+                for (type_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn equivalenceNameIsUseAssociated(unit: ast.ProgramUnit, name: []const u8) bool {
+    for (unit.use_imports) |use_stmt| {
+        if (!use_stmt.has_only) continue;
+        for (use_stmt.only_items) |item| {
+            if (std.ascii.eqlIgnoreCase(item.local_name, name)) return true;
+        }
+    }
+    for (unit.stmts) |stmt| {
+        if (stmt.node != .use_stmt) continue;
+        const use_stmt = stmt.node.use_stmt;
+        if (!use_stmt.has_only) continue;
+        for (use_stmt.only_items) |item| {
+            if (std.ascii.eqlIgnoreCase(item.local_name, name)) return true;
+        }
+    }
+    return false;
+}
+
+fn emitPureEquivalenceAssignmentDiagnostics(self: *context.Context, group: ast.EquivalenceGroup) void {
+    for (self.unit.stmts) |stmt| {
+        if (stmt.node != .assignment) continue;
+        const target_name = exprRootName(stmt.node.assignment.target) orelse continue;
+        if (!equivalenceGroupMentionsName(group, target_name)) continue;
+        self.setDiagnostic(
+            if (stmt.source_line == 0) 1 else stmt.source_line,
+            if (stmt.source_column == 0) 1 else stmt.source_column,
+            catalog.semantic.assignment_type_mismatch.code,
+            "cannot be used in a variable definition context",
+            stmt.source_text,
+        );
+    }
+}
+
+fn equivalenceGroupMentionsName(group: ast.EquivalenceGroup, name: []const u8) bool {
+    for (group.items) |item| {
+        const item_name = exprRootName(item) orelse continue;
+        if (std.ascii.eqlIgnoreCase(item_name, name)) return true;
+    }
+    return false;
+}
+
+fn exprRootName(expr: *ast.Expr) ?[]const u8 {
+    return switch (expr.*) {
+        .identifier => |name| name,
+        .call_or_subscript => |call| call.name,
+        .substring => |sub| sub.name,
+        .component => |comp| exprRootName(comp.base),
+        else => null,
+    };
+}
+
+fn equivalenceInitializersConflict(self: *context.Context, a_idx: usize, b_idx: usize) bool {
+    const a_value = equivalenceInitializerValue(self, self.symbols.items[a_idx]) orelse return false;
+    const b_value = equivalenceInitializerValue(self, self.symbols.items[b_idx]) orelse return false;
+    return !constValuesEqual(a_value, b_value);
+}
+
+fn equivalenceInitializerValue(self: *context.Context, sym: symbols.Symbol) ?symbols.ConstValue {
+    if (sym.const_value) |value| return value;
+    if (declarationInitializerValue(self, sym.name)) |value| return value;
+    if (sym.type_spec.lowered_kind != .derived) return null;
+    const derived_name = sym.type_spec.derived_type_name orelse return null;
+    for (self.unit.decls) |decl| {
+        if (decl != .derived_type_def) continue;
+        if (!std.ascii.eqlIgnoreCase(decl.derived_type_def.name, derived_name)) continue;
+        for (decl.derived_type_def.components) |component_decl| {
+            for (component_decl.items) |item| {
+                const init = item.init orelse continue;
+                return constants.evalConst(self, init) catch null;
+            }
+        }
+    }
+    return null;
+}
+
+fn declarationInitializerValue(self: *context.Context, name: []const u8) ?symbols.ConstValue {
+    for (self.unit.decls) |decl| {
+        if (decl != .type_decl) continue;
+        for (decl.type_decl.items) |item| {
+            if (!std.ascii.eqlIgnoreCase(item.name, name)) continue;
+            const init = item.init orelse return null;
+            return constants.evalConst(self, init) catch null;
+        }
+    }
+    return null;
+}
+
+fn constValuesEqual(a: symbols.ConstValue, b: symbols.ConstValue) bool {
+    return switch (a) {
+        .integer => |v| switch (b) {
+            .integer => |other| other == v,
+            else => false,
+        },
+        .real => |v| switch (b) {
+            .real => |other| other.value == v.value and other.is_double == v.is_double,
+            else => false,
+        },
+        .complex => |v| switch (b) {
+            .complex => |other| other.real == v.real and other.imag == v.imag and other.is_double == v.is_double,
+            else => false,
+        },
+        .logical => |v| switch (b) {
+            .logical => |other| other == v,
+            else => false,
+        },
+        .string => |v| switch (b) {
+            .string => |other| std.mem.eql(u8, other, v),
+            else => false,
+        },
+    };
 }
 
 fn validateDerivedDuplicateComponents(self: *context.Context, derived: ast.DerivedTypeDef) ?anyerror {

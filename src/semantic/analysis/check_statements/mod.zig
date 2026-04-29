@@ -66,6 +66,9 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 self.setCurrentSource(self.sourceForExpr(assign.target));
                 return error.AssignmentTypeMismatch;
             }
+            if (pureProcedureAssignsCommonObject(self, assign.target)) {
+                return emitExprConstraint(self, assign.target, "cannot be used in a variable definition context");
+            }
             try rejectCharacterLiteralAssignmentConversion(self, assign.value, target_spec, value_spec);
             try rejectMixedCharacterArrayConstructorLengths(self, assign.value, target_spec);
             const defined_assignment_compatible = expr_semantics.isDefinedAssignmentCompatible(self, assign.target, assign.value, .{
@@ -539,6 +542,19 @@ fn isSyntheticSiblingEntryProcedure(self: *context.Context, name: []const u8) bo
         }
     }
     return false;
+}
+
+fn pureProcedureAssignsCommonObject(self: *context.Context, target: *ast.Expr) bool {
+    if (!self.unit.pure) return false;
+    const name = switch (target.*) {
+        .identifier => |ident| ident,
+        .call_or_subscript => |call| call.name,
+        .substring => |sub| sub.name,
+        .component => return pureProcedureAssignsCommonObject(self, target.component.base),
+        else => return false,
+    };
+    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
+    return self.symbols.items[idx].storage == .common;
 }
 
 fn rejectStaticShapeMismatch(

@@ -381,7 +381,17 @@ pub fn checkDataActualArgCompatibility(
     actual_expr: *ast.Expr,
     comptime deps: anytype,
 ) CheckError!void {
-    if (isNullPointerIntrinsic(actual_expr) and (formal.pointer or formal.optional)) return;
+    if (isNullPointerIntrinsic(actual_expr)) {
+        if (nullPointerIntrinsicHasNoMold(actual_expr)) {
+            if (formal.assumed_rank) {
+                return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "NULL() without MOLD cannot be passed to assumed-rank dummy");
+            }
+            if (formal.type_spec.lowered_kind == .character and formal.type_spec.char_len_kind == .assumed) {
+                return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "NULL() without MOLD cannot be passed to assumed-length dummy");
+            }
+        }
+        if (formal.pointer or formal.optional) return;
+    }
     if (actual_expr.* == .identifier and identifierIsProcedureDesignatorForDataActual(self, actual_expr.identifier)) {
         return emitProcedureActualCallDiagnostic(
             self,
@@ -565,6 +575,13 @@ pub fn calleeAllowsElementalArrayActuals(self: *context.Context, callee_name: ?[
 pub fn isNullPointerIntrinsic(expr: *ast.Expr) bool {
     return switch (expr.*) {
         .call_or_subscript => |call| std.ascii.eqlIgnoreCase(call.name, "null"),
+        else => false,
+    };
+}
+
+fn nullPointerIntrinsicHasNoMold(expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .call_or_subscript => |call| std.ascii.eqlIgnoreCase(call.name, "null") and call.args.len == 0,
         else => false,
     };
 }

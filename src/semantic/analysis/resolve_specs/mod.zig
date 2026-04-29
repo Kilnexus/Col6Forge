@@ -44,6 +44,7 @@ const validateGenericBindingFamilies = binding_validation.validateGenericBinding
 const EquivalenceDesignator = equivalence.EquivalenceDesignator;
 const EquivalenceDesignatorKey = equivalence.EquivalenceDesignatorKey;
 const equivalenceTypeCompatible = equivalence.equivalenceTypeCompatible;
+const equivalenceConnected = equivalence.equivalenceConnected;
 const unionEquivalence = equivalence.unionEquivalence;
 const subNoOverflow = equivalence.subNoOverflow;
 
@@ -340,6 +341,12 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                             if (first_error == null) first_error = err;
                             continue;
                         };
+                        if (commonEquivalenceOverlap(self)) {
+                            setAttributeConflictDiagnostic(self, "indirectly overlap COMMON; equivalenced to another COMMON");
+                            if (!self.usesExplicitDiagnosticBag()) return error.InvalidEquivalence;
+                            if (first_error == null) first_error = error.InvalidEquivalence;
+                            continue;
+                        }
                         if (!merged) {
                             if (!self.usesExplicitDiagnosticBag()) return error.EquivalenceCycle;
                             if (first_error == null) first_error = error.EquivalenceCycle;
@@ -649,6 +656,32 @@ fn commonEntityHasSaveAttribute(unit: ast.ProgramUnit, name: []const u8) bool {
         }
     }
     return false;
+}
+
+fn commonEquivalenceOverlap(self: *context.Context) bool {
+    var first_name: ?[]const u8 = null;
+    var first_block: ?[]const u8 = null;
+    for (self.unit.decls) |decl| {
+        if (decl != .common) continue;
+        for (decl.common.blocks) |block| {
+            for (block.items) |item| {
+                if (first_name == null) {
+                    first_name = item.name;
+                    first_block = block.name;
+                    continue;
+                }
+                if (commonBlockNameEqual(first_block, block.name)) continue;
+                if (equivalenceConnected(self, first_name.?, item.name)) return true;
+            }
+        }
+    }
+    return false;
+}
+
+fn commonBlockNameEqual(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null and b == null) return true;
+    if (a == null or b == null) return false;
+    return std.ascii.eqlIgnoreCase(a.?, b.?);
 }
 
 fn declExportedName(decl_node: ast.Decl) ?[]const u8 {

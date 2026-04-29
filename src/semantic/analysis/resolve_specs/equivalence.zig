@@ -117,6 +117,14 @@ pub fn unionEquivalence(self: *context.Context, a_name: []const u8, b_name: []co
     return true;
 }
 
+pub fn equivalenceConnected(self: *context.Context, a_name: []const u8, b_name: []const u8) bool {
+    const a_idx = findEquivalenceNode(self, a_name) orelse return false;
+    const b_idx = findEquivalenceNode(self, b_name) orelse return false;
+    const a_root = findEquivalenceRoot(self, a_idx) catch return false;
+    const b_root = findEquivalenceRoot(self, b_idx) catch return false;
+    return a_root == b_root;
+}
+
 fn ensureEquivalenceNode(self: *context.Context, name: []const u8) !usize {
     if (findEquivalenceNode(self, name)) |idx| return idx;
     const idx = self.equivalence_parent.items.len;

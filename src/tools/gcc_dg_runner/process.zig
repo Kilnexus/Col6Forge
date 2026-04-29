@@ -359,6 +359,7 @@ pub fn processCase(
     options: Options,
     log_state: *LogState,
 ) !bool {
+    const check_errors = options.strict_level == .err_only or options.strict_level == .warning or options.strict_level == .full;
     const check_warnings = options.strict_level == .warning or options.strict_level == .full;
     const check_aux = options.strict_level == .full;
     const check_output = options.strict_level == .full;
@@ -437,9 +438,13 @@ pub fn processCase(
             return false;
         }
         if (case.expect_compile_error) {
-            const candidate = if (match_text.len != 0) match_text else diag_text;
-            const matched = try matchExpectedErrors(allocator, case, candidate, log_state);
-            if (!matched) return false;
+            if (check_errors) {
+                const candidate = if (match_text.len != 0) match_text else diag_text;
+                const matched = try matchExpectedErrors(allocator, case, candidate, log_state);
+                if (!matched) return false;
+            } else if (options.verbose) {
+                log_state.stdout("strict-level off: skipping dg-error text check for {s}\n", .{case.rel_path});
+            }
         }
         if (check_warnings and case.expected_warning_patterns.len > 0) {
             const candidate = if (match_text.len != 0) match_text else diag_text;

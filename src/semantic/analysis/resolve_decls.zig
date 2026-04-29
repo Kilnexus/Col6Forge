@@ -65,6 +65,11 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
             if (first_err == null) first_err = err;
             continue;
         };
+        validateFunctionResultInitializer(self, effective_item) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
         try assumed_size.validateDerivedIntentOutAssumedSizeDummy(self, decl, effective_item, effective_type);
         decl_initializers.validateOldStyleInitializer(self, effective_item, self.symbols.items[idx]) catch |err| {
             if (!self.usesExplicitDiagnosticBag()) return err;
@@ -119,6 +124,22 @@ fn validateValueIntentDeclaration(self: *context.Context, decl: ast.TypeDecl) !v
             return error.InvalidArgumentCount;
         },
     }
+}
+
+fn validateFunctionResultInitializer(self: *context.Context, item: ast.Declarator) !void {
+    if (item.init == null) return;
+    if (self.unit.kind != .function) return;
+    const result_name = self.unit.result_name orelse self.unit.name;
+    if (!std.ascii.eqlIgnoreCase(item.name, result_name)) return;
+    const source = self.unit.source;
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.assignment_type_mismatch.code,
+        "function result cannot have an initializer",
+        source.text,
+    );
+    return error.InvalidInitializer;
 }
 
 fn validateElementalFunctionResultDeclaration(

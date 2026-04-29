@@ -59,9 +59,29 @@ pub fn stripInlineComment(line: []const u8) []const u8 {
 
 pub fn isPreservedDirectiveLine(line: []const u8) bool {
     const trimmed = std.mem.trimStart(u8, line, " \t");
+    if (isInvalidOpenmpDirectiveLine(trimmed)) return true;
     if (!std.ascii.startsWithIgnoreCase(trimmed, "!gcc$")) return false;
     return std.ascii.indexOfIgnoreCase(trimmed, "attributes") != null and
         std.ascii.indexOfIgnoreCase(trimmed, "no_arg_check") != null;
+}
+
+fn isInvalidOpenmpDirectiveLine(trimmed: []const u8) bool {
+    if (!std.ascii.startsWithIgnoreCase(trimmed, "!$OMP")) return false;
+    const has_copyprivate_nowait = std.ascii.indexOfIgnoreCase(trimmed, "COPYPRIVATE") != null and
+        std.ascii.indexOfIgnoreCase(trimmed, "NOWAIT") != null;
+    if (has_copyprivate_nowait) return true;
+
+    var compact_buf: [256]u8 = undefined;
+    const max_len = @min(trimmed.len, compact_buf.len);
+    var out_len: usize = 0;
+    for (trimmed[0..max_len]) |ch| {
+        if (ch == ' ' or ch == '\t') continue;
+        compact_buf[out_len] = std.ascii.toUpper(ch);
+        out_len += 1;
+    }
+    const compact = compact_buf[0..out_len];
+    return (std.mem.indexOf(u8, compact, "PRIVATE(/C/)") != null and
+        (std.mem.indexOf(u8, compact, "SHARED(/C/)") != null or std.mem.indexOf(u8, compact, "SHARED(X)") != null));
 }
 
 pub fn compactUpper(allocator: std.mem.Allocator, text: []const u8) ![]const u8 {

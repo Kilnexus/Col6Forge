@@ -53,10 +53,12 @@ pub fn runPipelineWithOptionsAndDiagnostics(
 
     const contents = try readInputFile(allocator, input_path, diag_bag, &profile);
     defer allocator.free(contents);
-    const logical_lines = try normalizeInput(allocator, input_path, contents, options, diag_bag, &profile);
+    const expanded_contents = try expandIncludeStatements(allocator, input_path, contents, 0);
+    defer allocator.free(expanded_contents);
+    const logical_lines = try normalizeInput(allocator, input_path, expanded_contents, options, diag_bag, &profile);
     defer source_form.freeLogicalLines(allocator, logical_lines);
 
-    const output = emit_mod.emitLlvmModule(allocator, input_path, contents, logical_lines, options, diag_bag, &profile) catch |err| {
+    const output = emit_mod.emitLlvmModule(allocator, input_path, expanded_contents, logical_lines, options, diag_bag, &profile) catch |err| {
         profile.markFailure(.pipeline);
         return err;
     };
@@ -105,10 +107,12 @@ pub fn runPipelineToWriterWithOptionsAndDiagnostics(
 
     const contents = try readInputFile(allocator, input_path, diag_bag, &profile);
     defer allocator.free(contents);
-    const logical_lines = try normalizeInput(allocator, input_path, contents, options, diag_bag, &profile);
+    const expanded_contents = try expandIncludeStatements(allocator, input_path, contents, 0);
+    defer allocator.free(expanded_contents);
+    const logical_lines = try normalizeInput(allocator, input_path, expanded_contents, options, diag_bag, &profile);
     defer source_form.freeLogicalLines(allocator, logical_lines);
 
-    emit_mod.emitLlvmModuleToWriter(allocator, input_path, contents, logical_lines, writer, options, diag_bag, &profile) catch |err| {
+    emit_mod.emitLlvmModuleToWriter(allocator, input_path, expanded_contents, logical_lines, writer, options, diag_bag, &profile) catch |err| {
         profile.markFailure(.pipeline);
         return err;
     };
@@ -132,6 +136,92 @@ fn readInputFile(
     };
     profile.read_ns = elapsedNs(read_start);
     return contents;
+}
+
+fn expandIncludeStatements(
+    allocator: std.mem.Allocator,
+    input_path: []const u8,
+    contents: []const u8,
+    depth: usize,
+) ![]u8 {
+    if (depth >= 32) return allocator.dupe(u8, contents);
+
+    var out = std.array_list.Managed(u8).init(allocator);
+    defer out.deinit();
+
+    var it = std.mem.splitScalar(u8, contents, '\n');
+    while (it.next()) |raw_line| {
+        const line = trimCr(raw_line);
+        if (parseIncludeFilename(line)) |include_name| {
+            if (try readIncludeFile(allocator, input_path, include_name)) |included| {
+                defer allocator.free(included.path);
+                defer allocator.free(included.contents);
+                const expanded = try expandIncludeStatements(allocator, included.path, included.contents, depth + 1);
+                defer allocator.free(expanded);
+                try out.appendSlice(expanded);
+                if (expanded.len == 0 or expanded[expanded.len - 1] != '\n') try out.append('\n');
+                continue;
+            }
+        }
+        try out.appendSlice(line);
+        try out.append('\n');
+    }
+
+    return out.toOwnedSlice();
+}
+
+const IncludeFile = struct {
+    path: []u8,
+    contents: []u8,
+};
+
+fn readIncludeFile(
+    allocator: std.mem.Allocator,
+    input_path: []const u8,
+    include_name: []const u8,
+) !?IncludeFile {
+    const include_path = if (std.fs.path.isAbsolute(include_name))
+        try allocator.dupe(u8, include_name)
+    else blk: {
+        const dir = std.fs.path.dirname(input_path) orelse ".";
+        break :blk try std.fs.path.join(allocator, &.{ dir, include_name });
+    };
+    errdefer allocator.free(include_path);
+
+    const max_size = 64 * 1024 * 1024;
+    const included = zig_api.cwd().readFileAlloc(allocator, include_path, max_size) catch |err| switch (err) {
+        error.FileNotFound => {
+            allocator.free(include_path);
+            return null;
+        },
+        else => return err,
+    };
+    return .{ .path = include_path, .contents = included };
+}
+
+fn parseIncludeFilename(line: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, line, " \t");
+    if (!startsWithWordIgnoreCase(trimmed, "include")) return null;
+    var rest = std.mem.trimStart(u8, trimmed["include".len..], " \t");
+    if (rest.len < 2) return null;
+    const quote = rest[0];
+    if (quote != '"' and quote != '\'') return null;
+    rest = rest[1..];
+    const end = std.mem.indexOfScalar(u8, rest, quote) orelse return null;
+    return rest[0..end];
+}
+
+fn startsWithWordIgnoreCase(text: []const u8, word: []const u8) bool {
+    if (text.len < word.len) return false;
+    if (!std.ascii.eqlIgnoreCase(text[0..word.len], word)) return false;
+    if (text.len == word.len) return true;
+    const next = text[word.len];
+    return !(std.ascii.isAlphabetic(next) or std.ascii.isDigit(next) or next == '_');
+}
+
+fn trimCr(line: []const u8) []const u8 {
+    if (line.len > 0 and line[line.len - 1] == '\r') return line[0 .. line.len - 1];
+    return line;
 }
 
 fn normalizeInput(

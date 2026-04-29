@@ -121,6 +121,19 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
         },
         .dimension => |dim| {
             for (dim.items) |item| {
+                if (self.unit.elemental and self.unit.kind == .function) {
+                    const result_name = self.unit.result_name orelse self.unit.name;
+                    if (std.ascii.eqlIgnoreCase(item.name, result_name)) {
+                        if (dim.pointer) {
+                            setAttributeConflictDiagnostic(self, "POINTER attribute conflicts with ELEMENTAL attribute");
+                            return error.DuplicateDeclaration;
+                        }
+                        if (item.dims.len != 0) {
+                            setSourceDiagnostic(self, self.unit.source, "must have a scalar result");
+                            return error.DuplicateDeclaration;
+                        }
+                    }
+                }
                 if (!dim.pointer and hasCurrentUnitExplicitInterfaceProcedure(self, item.name)) {
                     setAttributeConflictDiagnostic(
                         self,
@@ -136,7 +149,7 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                     emitDuplicateDimensionDiagnostic(self, item.name);
                     return error.DuplicateDeclaration;
                 }
-                try assumed_size.validateDeclaratorDims(self, item, self.symbols.items[idx].storage);
+                try assumed_size.validateDeclaratorDims(self, item, self.symbols.items[idx].storage, false);
                 self.symbols.items[idx].dims = item.dims;
                 if (dim.allocatable) {
                     self.symbols.items[idx].is_allocatable = true;
@@ -191,11 +204,48 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
             }
         },
         .common => |common| {
+            var seen_common_items = std.StringHashMap(void).init(self.arena);
+            var first_error: ?anyerror = null;
             for (common.blocks) |block| {
+                if (block.name) |block_name| {
+                    if (symbols_mod.findSymbolIndex(self, block_name)) |idx| {
+                        const sym = self.symbols.items[idx];
+                        if (sym.kind == .parameter or sym.is_intrinsic) {
+                            setAttributeConflictDiagnostic(self, "COMMON block name conflicts with existing symbol");
+                            if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                            if (first_error == null) first_error = error.DuplicateDeclaration;
+                            continue;
+                        }
+                    }
+                }
                 for (block.items) |item| {
-                    try decls.applyDeclarator(self, symbols_mod.implicitTypeSpec(self, item.name), item, .common, false, false, false, false, false);
+                    if (commonNameIsUseAssociated(self, item.name)) {
+                        setAttributeConflictDiagnostic(self, "COMMON entity is USE associated from module");
+                        if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                        if (first_error == null) first_error = error.DuplicateDeclaration;
+                        continue;
+                    } else if (symbols_mod.findSymbolIndex(self, item.name)) |idx| {
+                        const sym = self.symbols.items[idx];
+                        if (sym.is_host_associated) {
+                            setAttributeConflictDiagnostic(self, "COMMON entity is USE associated from module");
+                            if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                            if (first_error == null) first_error = error.DuplicateDeclaration;
+                            continue;
+                        }
+                    }
+                    var key_buf: [64]u8 = undefined;
+                    const key = lowerCommonName(self, item.name, &key_buf) catch item.name;
+                    if (seen_common_items.contains(key)) {
+                        setAttributeConflictDiagnostic(self, "is already in a COMMON block");
+                        if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                        if (first_error == null) first_error = error.DuplicateDeclaration;
+                        continue;
+                    }
+                    try seen_common_items.put(if (key.ptr == key_buf[0..].ptr) try self.arena.dupe(u8, key) else key, {});
+                    try decls.applyDeclarator(self, symbols_mod.implicitTypeSpec(self, item.name), item, .common, false, false, false, false, false, false);
                 }
             }
+            if (first_error) |err| return err;
         },
         .equivalence => |eqv| {
             for (eqv.groups) |group| {
@@ -232,6 +282,10 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
         },
         .external => |ext| {
             for (ext.names) |name| {
+                if (try hasCommonBlock(self, name)) {
+                    setAttributeConflictDiagnostic(self, "COMMON block cannot have the EXTERNAL attribute");
+                    return error.DuplicateDeclaration;
+                }
                 if (hasCurrentUnitExplicitInterfaceProcedure(self, name)) {
                     setAttributeConflictDiagnostic(self, "Duplicate EXTERNAL attribute");
                     return error.DuplicateDeclaration;
@@ -274,6 +328,16 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
         },
         .type_decl => return error.UnexpectedTypeDecl,
     }
+}
+
+fn lowerCommonName(self: *context.Context, name: []const u8, buf: *[64]u8) ![]const u8 {
+    if (name.len <= buf.len) {
+        for (name, 0..) |ch, idx| buf.*[idx] = std.ascii.toLower(ch);
+        return buf[0..name.len];
+    }
+    const owned = try self.arena.alloc(u8, name.len);
+    for (name, 0..) |ch, idx| owned[idx] = std.ascii.toLower(ch);
+    return owned;
 }
 
 fn emitDuplicateDimensionDiagnostic(self: *context.Context, target_name: []const u8) void {
@@ -417,6 +481,31 @@ fn exprMentionsIdentifierInSlice(items: []const *ast.Expr, name: []const u8) boo
     return false;
 }
 
+fn commonNameIsUseAssociated(self: *context.Context, name: []const u8) bool {
+    var decl_idx: usize = 0;
+    while (decl_idx < self.unit.prelude_decl_count and decl_idx < self.unit.decls.len) : (decl_idx += 1) {
+        const source = if (decl_idx < self.unit.decl_sources.len) self.unit.decl_sources[decl_idx] else ast.DeclSource{};
+        const owner_name = source.owner_name orelse continue;
+        if (self.unit.owner_name) |unit_owner| {
+            if (std.ascii.eqlIgnoreCase(unit_owner, owner_name)) continue;
+        }
+        const exported_name = declExportedName(self.unit.decls[decl_idx]) orelse continue;
+        if (std.ascii.eqlIgnoreCase(exported_name, name)) return true;
+    }
+    return false;
+}
+
+fn declExportedName(decl_node: ast.Decl) ?[]const u8 {
+    return switch (decl_node) {
+        .derived_type_def => |derived| derived.name,
+        .interface_block => |interface_block| interface_block.name,
+        .type_decl => |type_decl| if (type_decl.items.len == 1) type_decl.items[0].name else null,
+        .procedure => |procedure_decl| if (procedure_decl.items.len == 1) procedure_decl.items[0].name else null,
+        .parameter => |parameter_decl| if (parameter_decl.assigns.len == 1) parameter_decl.assigns[0].name else null,
+        else => null,
+    };
+}
+
 fn isImportedPreludeDecl(self: *context.Context) bool {
     const decl_idx = self.current_decl_index orelse return false;
     if (decl_idx >= self.unit.prelude_decl_count) return false;
@@ -449,6 +538,16 @@ fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDef) !
         if (first_error == null) first_error = err;
     }
     if (validateBindCInteroperableComponents(self, derived)) |err| {
+        if (!self.usesExplicitDiagnosticBag()) return err;
+        if (first_error == null) first_error = err;
+    }
+
+    if (validateDerivedDescriptorComponentShapes(self, derived)) |err| {
+        if (!self.usesExplicitDiagnosticBag()) return err;
+        if (first_error == null) first_error = err;
+    }
+
+    if (validateDerivedDuplicateComponents(self, derived)) |err| {
         if (!self.usesExplicitDiagnosticBag()) return err;
         if (first_error == null) first_error = err;
     }
@@ -504,6 +603,60 @@ fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDef) !
     }
 
     if (first_error) |err| return err;
+}
+
+fn validateDerivedDescriptorComponentShapes(self: *context.Context, derived: ast.DerivedTypeDef) ?anyerror {
+    var first_error: ?anyerror = null;
+    for (derived.components, 0..) |type_decl, component_idx| {
+        if (!type_decl.allocatable and !type_decl.pointer) continue;
+        const source = if (component_idx < derived.component_sources.len)
+            derived.component_sources[component_idx]
+        else
+            self.current_decl_source orelse ast.DeclSource{};
+        for (type_decl.items) |item| {
+            if (item.dims.len != 0 and !componentDimsAreDeferredShape(item.dims)) {
+                const attr = if (type_decl.allocatable) "ALLOCATABLE" else "POINTER";
+                const message = std.fmt.allocPrint(self.arena, "{s} array must have a deferred shape", .{attr}) catch "array must have a deferred shape";
+                setSourceDiagnostic(self, source, message);
+                if (first_error == null) first_error = error.DuplicateDeclaration;
+            }
+            if (type_decl.type_kind == .character and item.char_len != null and item.char_len.?.* == .literal and item.char_len.?.literal.kind == .assumed_size) {
+                setSourceDiagnostic(self, source, "needs to be a constant specification");
+                if (first_error == null) first_error = error.InvalidCharLen;
+            }
+        }
+    }
+    return first_error;
+}
+
+fn validateDerivedDuplicateComponents(self: *context.Context, derived: ast.DerivedTypeDef) ?anyerror {
+    var seen = std.StringHashMap(ast.DeclSource).init(self.arena);
+    for (derived.components, 0..) |type_decl, component_idx| {
+        const source = if (component_idx < derived.component_sources.len)
+            derived.component_sources[component_idx]
+        else
+            self.current_decl_source orelse ast.DeclSource{};
+        for (type_decl.items) |item| {
+            var key_buf: [64]u8 = undefined;
+            const key = lowerCommonName(self, item.name, &key_buf) catch item.name;
+            if (seen.contains(key)) {
+                setSourceDiagnostic(self, source, "already declared at");
+                return error.DuplicateDeclaration;
+            }
+            seen.put(if (key.len <= key_buf.len) self.arena.dupe(u8, key) catch key else key, source) catch {};
+        }
+    }
+    return null;
+}
+
+fn componentDimsAreDeferredShape(dims: []const *ast.Expr) bool {
+    if (dims.len == 0) return false;
+    for (dims) |dim| {
+        if (dim.* != .dim_range) return false;
+        const range = dim.dim_range;
+        if (!range.assumed_shape or range.lower != null) return false;
+    }
+    return true;
 }
 
 fn validateBindCCharacterComponents(

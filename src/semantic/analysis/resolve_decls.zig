@@ -48,8 +48,23 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
                 effective_item.char_len = null;
             }
         }
-        try applyDeclarator(self, effective_type, effective_item, .local, true, decl.allocatable, decl.pointer, decl.target, decl.contiguous);
+        try applyDeclarator(self, effective_type, effective_item, .local, true, decl.allocatable, decl.pointer, decl.target, decl.contiguous, decl.parameter);
         const idx = symbols_mod.findSymbolIndex(self, item.name) orelse return error.UnknownSymbol;
+        validateElementalDummyDeclaration(self, decl, effective_item, self.symbols.items[idx]) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
+        validateValueIntentDeclaration(self, decl) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
+        validateElementalFunctionResultDeclaration(self, decl, effective_item) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
         try assumed_size.validateDerivedIntentOutAssumedSizeDummy(self, decl, effective_item, effective_type);
         polymorphic_decls.validateTypeDecl(self, decl, effective_type, self.symbols.items[idx]) catch |err| {
             if (!self.usesExplicitDiagnosticBag()) return err;
@@ -70,6 +85,108 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
         try decl_initializers.validateDeclaratorInitializer(self, item.init);
     }
     if (first_err) |err| return err;
+}
+
+fn validateValueIntentDeclaration(self: *context.Context, decl: ast.TypeDecl) !void {
+    if (!decl.value_attr) return;
+    const intent = decl.intent orelse return;
+    switch (intent) {
+        .in => return,
+        .inout => {
+            emitCurrentDeclDiagnostic(self, "VALUE attribute conflicts with INTENT.INOUT. attribute");
+            return error.InvalidArgumentCount;
+        },
+        .out => {
+            emitCurrentDeclDiagnostic(self, "VALUE attribute conflicts with INTENT.OUT. attribute");
+            return error.InvalidArgumentCount;
+        },
+    }
+}
+
+fn validateElementalFunctionResultDeclaration(
+    self: *context.Context,
+    decl: ast.TypeDecl,
+    item: ast.Declarator,
+) !void {
+    if (!self.unit.elemental or self.unit.kind != .function) return;
+    const result_name = self.unit.result_name orelse self.unit.name;
+    if (!std.ascii.eqlIgnoreCase(item.name, result_name)) return;
+    if (item.dims.len != 0) {
+        emitSourceDiagnostic(self, self.unit.source, "must have a scalar result");
+        return error.InvalidArgumentCount;
+    }
+    if (decl.pointer) {
+        emitCurrentDeclDiagnostic(self, "POINTER attribute conflicts with ELEMENTAL attribute");
+        return error.InvalidArgumentCount;
+    }
+    if (decl.allocatable) {
+        emitCurrentDeclDiagnostic(self, "shall not have an ALLOCATABLE or POINTER attribute");
+        return error.InvalidArgumentCount;
+    }
+}
+
+fn validateElementalDummyDeclaration(
+    self: *context.Context,
+    decl: ast.TypeDecl,
+    item: ast.Declarator,
+    sym: symbols.Symbol,
+) !void {
+    if (!self.unit.elemental or sym.storage != .dummy) return;
+    if (item.dims.len != 0) {
+        emitCurrentDeclDiagnostic(self, "must be scalar");
+        return error.InvalidArgumentCount;
+    }
+    if (decl.pointer) {
+        emitCurrentDeclDiagnostic(self, "POINTER attribute");
+        return error.InvalidArgumentCount;
+    }
+    if (decl.allocatable) {
+        emitCurrentDeclDiagnostic(self, "ALLOCATABLE attribute");
+        return error.InvalidArgumentCount;
+    }
+    if (decl.intent == null and !decl.value_attr and !dummyHasSeparateIntentOrValue(self, item.name)) {
+        const message = std.fmt.allocPrint(
+            self.arena,
+            "Argument '{s}' of elemental procedure '{s}' must have its INTENT specified or have the VALUE attribute",
+            .{ item.name, self.unit.name },
+        ) catch "must have its INTENT specified or have the VALUE attribute";
+        emitCurrentDeclDiagnostic(self, message);
+        return error.InvalidArgumentCount;
+    }
+}
+
+fn dummyHasSeparateIntentOrValue(self: *context.Context, name: []const u8) bool {
+    for (self.unit.decls) |unit_decl| {
+        switch (unit_decl) {
+            .intent => |intent_decl| {
+                for (intent_decl.names) |intent_name| {
+                    if (std.ascii.eqlIgnoreCase(intent_name, name)) return true;
+                }
+            },
+            .value => |value_decl| {
+                for (value_decl.names) |value_name| {
+                    if (std.ascii.eqlIgnoreCase(value_name, name)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn emitCurrentDeclDiagnostic(self: *context.Context, message: []const u8) void {
+    const source = self.current_decl_source orelse ast.DeclSource{};
+    emitSourceDiagnostic(self, source, message);
+}
+
+fn emitSourceDiagnostic(self: *context.Context, source: ast.DeclSource, message: []const u8) void {
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_argument_count.code,
+        message,
+        source.text,
+    );
 }
 
 pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Expr) !void {
@@ -134,7 +251,7 @@ pub fn applyProcedureDecl(self: *context.Context, decl: ast.ProcedureDecl) !void
                 }
             }
         }
-        try applyDeclarator(self, resolved.type_spec, item, .local, resolved.explicit_type, false, decl.pointer, false, false);
+        try applyDeclarator(self, resolved.type_spec, item, .local, resolved.explicit_type, false, decl.pointer, false, false, false);
 
         const idx = symbols_mod.findSymbolIndex(self, item.name) orelse return error.UnknownSymbol;
         var sym = &self.symbols.items[idx];
@@ -176,6 +293,7 @@ pub fn applyDeclarator(
     pointer: bool,
     target: bool,
     contiguous: bool,
+    allow_parameter_implied_shape: bool,
 ) !void {
     try validateConcreteAbstractTypeUse(self, type_spec);
     const idx = try symbols_mod.ensureDeclaredSymbol(self, item.name);
@@ -196,7 +314,7 @@ pub fn applyDeclarator(
             emitDuplicateDeclaratorDiagnostic(self, item.name, .dimensions);
             return error.DuplicateDeclaration;
         }
-        try assumed_size.validateDeclaratorDims(self, item, if (sym.storage == .dummy) .dummy else storage);
+        try assumed_size.validateDeclaratorDims(self, item, if (sym.storage == .dummy) .dummy else storage, allow_parameter_implied_shape);
         sym.dims = item.dims;
         try validateDeclaratorDimensionExprs(self, item.dims);
     }

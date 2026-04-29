@@ -266,7 +266,16 @@ const ArrayConstructorElementInfo = struct {
 };
 
 fn arrayConstructorElementInfo(ctx: *Context, ctor: ast.ArrayConstructor) ?ArrayConstructorElementInfo {
-    const representative = arrayConstructorRepresentativeExpr(ctor) orelse return null;
+    const representative = arrayConstructorRepresentativeExpr(ctor) orelse {
+        const type_spec = ctor.type_spec orelse return null;
+        return switch (type_spec.type_kind) {
+            .character, .derived => null,
+            else => .{
+                .elem_ty = ctx.typeFromKind(type_spec.type_kind),
+                .address_scale = support.i64Const(ctx, 1),
+            },
+        };
+    };
     if (dispatch.isCharacterExpr(ctx, representative)) {
         const char_len = dispatch.constantCharacterLenForExpr(ctx, representative) orelse return null;
         return .{

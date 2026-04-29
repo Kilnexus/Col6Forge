@@ -98,6 +98,10 @@ pub fn checkIntrinsicCallConstraintsForExprArgs(
     }
     if (std.ascii.eqlIgnoreCase(name, "transfer")) {
         try checkTransferExprArgs(self, args);
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "storage_size")) {
+        try checkStorageSizeExprArgs(self, args);
     }
 }
 
@@ -176,6 +180,32 @@ fn checkTransferExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!v
     const mold_storage_bits = constants.exprMeasure(self, args[1], .storage_size_bits) orelse return;
     if (mold_storage_bits != 0) return;
     return emitIntrinsicArgDiagnostic(self, args[1], "MOLD argument at (1) to TRANSFER shall not have storage size 0");
+}
+
+fn checkStorageSizeExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
+    if (args.len == 0) return;
+    if (exprIsNullPointerIntrinsic(args[0])) {
+        return emitIntrinsicArgDiagnostic(self, args[0], "cannot be an actual argument to STORAGE_SIZE");
+    }
+    if (args.len < 2) return;
+    const kind_arg = args[1];
+    if (resolve_expr.exprRank(self, kind_arg) != 0) {
+        return emitIntrinsicArgDiagnostic(self, kind_arg, "must be a scalar");
+    }
+    const kind_spec = try resolve_expr.exprTypeSpec(self, kind_arg);
+    if (kind_spec.lowered_kind != .integer) {
+        return emitIntrinsicArgDiagnostic(self, kind_arg, "must be INTEGER");
+    }
+    _ = constants.evalConst(self, kind_arg) catch null orelse {
+        return emitIntrinsicArgDiagnostic(self, kind_arg, "must be a constant");
+    };
+}
+
+fn exprIsNullPointerIntrinsic(expr_node: *ast.Expr) bool {
+    return switch (expr_node.*) {
+        .call_or_subscript => |call| std.ascii.eqlIgnoreCase(call.name, "null"),
+        else => false,
+    };
 }
 
 fn checkSelectedCharKindExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {

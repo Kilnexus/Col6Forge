@@ -126,6 +126,29 @@ test "free-form rewritten array PARAMETER keeps array shape on PARAMETER stateme
     try testing.expect(!diag_bag.has());
 }
 
+test "type declaration PARAMETER allows implied shape star dimension" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  integer, parameter :: a(*) = [1, 2, 3, 4]\n" ++
+        "  print *, a(2)\n" ++
+        "end\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    _ = try split_api.analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_bag);
+    try testing.expect(!diag_bag.has());
+}
+
 test "elemental scalar dummy accepts array actual and SUM DIM result keeps reduced rank" {
     const testing = std.testing;
     const allocator = testing.allocator;

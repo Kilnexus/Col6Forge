@@ -50,6 +50,11 @@ pub fn validateExplicitInterfaceBlock(self: *context.Context, interface_block: a
     }
     var first_error: ?anyerror = null;
     for (interface_block.procedure_headers) |proc_header| {
+        if (self.unit.elemental and interfaceProcedureDeclaresCurrentDummy(self, proc_header.name)) {
+            setElementalDummyProcedureDiagnostic(self, proc_header);
+            if (first_error == null) first_error = error.InvalidArgumentCount;
+            continue;
+        }
         if (!imported_prelude_decl and self.unit.owner_name == null and self.unit.kind != .module and std.ascii.eqlIgnoreCase(proc_header.name, self.unit.name)) {
             setEnclosingProcedureDiagnostic(self, proc_header.source);
             if (first_error == null) first_error = error.DuplicateDeclaration;
@@ -132,6 +137,22 @@ fn interfaceProcedureDeclaresCurrentDummy(self: *context.Context, name: []const 
         if (std.ascii.eqlIgnoreCase(arg_name, name)) return true;
     }
     return false;
+}
+
+fn setElementalDummyProcedureDiagnostic(self: *context.Context, proc_header: ast.InterfaceProcedure) void {
+    const message = std.fmt.allocPrint(
+        self.arena,
+        "Dummy procedure '{s}' not allowed in elemental procedure",
+        .{proc_header.name},
+    ) catch "Dummy procedure not allowed in elemental procedure";
+    self.setCurrentDeclSource(proc_header.source);
+    self.setDiagnostic(
+        if (proc_header.source.line == 0) 1 else proc_header.source.line,
+        if (proc_header.source.column == 0) 1 else proc_header.source.column,
+        catalog.semantic.invalid_argument_count.code,
+        message,
+        proc_header.source.text,
+    );
 }
 
 fn setAbstractInterfaceModuleProcedureDiagnostic(self: *context.Context, source: ast.DeclSource) void {

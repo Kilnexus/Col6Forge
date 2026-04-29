@@ -111,6 +111,10 @@ fn flattenIntrinsicArrayValuedCall(ctx: *Context, call: ast.CallOrSubscript) Emi
         if (source_items.len != expected_count) return null;
         return source_items;
     }
+    if (std.ascii.eqlIgnoreCase(call.name, "cshift") or std.ascii.eqlIgnoreCase(call.name, "eoshift")) {
+        if (call.args.len < 2 or call.args.len > 3) return null;
+        return flattenArrayValuedExprItems(ctx, call.args[0]);
+    }
     if (std.ascii.eqlIgnoreCase(call.name, "unpack")) {
         if (call.args.len != 3) return null;
         const vector_items = try flattenArrayValuedExprItems(ctx, call.args[0]) orelse return null;

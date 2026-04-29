@@ -268,7 +268,6 @@ pub fn tryParseSlashArrayConstructor(
     if (!isSlashArrayConstructorEnd(lookahead)) return null;
     _ = lookahead.expect(.slash) orelse return error.UnexpectedToken;
     _ = lookahead.expect(.r_paren) orelse return error.UnexpectedToken;
-    if (items.items.len == 0) return error.UnexpectedToken;
     lp.* = lookahead;
     return makeExprNodeFn(
         arena,

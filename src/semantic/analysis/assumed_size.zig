@@ -26,6 +26,7 @@ pub fn validateDeclaratorDims(
     self: *context.Context,
     item: ast.Declarator,
     storage: symbols.StorageClass,
+    allow_parameter_implied_shape: bool,
 ) !void {
     if (item.dims.len == 0) return;
 
@@ -41,7 +42,25 @@ pub fn validateDeclaratorDims(
 
     if (assumed_idx == null) return;
     if (storage != .dummy) {
+        if (allow_parameter_implied_shape) {
+            try normalizeParameterImpliedShapeDims(self, item.dims);
+            return;
+        }
         return emitCurrentDeclDiagnostic(self, "must be a dummy argument");
+    }
+}
+
+fn normalizeParameterImpliedShapeDims(self: *context.Context, dims: []const *ast.Expr) !void {
+    for (dims) |dim| {
+        if (!dimIsAssumedSize(dim)) continue;
+        const upper = try self.arena.create(ast.Expr);
+        upper.* = .{ .literal = .{ .kind = .assumed_size, .text = "*" } };
+        dim.* = .{ .dim_range = .{
+            .lower = null,
+            .upper = upper,
+            .stride = null,
+            .assumed_shape = true,
+        } };
     }
 }
 

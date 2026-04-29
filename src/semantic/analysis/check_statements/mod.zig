@@ -501,6 +501,15 @@ fn rejectElementalCallRankMismatch(
             return emitExprConstraint(self, arg.expr.value, "Incompatible ranks in elemental procedure");
         }
     }
+    const array_rank = expected_rank orelse return;
+    for (args, 0..) |arg, idx| {
+        if (arg != .expr) continue;
+        if (idx >= sig.args.len or sig.args[idx].rank != 0) continue;
+        const intent = sig.args[idx].intent orelse continue;
+        if (intent != .out and intent != .inout) continue;
+        if (resolve_expr.exprRank(self, arg.expr.value) == array_rank) continue;
+        return emitExprConstraint(self, arg.expr.value, "is a scalar");
+    }
 }
 
 fn rejectStaticShapeMismatch(

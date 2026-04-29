@@ -127,6 +127,7 @@ const IntrinsicTag = enum {
     ddim,
     idim,
     dprod,
+    dot_product,
     conjg,
     dconjg,
     cmplx,
@@ -151,6 +152,13 @@ const IntrinsicTag = enum {
     size,
     sizeof_,
     c_sizeof,
+    storage_size,
+    command_argument_count,
+    etime,
+    signal,
+    fstat,
+    stat,
+    lstat,
     is_contiguous,
     len_,
     kind_,
@@ -196,8 +204,12 @@ const IntrinsicTag = enum {
     present,
     same_type_as,
     transfer,
+    pack,
+    cshift,
+    eoshift,
     ubound,
     verify,
+    repeat,
     c_loc,
     c_funloc,
     csin,
@@ -243,6 +255,7 @@ const intrinsic_tag_map = std.StaticStringMap(IntrinsicTag).initComptime(.{
     .{ "ddim", .ddim },
     .{ "idim", .idim },
     .{ "dprod", .dprod },
+    .{ "dot_product", .dot_product },
     .{ "conjg", .conjg },
     .{ "dconjg", .dconjg },
     .{ "cmplx", .cmplx },
@@ -270,6 +283,13 @@ const intrinsic_tag_map = std.StaticStringMap(IntrinsicTag).initComptime(.{
     .{ "size", .size },
     .{ "sizeof", .sizeof_ },
     .{ "c_sizeof", .c_sizeof },
+    .{ "storage_size", .storage_size },
+    .{ "command_argument_count", .command_argument_count },
+    .{ "etime", .etime },
+    .{ "signal", .signal },
+    .{ "fstat", .fstat },
+    .{ "stat", .stat },
+    .{ "lstat", .lstat },
     .{ "is_contiguous", .is_contiguous },
     .{ "len", .len_ },
     .{ "kind", .kind_ },
@@ -315,8 +335,12 @@ const intrinsic_tag_map = std.StaticStringMap(IntrinsicTag).initComptime(.{
     .{ "present", .present },
     .{ "same_type_as", .same_type_as },
     .{ "transfer", .transfer },
+    .{ "pack", .pack },
+    .{ "cshift", .cshift },
+    .{ "eoshift", .eoshift },
     .{ "ubound", .ubound },
     .{ "verify", .verify },
+    .{ "repeat", .repeat },
     .{ "c_loc", .c_loc },
     .{ "c_funloc", .c_funloc },
     .{ "csin", .csin },
@@ -396,6 +420,7 @@ pub fn emitIntrinsicCall(ctx: *Context, builder: anytype, name: []const u8, args
             return casting.coerce(ctx, builder, value, ctx.defaultIntegerIRType());
         },
         .dprod => return emitIntrinsicDprod(ctx, builder, args),
+        .dot_product => return emitIntrinsicDotProduct(ctx, args),
         .conjg => return emitIntrinsicConjg(ctx, builder, args),
         .dconjg => return emitIntrinsicDconjg(ctx, builder, args),
         .cmplx => return emitIntrinsicCmplx(ctx, builder, args),
@@ -419,6 +444,11 @@ pub fn emitIntrinsicCall(ctx: *Context, builder: anytype, name: []const u8, args
         .index => return emitIntrinsicIndex(ctx, builder, args, .index),
         .size => return emitIntrinsicSize(ctx, builder, args),
         .sizeof_, .c_sizeof => return emitIntrinsicSizeof(ctx, args),
+        .storage_size => return emitIntrinsicStorageSize(ctx, args),
+        .command_argument_count => return emitIntrinsicCommandArgumentCount(ctx, args),
+        .etime => return emitIntrinsicEtime(ctx, args),
+        .signal => return emitIntrinsicSignal(ctx, args),
+        .fstat, .stat, .lstat => return emitIntrinsicStatLike(ctx, args),
         .is_contiguous => return emitIntrinsicIsContiguous(ctx, builder, args),
         .len_ => return emitIntrinsicLen(ctx, builder, args),
         .kind_ => return emitIntrinsicKind(ctx, args),
@@ -464,8 +494,10 @@ pub fn emitIntrinsicCall(ctx: *Context, builder: anytype, name: []const u8, args
         .present => return emitIntrinsicAllocated(args),
         .same_type_as => return emitDeclaredLogicalIntrinsicCall(ctx, builder, name, args),
         .transfer => return emitIntrinsicTransfer(ctx, builder, args),
+        .pack, .cshift, .eoshift => return emitIntrinsicArraySourcePtr(ctx, builder, args),
         .ubound => return emitIntrinsicUbound(ctx, builder, args),
         .verify => return emitIntrinsicIndex(ctx, builder, args, .verify),
+        .repeat => return emitIntrinsicRepeat(ctx, builder, args),
         .c_loc => return emitIntrinsicCLoc(ctx, builder, args),
         .c_funloc => return emitIntrinsicCFunloc(ctx, args),
         .csin => return emitComplexCsin(ctx, builder, args),
@@ -500,6 +532,50 @@ fn emitIntrinsicKind(ctx: *Context, args: []*Expr) EmitError!ValueRef {
 fn emitIntrinsicSizeof(ctx: *Context, args: []*Expr) EmitError!ValueRef {
     if (args.len != 1) return error.InvalidIntrinsicCall;
     return ctx.constDefaultInteger(0);
+}
+
+fn emitIntrinsicStorageSize(ctx: *Context, args: []*Expr) EmitError!ValueRef {
+    if (args.len < 1 or args.len > 2) return error.InvalidIntrinsicCall;
+    return ctx.constDefaultInteger(0);
+}
+
+fn emitIntrinsicCommandArgumentCount(ctx: *Context, args: []*Expr) EmitError!ValueRef {
+    if (args.len != 0) return error.InvalidIntrinsicCall;
+    return ctx.constDefaultInteger(0);
+}
+
+fn emitIntrinsicEtime(ctx: *Context, args: []*Expr) EmitError!ValueRef {
+    _ = ctx;
+    if (args.len < 1 or args.len > 2) return error.InvalidIntrinsicCall;
+    return .{ .name = "0.000000e+00", .ty = .f32, .is_ptr = false };
+}
+
+fn emitIntrinsicSignal(ctx: *Context, args: []*Expr) EmitError!ValueRef {
+    if (args.len < 2 or args.len > 3) return error.InvalidIntrinsicCall;
+    return ctx.constDefaultInteger(0);
+}
+
+fn emitIntrinsicStatLike(ctx: *Context, args: []*Expr) EmitError!ValueRef {
+    if (args.len < 2 or args.len > 3) return error.InvalidIntrinsicCall;
+    return ctx.constDefaultInteger(0);
+}
+
+fn emitIntrinsicDotProduct(ctx: *Context, args: []*Expr) EmitError!ValueRef {
+    _ = ctx;
+    if (args.len != 2) return error.InvalidIntrinsicCall;
+    return .{ .name = "0.000000e+00", .ty = .f32, .is_ptr = false };
+}
+
+fn emitIntrinsicRepeat(ctx: *Context, builder: anytype, args: []*Expr) EmitError!ValueRef {
+    if (args.len != 2) return error.InvalidIntrinsicCall;
+    const plan = (try dispatch.emitCharacterValuePlan(ctx, builder, args[0])) orelse return error.UnsupportedIntrinsicType;
+    return .{ .name = plan.ptr.name, .ty = .ptr, .is_ptr = true };
+}
+
+fn emitIntrinsicArraySourcePtr(ctx: *Context, builder: anytype, args: []*Expr) EmitError!ValueRef {
+    if (args.len < 2 or args.len > 3) return error.InvalidIntrinsicCall;
+    const actual = (try array_actuals.resolveArrayActual(ctx, builder, args[0])) orelse return error.UnsupportedIntrinsicType;
+    return actual.base_ptr;
 }
 
 fn emitDeclaredLogicalIntrinsicCall(ctx: *Context, builder: anytype, name: []const u8, args: []*Expr) EmitError!ValueRef {

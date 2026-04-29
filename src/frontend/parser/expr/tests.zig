@@ -575,6 +575,31 @@ test "parseExpr handles typed slash array constructor" {
     }
 }
 
+test "parseExpr handles empty typed slash array constructor" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source = "      (/ INTEGER :: /)\n";
+    const lines = try fixed_form.normalizeFixedForm(allocator, source);
+    defer fixed_form.freeLogicalLines(allocator, lines);
+    const tokens = try lexer.lexLogicalLine(allocator, lines[0]);
+    defer allocator.free(tokens);
+    var lp = LineParser.init(lines[0], tokens);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const node = try parseExpr(&lp, arena.allocator(), 0);
+
+    switch (node.*) {
+        .array_constructor => |ctor| {
+            try testing.expect(ctor.type_spec != null);
+            try testing.expectEqual(ast.TypeKind.integer, ctor.type_spec.?.type_kind);
+            try testing.expectEqual(@as(usize, 0), ctor.items.len);
+        },
+        else => return error.UnexpectedToken,
+    }
+}
+
 test "parseExpr handles implied-do in slash array constructor" {
     const testing = std.testing;
     const allocator = testing.allocator;

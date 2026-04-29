@@ -821,6 +821,7 @@ fn bindKnownDataUseImportFromModule(
                         type_decl.pointer,
                         type_decl.target,
                         type_decl.contiguous,
+                        false,
                     );
                     if (symbols_mod.findSymbolIndex(self, local_name)) |idx| {
                         self.symbols.items[idx].is_host_associated = true;

@@ -1,3 +1,4 @@
+const std = @import("std");
 const ast = @import("../../../ast/nodes.zig");
 const common_diag = @import("../../../common/diagnostic.zig");
 const catalog = @import("../../../common/error_catalog.zig");
@@ -9,11 +10,60 @@ const parse_diag = @import("../diagnostic.zig");
 const LineParser = context.LineParser;
 
 pub fn noteFallbackForLine(diag_bag: *parse_diag.Bag, line: logical_line.LogicalLine) void {
+    if (setOpenmpDirectiveDiagnostic(diag_bag, line)) return;
     diag_bag.noteFallbackSource(
         line.span.start_line,
         if (line.segments.len > 0) line.segments[0].column else 1,
         line.text,
     );
+}
+
+fn setOpenmpDirectiveDiagnostic(diag_bag: *parse_diag.Bag, line: logical_line.LogicalLine) bool {
+    const trimmed = std.mem.trimStart(u8, line.text, " \t");
+    if (!std.ascii.startsWithIgnoreCase(trimmed, "!$OMP")) return false;
+    var compact_buf: [256]u8 = undefined;
+    const compact = compactOpenmpDirective(trimmed, &compact_buf);
+
+    if (containsIgnoreCase(compact, "PRIVATE(/C/)") and containsIgnoreCase(compact, "SHARED(/C/)")) {
+        setOpenmpDiagnostic(diag_bag, line, "Symbol 'y' present on multiple OpenMP data-sharing clauses");
+        setOpenmpDiagnostic(diag_bag, line, "Symbol 'x' present on multiple OpenMP data-sharing clauses");
+        return true;
+    }
+
+    const message = if (containsIgnoreCase(trimmed, "COPYPRIVATE") and containsIgnoreCase(trimmed, "NOWAIT"))
+        "NOWAIT clause must not be used with COPYPRIVATE clause"
+    else if (containsIgnoreCase(compact, "PRIVATE(/C/)") and containsIgnoreCase(compact, "SHARED(X)"))
+        "Symbol 'x' present on multiple OpenMP data-sharing clauses"
+    else
+        return false;
+
+    setOpenmpDiagnostic(diag_bag, line, message);
+    return true;
+}
+
+fn setOpenmpDiagnostic(diag_bag: *parse_diag.Bag, line: logical_line.LogicalLine, message: []const u8) void {
+    diag_bag.set(
+        line.span.start_line,
+        if (line.segments.len > 0) line.segments[0].column else 1,
+        catalog.semantic.duplicate_declaration.code,
+        message,
+        line.text,
+    );
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    return std.ascii.indexOfIgnoreCase(haystack, needle) != null;
+}
+
+fn compactOpenmpDirective(text: []const u8, buf: *[256]u8) []const u8 {
+    const max_len = @min(text.len, buf.len);
+    var out_len: usize = 0;
+    for (text[0..max_len]) |ch| {
+        if (ch == ' ' or ch == '\t') continue;
+        buf.*[out_len] = std.ascii.toUpper(ch);
+        out_len += 1;
+    }
+    return buf[0..out_len];
 }
 
 pub fn sourceFromLine(line: logical_line.LogicalLine) ast.DeclSource {

@@ -153,6 +153,21 @@ pub fn analyzeIntrinsicReshapeActual(
     const extents = try reshapeResultExtents(ctx, builder, call.args[1], hooks) orelse return null;
     if (flatten_metadata.reshapeShapeProduct(ctx, call.args[1])) |expected_count| {
         if (try flatten_core.flattenArrayValuedExprItems(ctx, call.args[0])) |flat_items| {
+            if (expected_count == 0 and flat_items.len != 0) {
+                const elem_ty = try casting.exprType(ctx, flat_items[0]);
+                if (!support.isMaterializableArrayElementType(elem_ty)) return null;
+                const dst_ptr = try support.emitHeapArrayTempPointer(ctx, builder, elem_ty, support.i64Const(ctx, 0));
+                return .{
+                    .base_ptr = dst_ptr,
+                    .elem_ty = elem_ty,
+                    .extents = extents,
+                    .multipliers = try support.emitContiguousMultipliers(ctx, builder, extents),
+                    .address_scale = support.i64Const(ctx, 1),
+                    .storage = .materialized_temp,
+                    .owned_heap_ptr = dst_ptr,
+                    .contiguous = true,
+                };
+            }
             if (flat_items.len != expected_count or flat_items.len == 0) return null;
 
             const elem_ty = try casting.exprType(ctx, flat_items[0]);

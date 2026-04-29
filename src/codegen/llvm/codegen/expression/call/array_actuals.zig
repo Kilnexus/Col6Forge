@@ -847,6 +847,18 @@ pub fn resolveArrayActual(ctx: *Context, builder: anytype, expr: *Expr) anyerror
             return try validatedArrayActual(actual);
         }
     }
+    if (expr.* == .call_or_subscript and
+        (std.ascii.eqlIgnoreCase(expr.call_or_subscript.name, "cshift") or
+            std.ascii.eqlIgnoreCase(expr.call_or_subscript.name, "eoshift") or
+            std.ascii.eqlIgnoreCase(expr.call_or_subscript.name, "pack")))
+    {
+        const call_expr = expr.call_or_subscript;
+        if (call_expr.args.len >= 2 and call_expr.args.len <= 3) {
+            if (try resolveArrayActual(ctx, builder, call_expr.args[0])) |actual| {
+                return try validatedArrayActual(actual);
+            }
+        }
+    }
     if (expr.* == .call_or_subscript and std.ascii.eqlIgnoreCase(expr.call_or_subscript.name, "reshape")) {
         if (try shape_intrinsics.analyzeIntrinsicReshapeActual(ctx, builder, expr.call_or_subscript, .{
             .resolveArrayActual = resolveArrayActual,

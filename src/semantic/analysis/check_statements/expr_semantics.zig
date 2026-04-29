@@ -629,6 +629,7 @@ pub fn checkExprType(self: *context.Context, expr: *ast.Expr, comptime deps: any
                 try procedure_calls.checkProcedureActualArgsForExprCall(self, call.name, call.args, .{
                     .dummyArgTypeCompatible = deps.dummyArgTypeCompatible,
                 });
+                try rejectElementalExprCallRankMismatch(self, call.name, call.args);
             }
             return try resolve_expr.exprType(self, expr);
         },
@@ -653,6 +654,37 @@ fn structureConstructorTypeName(
     if (resolve_symbols.lookupKnownProcedureSig(self, name) != null) return null;
     if (!local_derived_shadow and sym.type_explicit and sym.loweredKind() != .derived) return null;
     return info.name;
+}
+
+fn rejectElementalExprCallRankMismatch(
+    self: *context.Context,
+    call_name: []const u8,
+    args: []*ast.Expr,
+) CheckError!void {
+    const sig = resolve_symbols.lookupKnownProcedureSig(self, call_name) orelse return;
+    if (!sig.elemental) return;
+
+    var expected_rank: ?usize = null;
+    for (args, 0..) |arg, idx| {
+        if (idx >= sig.args.len or sig.args[idx].rank != 0) continue;
+        const actual_rank = resolve_expr.exprRank(self, arg);
+        if (actual_rank == 0) continue;
+        if (expected_rank == null) {
+            expected_rank = actual_rank;
+            continue;
+        }
+        if (expected_rank.? != actual_rank) {
+            const source = self.sourceForExpr(arg) orelse ast.SourceRef{};
+            self.setDiagnostic(
+                if (source.line == 0) 1 else source.line,
+                if (source.column == 0) 1 else source.column,
+                catalog.semantic.assignment_type_mismatch.code,
+                "Incompatible ranks in elemental procedure",
+                source.text,
+            );
+            return error.AssignmentTypeMismatch;
+        }
+    }
 }
 
 fn checkStructureConstructorProcedureComponentActuals(

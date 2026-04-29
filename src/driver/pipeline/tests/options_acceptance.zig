@@ -62,6 +62,36 @@ test "runPipelineWithOptionsAndDiagnostics accepts slash array constructor assig
     try testing.expect(!diag_bag.has());
 }
 
+test "runPipelineWithOptionsAndDiagnostics expands same-directory INCLUDE statement" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const included =
+        "subroutine from_include(x)\n" ++
+        "  integer :: x\n" ++
+        "  x = 7\n" ++
+        "end subroutine\n";
+    var include_file = try tmp.dir.createFile("included_body.inc", .{ .truncate = true });
+    try include_file.writeAll(included);
+    include_file.close();
+
+    const source =
+        "include \"included_body.inc\"\n";
+    const file_path = try writeTempSourceFile(&tmp, allocator, "include_driver.f90", source);
+    defer allocator.free(file_path);
+
+    var diag_bag = diag.Bag.init(allocator);
+    defer diag_bag.deinit();
+
+    const result = try runPipelineWithOptionsAndDiagnostics(allocator, file_path, .llvm, .{}, &diag_bag);
+    defer allocator.free(result.output);
+    try testing.expect(!diag_bag.has());
+    try testing.expect(std.mem.indexOf(u8, result.output, "from_include") != null);
+}
+
 test "runPipeline rejects real DO by default but accepts it under f77 dialect lowering" {
     const testing = std.testing;
     const allocator = testing.allocator;

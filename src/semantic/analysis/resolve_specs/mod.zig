@@ -242,6 +242,12 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                         if (first_error == null) first_error = error.DuplicateDeclaration;
                         continue;
                     }
+                    if (commonEntityHasSaveAttribute(self.unit, item.name)) {
+                        setAttributeConflictDiagnostic(self, "conflicts with SAVE attribute");
+                        if (!self.usesExplicitDiagnosticBag()) return error.DuplicateDeclaration;
+                        if (first_error == null) first_error = error.DuplicateDeclaration;
+                        continue;
+                    }
                     try seen_common_items.put(if (key.ptr == key_buf[0..].ptr) try self.arena.dupe(u8, key) else key, {});
                     try decls.applyDeclarator(self, symbols_mod.implicitTypeSpec(self, item.name), item, .common, false, false, false, false, false, false);
                 }
@@ -552,6 +558,30 @@ fn commonNameIsUseAssociated(self: *context.Context, name: []const u8) bool {
         }
         const exported_name = declExportedName(self.unit.decls[decl_idx]) orelse continue;
         if (std.ascii.eqlIgnoreCase(exported_name, name)) return true;
+    }
+    return false;
+}
+
+fn commonEntityHasSaveAttribute(unit: ast.ProgramUnit, name: []const u8) bool {
+    for (unit.decls) |decl| {
+        switch (decl) {
+            .type_decl => |type_decl| {
+                if (!type_decl.save) continue;
+                for (type_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            .save => |save_decl| {
+                if (save_decl.save_all) return true;
+                for (save_decl.items) |save_item| {
+                    switch (save_item) {
+                        .name => |save_name| if (std.ascii.eqlIgnoreCase(save_name, name)) return true,
+                        .common => {},
+                    }
+                }
+            },
+            else => {},
+        }
     }
     return false;
 }

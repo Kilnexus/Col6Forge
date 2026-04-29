@@ -597,6 +597,7 @@ pub fn parseProgramUnitBody(
     var recovered_stmt_error = false;
     var saw_unexpected_end_recovery = false;
     var saw_program_unit_end = false;
+    var deferred_contains_section = false;
     if (header.type_decl) |type_decl| {
         try decls.append(type_decl);
         try decl_sources.append(root_diagnostics.sourceFromLine(header_line));
@@ -624,6 +625,7 @@ pub fn parseProgramUnitBody(
             if (stmt_lp.isKeywordSplit("CONTAINS")) {
                 try stmts.append(root_control.makeContainsStmt(line));
                 self.index += 1;
+                deferred_contains_section = true;
                 break;
             }
             if (root_predicates.isEndSelectTokens(line, tokens)) {
@@ -763,7 +765,7 @@ pub fn parseProgramUnitBody(
             eof_line.text,
         );
     }
-    if (!implicit_program_recovery and !saw_program_unit_end and self.lines.len != 0) {
+    if (!implicit_program_recovery and !saw_program_unit_end and !deferred_contains_section and self.lines.len != 0) {
         const eof_line = self.lines[self.lines.len - 1];
         self.diag_bag.set(
             eof_line.span.start_line,

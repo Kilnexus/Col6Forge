@@ -876,7 +876,7 @@ fn validateStatementFunctionCalls(self: *context.Context, expr_node: *ast.Expr) 
                 for (call.args) |arg| try validateStatementFunctionCalls(self, arg);
                 return;
             };
-            if (statementFunctionCallUsesKeywordActual(self, expr_node)) {
+            if (statementFunctionCallUsesKeywordActual(self, expr_node, call.name)) {
                 return emitExprConstraint(self, expr_node, "invalid in a statement function");
             }
             try validateStatementFunctionActualTypes(self, expr_node, def.args, call.args);
@@ -1005,12 +1005,57 @@ fn statementFunctionValueCallsArgument(expr_node: *ast.Expr, args: []*ast.Expr) 
     }
 }
 
-fn statementFunctionCallUsesKeywordActual(self: *context.Context, expr_node: *ast.Expr) bool {
+fn statementFunctionCallUsesKeywordActual(self: *context.Context, expr_node: *ast.Expr, call_name: []const u8) bool {
     const source = self.sourceForExpr(expr_node) orelse return false;
-    const open_idx = std.mem.indexOfScalar(u8, source.text, '(') orelse return false;
-    const close_idx = std.mem.lastIndexOfScalar(u8, source.text, ')') orelse source.text.len;
-    if (close_idx <= open_idx) return false;
-    return std.mem.indexOfScalar(u8, source.text[open_idx + 1 .. close_idx], '=') != null;
+    const args_text = statementFunctionCallArgumentText(source, call_name) orelse return false;
+    var depth: usize = 0;
+    for (args_text) |ch| {
+        switch (ch) {
+            '(' => depth += 1,
+            ')' => {
+                if (depth == 0) break;
+                depth -= 1;
+            },
+            '=' => if (depth == 0) return true,
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn statementFunctionCallArgumentText(source: ast.SourceRef, call_name: []const u8) ?[]const u8 {
+    const text = source.text;
+    const hinted_idx = if (source.column > 0 and source.column - 1 < text.len) source.column - 1 else 0;
+    if (callNameAt(text, hinted_idx, call_name)) {
+        return argumentTextAfterName(text, hinted_idx + call_name.len);
+    }
+    var found_idx: ?usize = null;
+    var idx: usize = 0;
+    while (idx + call_name.len <= text.len) : (idx += 1) {
+        if (!callNameAt(text, idx, call_name)) continue;
+        if (argumentTextAfterName(text, idx + call_name.len) == null) continue;
+        if (found_idx != null) return null;
+        found_idx = idx;
+    }
+    return if (found_idx) |pos| argumentTextAfterName(text, pos + call_name.len) else null;
+}
+
+fn callNameAt(text: []const u8, idx: usize, call_name: []const u8) bool {
+    if (idx + call_name.len > text.len) return false;
+    if (idx > 0 and isFortranNameChar(text[idx - 1])) return false;
+    if (idx + call_name.len < text.len and isFortranNameChar(text[idx + call_name.len])) return false;
+    return std.ascii.eqlIgnoreCase(text[idx .. idx + call_name.len], call_name);
+}
+
+fn isFortranNameChar(ch: u8) bool {
+    return std.ascii.isAlphanumeric(ch) or ch == '_';
+}
+
+fn argumentTextAfterName(text: []const u8, after_name: usize) ?[]const u8 {
+    var open_idx = after_name;
+    while (open_idx < text.len and (text[open_idx] == ' ' or text[open_idx] == '\t')) : (open_idx += 1) {}
+    if (open_idx >= text.len or text[open_idx] != '(') return null;
+    return text[open_idx + 1 ..];
 }
 
 fn validateStatementFunctionActualTypes(

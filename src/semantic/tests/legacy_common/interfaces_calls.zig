@@ -792,6 +792,54 @@ test "semantic reports variable definition context with related interface locati
     try testing.expect(std.mem.eql(u8, diag.secondary_spans[0].label, "visible dummy declaration here"));
 }
 
+test "semantic allows statement-function calls inside statement-function definitions" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "      PROGRAM P\n" ++
+        "      INTEGER K\n" ++
+        "      IFON07(I)=I**2\n" ++
+        "      IFON08(I,J)=IFON07(I)+IFON07(J)\n" ++
+        "      K=IFON08(2,3)\n" ++
+        "      END\n";
+    const lines = try fixed_form.normalizeFixedForm(allocator, source);
+    defer fixed_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    _ = try analyzeProgram(arena.allocator(), program);
+}
+
+test "semantic rejects keyword actuals in statement-function calls" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "      PROGRAM P\n" ++
+        "      INTEGER K\n" ++
+        "      F(I)=I+1\n" ++
+        "      K=F(I=1)\n" ++
+        "      END\n";
+    const lines = try fixed_form.normalizeFixedForm(allocator, source);
+    defer fixed_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_capture = DiagCapture.init(allocator);
+    defer diag_capture.deinit();
+    try testing.expectError(error.AssignmentTypeMismatch, analyzeProgramWithDiagnostics(arena.allocator(), program, &diag_capture.bag));
+    const diag = try diag_capture.take();
+    defer diag_capture.release(diag);
+    try testing.expect(std.mem.eql(u8, diag.code, "CF3108"));
+    try testing.expect(std.mem.eql(u8, diag.message, "invalid in a statement function"));
+    try testing.expect(std.mem.eql(u8, diag.line_text, "K=F(I=1)"));
+}
+
 test "semantic reports abstract passed-object actual with related type location" {
     const testing = std.testing;
     const allocator = testing.allocator;

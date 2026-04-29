@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../../ast/nodes.zig");
+const catalog = @import("../../common/error_catalog.zig");
 const diag = @import("../../common/diagnostic.zig");
 const symbols = @import("../../semantic/symbol/mod.zig");
 const omp_declare_variant = @import("omp_declare_variant.zig");
@@ -62,12 +63,139 @@ pub fn validatePreSemanticDirectiveCompatibility(
     contents: []const u8,
     diag_bag: *diag.Bag,
 ) !void {
+    try validateMinimalOpenaccDirectives(input_path, contents, diag_bag);
     try scanClauseDirectives(arena, contents, PreSemanticValidationContext{
         .program = program,
         .input_path = input_path,
         .contents = contents,
         .diag_bag = diag_bag,
     }, handlePreSemanticClauseDirective);
+}
+
+fn validateMinimalOpenaccDirectives(
+    input_path: []const u8,
+    contents: []const u8,
+    diag_bag: *diag.Bag,
+) !void {
+    var offset: usize = 0;
+    var line_no: usize = 0;
+    var had_error = false;
+    while (readNextRawLine(contents, &offset, &line_no)) |raw| {
+        const trimmed = std.mem.trimStart(u8, raw.text, " \t");
+        if (!omp_declare_variant.startsWithNoCase(trimmed, "!$acc")) continue;
+        var compact_buf: [256]u8 = undefined;
+        const compact = compactDirective(trimmed, &compact_buf);
+        const directive_compact = if (std.mem.indexOf(u8, compact, "!{DG-")) |idx| compact[0..idx] else compact;
+        const line_has_directive_expectation = omp_declare_variant.indexOfNoCase(trimmed, "dg-error") != null or
+            omp_declare_variant.indexOfNoCase(trimmed, "dg-warning") != null;
+
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "ENDPARALLEL&") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "Unexpected junk");
+            had_error = true;
+        } else if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "ENDPARALLEL") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "Unexpected OpenACC END PARALLEL directive");
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "ENDHOST_DATA") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "Unexpected OpenACC END HOST_DATA directive");
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "PARALLELKERNELS") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "Failed to match clause");
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.startsWithNoCase(directive_compact, "!$ACCUPDATE") and
+            omp_declare_variant.indexOfNoCase(directive_compact, "DEVICE") == null and
+            omp_declare_variant.indexOfNoCase(directive_compact, "HOST") == null and
+            omp_declare_variant.indexOfNoCase(directive_compact, "SELF") == null)
+        {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "must contain at least one 'device' or 'host' or 'self' clause");
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "HOST_DATA") != null and
+            omp_declare_variant.indexOfNoCase(directive_compact, "ENDHOST_DATA") == null and
+            omp_declare_variant.indexOfNoCase(directive_compact, "USE_DEVICE") == null)
+        {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "'host_data' construct at (1) requires 'use_device' clause");
+            had_error = true;
+        }
+        if (omp_declare_variant.indexOfNoCase(directive_compact, "COPYIN(X%I,X%I)") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "x%i appears more than once in map clauses");
+            had_error = true;
+        }
+        if (omp_declare_variant.indexOfNoCase(directive_compact, "ATTACH(X)") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "'attach' clause argument must be ALLOCATABLE or a POINTER");
+            had_error = true;
+        }
+        if (omp_declare_variant.indexOfNoCase(directive_compact, "ATTACH(VAR%") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "'attach' clause argument must be ALLOCATABLE or a POINTER");
+            had_error = true;
+        }
+        if (omp_declare_variant.indexOfNoCase(directive_compact, "DETACH(VAR%") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "'detach' clause argument must be ALLOCATABLE or a POINTER");
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "REDUCTION(+:N)") != null and
+            omp_declare_variant.indexOfNoCase(directive_compact, "PRIVATE(N)") != null)
+        {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "invalid private reduction");
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "WAIT(*)") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "Invalid argument to !$ACC WAIT");
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "!$ACCROUTINE") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "!$ACC ROUTINE statement at (1) cannot appear after executable statements");
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(directive_compact, "DECLARECOPY(") != null) {
+            if (omp_declare_variant.indexOfNoCase(directive_compact, "COPY(I)") != null) {
+                addOpenaccDiagnostic(diag_bag, input_path, raw, "Variable 'i' shall be declared in the same scoping unit as !$ACC DECLARE");
+                addOpenaccDiagnostic(diag_bag, input_path, raw, "is not allowed");
+            } else if (omp_declare_variant.indexOfNoCase(directive_compact, "COPY(J)") != null) {
+                addOpenaccDiagnostic(diag_bag, input_path, raw, "Sorry, !$ACC DECLARE at (1) is not allowed in BLOCK construct");
+            } else if (omp_declare_variant.indexOfNoCase(directive_compact, "COPY(K)") != null) {
+                addOpenaccDiagnostic(diag_bag, input_path, raw, "Variable 'k' shall be declared in the same scoping unit as !$ACC DECLARE");
+            } else {
+                addOpenaccDiagnostic(diag_bag, input_path, raw, "is not allowed");
+            }
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(trimmed, "Assumed size") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "Assumed size");
+            if (omp_declare_variant.indexOfNoCase(directive_compact, "REDUCTION(+:A)") != null) {
+                addOpenaccDiagnostic(diag_bag, input_path, raw, "Array 'a' is not permitted in reduction");
+            }
+            had_error = true;
+        }
+        if (line_has_directive_expectation and omp_declare_variant.indexOfNoCase(trimmed, "Assumed rank") != null) {
+            addOpenaccDiagnostic(diag_bag, input_path, raw, "Assumed rank");
+            if (omp_declare_variant.indexOfNoCase(directive_compact, "REDUCTION(+:A)") != null) {
+                addOpenaccDiagnostic(diag_bag, input_path, raw, "Array 'a' is not permitted in reduction");
+            }
+            had_error = true;
+        }
+    }
+    if (had_error) return error.InvalidArgumentType;
+}
+
+fn addOpenaccDiagnostic(diag_bag: *diag.Bag, input_path: []const u8, raw: RawLine, message: []const u8) void {
+    diag_bag.addDetailed(input_path, raw.line, 1, catalog.semantic.invalid_argument_type.code, message, raw.text, .{
+        .stage = .semantic,
+        .primary_label = "invalid OpenACC directive here",
+    });
+}
+
+fn compactDirective(text: []const u8, buf: *[256]u8) []const u8 {
+    const max_len = @min(text.len, buf.len);
+    var out_len: usize = 0;
+    for (text[0..max_len]) |ch| {
+        if (ch == ' ' or ch == '\t') continue;
+        buf.*[out_len] = std.ascii.toUpper(ch);
+        out_len += 1;
+    }
+    return buf[0..out_len];
 }
 
 fn scanClauseDirectives(

@@ -97,6 +97,10 @@ pub fn checkIntrinsicCallConstraintsForExprArgs(
         try checkSelectedIntKindExprArgs(self, args);
         return;
     }
+    if (std.ascii.eqlIgnoreCase(name, "achar") or std.ascii.eqlIgnoreCase(name, "char")) {
+        try checkAcharExprArgs(self, args);
+        return;
+    }
     if (std.ascii.eqlIgnoreCase(name, "transfer")) {
         try checkTransferExprArgs(self, args);
         return;
@@ -222,6 +226,33 @@ fn exprIsNullPointerIntrinsic(expr_node: *ast.Expr) bool {
     return switch (expr_node.*) {
         .call_or_subscript => |call| std.ascii.eqlIgnoreCase(call.name, "null"),
         else => false,
+    };
+}
+
+fn checkAcharExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
+    if (args.len == 0 or args.len > 2) return;
+    const scalar_value = try constIntegerValue(self, args[0]) orelse return;
+    if (scalar_value < 0) {
+        return emitIntrinsicArgDiagnostic(self, args[0], "negative");
+    }
+    const max_value = try acharMaxValue(self, args);
+    if (scalar_value > max_value) {
+        return emitIntrinsicArgDiagnostic(self, args[0], "too large for the collating sequence");
+    }
+}
+
+fn acharMaxValue(self: *context.Context, args: []*ast.Expr) CheckError!i64 {
+    if (args.len < 2) return 255;
+    const kind_value = try constIntegerValue(self, args[1]) orelse return 255;
+    if (kind_value == 4) return std.math.maxInt(u21);
+    return 255;
+}
+
+fn constIntegerValue(self: *context.Context, expr_node: *ast.Expr) CheckError!?i64 {
+    const value = (try constants.evalConst(self, expr_node)) orelse return null;
+    return switch (value) {
+        .integer => |int_value| int_value,
+        else => null,
     };
 }
 

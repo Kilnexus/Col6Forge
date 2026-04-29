@@ -81,8 +81,21 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
             try validateExternalCharacterDeclarator(self, self.symbols.items[idx], item);
         }
         try validateKnownFunctionResultDeclaration(self, self.symbols.items[idx], true);
-        try decl_initializers.validateCharacterArrayConstructorInitializer(self, self.symbols.items[idx], item.init);
-        try decl_initializers.validateDeclaratorInitializer(self, item.init);
+        decl_initializers.validateCharacterArrayConstructorInitializer(self, self.symbols.items[idx], item.init) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
+        decl_initializers.validateDataPointerInitializer(self, decl, effective_type, effective_item) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
+        decl_initializers.validateDeclaratorInitializer(self, item.init) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
     }
     if (first_err) |err| return err;
 }
@@ -212,6 +225,7 @@ pub fn applyProcedureDecl(self: *context.Context, decl: ast.ProcedureDecl) !void
         );
         return error.DuplicateDeclaration;
     }
+    var first_err: ?anyerror = null;
     for (decl.items) |item| {
         if (common_entity_queries.currentUnitDeclaresCommonEntity(self.unit, item.name)) {
             const source = self.current_decl_source orelse ast.DeclSource{};
@@ -277,7 +291,13 @@ pub fn applyProcedureDecl(self: *context.Context, decl: ast.ProcedureDecl) !void
         if (sym.storage == .dummy or !decl.pointer) {
             sym.is_external = true;
         }
+        decl_initializers.validateProcedurePointerInitializer(self, decl, item) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
     }
+    if (first_err) |err| return err;
 }
 
 // applyDeclarator mutates the symbol table entry for `item.name` in-place.

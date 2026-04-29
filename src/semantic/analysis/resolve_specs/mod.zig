@@ -19,6 +19,7 @@ const equivalence = @import("equivalence.zig");
 const procedure_interfaces = @import("../check_statements/procedure_interfaces.zig");
 const bind_c_shared = @import("bind_c_shared.zig");
 const assumed_size = @import("../assumed_size.zig");
+const decl_initializers = @import("../resolve_decls_initializers.zig");
 
 const resolvedDeclTypeSpec = helpers.resolvedDeclTypeSpec;
 const ensureImplicitRuleNoOverlap = helpers.ensureImplicitRuleNoOverlap;
@@ -547,6 +548,11 @@ fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDef) !
         if (first_error == null) first_error = err;
     }
 
+    if (validateDerivedPointerComponentInitializers(self, derived)) |err| {
+        if (!self.usesExplicitDiagnosticBag()) return err;
+        if (first_error == null) first_error = err;
+    }
+
     if (validateDerivedDuplicateComponents(self, derived)) |err| {
         if (!self.usesExplicitDiagnosticBag()) return err;
         if (first_error == null) first_error = err;
@@ -624,6 +630,40 @@ fn validateDerivedDescriptorComponentShapes(self: *context.Context, derived: ast
                 setSourceDiagnostic(self, source, "needs to be a constant specification");
                 if (first_error == null) first_error = error.InvalidCharLen;
             }
+        }
+    }
+    return first_error;
+}
+
+fn validateDerivedPointerComponentInitializers(self: *context.Context, derived: ast.DerivedTypeDef) ?anyerror {
+    var first_error: ?anyerror = null;
+    const original_source = self.current_decl_source;
+    defer self.setCurrentDeclSource(original_source);
+
+    for (derived.components, 0..) |type_decl, component_idx| {
+        if (!type_decl.pointer) continue;
+        const source = if (component_idx < derived.component_sources.len)
+            derived.component_sources[component_idx]
+        else
+            self.current_decl_source orelse ast.DeclSource{};
+        self.setCurrentDeclSource(source);
+        const spec = resolvedDeclTypeSpec(
+            self,
+            type_decl.type_kind,
+            type_decl.derived_type_name,
+            type_decl.kind_selector,
+            type_decl.polymorphic,
+            type_decl.assumed_type,
+        ) catch |err| {
+            if (first_error == null) first_error = err;
+            continue;
+        };
+        for (type_decl.items) |item| {
+            decl_initializers.validateDataPointerInitializer(self, type_decl, spec, item) catch |err| {
+                if (!self.usesExplicitDiagnosticBag()) return err;
+                if (first_error == null) first_error = err;
+                continue;
+            };
         }
     }
     return first_error;

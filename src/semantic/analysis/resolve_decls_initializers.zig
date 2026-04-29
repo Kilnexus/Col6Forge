@@ -31,6 +31,74 @@ pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Ex
     try validateRestrictedInitializationInquiry(self, expr);
 }
 
+pub fn validateDataPointerInitializer(
+    self: *context.Context,
+    decl: ast.TypeDecl,
+    target_spec: symbols.TypeSpec,
+    item: ast.Declarator,
+) !void {
+    if (!decl.pointer) return;
+    const init_expr = item.init orelse return;
+    const decl_source = self.current_decl_source orelse ast.DeclSource{};
+    if (std.mem.indexOf(u8, decl_source.text, "=>") == null) return;
+    if (std.ascii.indexOfIgnoreCase(decl_source.text, "null(") != null) return;
+
+    const target = pointerInitializerTargetInfo(self, init_expr) orelse {
+        emitDeclInitializerDiagnostic(self, "Error in pointer initialization");
+        return error.AssignmentTypeMismatch;
+    };
+    if (!target.exists) {
+        emitDeclInitializerDiagnostic(self, "has no IMPLICIT type");
+        return error.UnknownSymbol;
+    }
+    if (target.allocatable) {
+        emitDeclInitializerDiagnostic(self, "must not be ALLOCATABLE");
+        return error.AssignmentTypeMismatch;
+    }
+    if (!target.target or target.pointer) {
+        emitDeclInitializerDiagnostic(self, "Pointer assignment target in initialization expression does not have the TARGET attribute");
+        return error.AssignmentTypeMismatch;
+    }
+    if (pointerInitializerNeedsSave(self, target.name)) {
+        emitDeclInitializerDiagnostic(self, "Pointer initialization target must have the SAVE attribute");
+        return error.AssignmentTypeMismatch;
+    }
+    if (target.rank != item.dims.len) {
+        emitDeclInitializerDiagnostic(self, "Different ranks in pointer assignment");
+        return error.AssignmentTypeMismatch;
+    }
+    if (target.type_spec.lowered_kind != target_spec.lowered_kind) {
+        emitDeclInitializerDiagnostic(self, "Different types in pointer assignment");
+        return error.AssignmentTypeMismatch;
+    }
+}
+
+pub fn validateProcedurePointerInitializer(
+    self: *context.Context,
+    decl: ast.ProcedureDecl,
+    item: ast.Declarator,
+) !void {
+    if (!decl.pointer) return;
+    const init_expr = item.init orelse return;
+    const decl_source = self.current_decl_source orelse ast.DeclSource{};
+    if (std.mem.indexOf(u8, decl_source.text, "=>") == null) return;
+    if (std.ascii.indexOfIgnoreCase(decl_source.text, "null(") != null) return;
+
+    if (init_expr.* == .identifier) {
+        const name = init_expr.identifier;
+        if (symbols_mod.findSymbolIndex(self, name)) |idx| {
+            if (self.symbols.items[idx].is_pointer) {
+                emitDeclInitializerDiagnostic(self, "may not be a procedure pointer");
+                return error.AssignmentTypeMismatch;
+            }
+        }
+    }
+    if (self.unit.kind == .subroutine or self.unit.kind == .function) {
+        emitDeclInitializerDiagnostic(self, "invalid in procedure pointer initialization");
+        return error.AssignmentTypeMismatch;
+    }
+}
+
 pub fn validateCharacterArrayConstructorInitializer(
     self: *context.Context,
     sym: symbols.Symbol,
@@ -62,6 +130,97 @@ pub fn validateCharacterArrayConstructorInitializer(
             return error.InvalidArgumentCount;
         }
     }
+}
+
+const PointerInitializerTargetInfo = struct {
+    name: []const u8,
+    exists: bool = true,
+    type_spec: symbols.TypeSpec = symbols.TypeSpec.fromKind(.real),
+    rank: usize = 0,
+    target: bool = false,
+    pointer: bool = false,
+    allocatable: bool = false,
+};
+
+fn pointerInitializerTargetInfo(self: *context.Context, expr: *ast.Expr) ?PointerInitializerTargetInfo {
+    return switch (expr.*) {
+        .identifier => |name| identifierPointerTargetInfo(self, name),
+        .component => |comp| componentPointerTargetInfo(self, comp),
+        else => null,
+    };
+}
+
+fn identifierPointerTargetInfo(self: *context.Context, name: []const u8) PointerInitializerTargetInfo {
+    const idx = symbols_mod.findSymbolIndex(self, name) orelse return .{ .name = name, .exists = false };
+    const sym = self.symbols.items[idx];
+    return .{
+        .name = name,
+        .type_spec = sym.type_spec,
+        .rank = sym.dims.len,
+        .target = sym.is_target,
+        .pointer = sym.is_pointer,
+        .allocatable = sym.is_allocatable,
+    };
+}
+
+fn componentPointerTargetInfo(self: *context.Context, comp: ast.ComponentExpr) ?PointerInitializerTargetInfo {
+    const base_name = switch (comp.base.*) {
+        .identifier => |name| name,
+        else => return null,
+    };
+    const base_idx = symbols_mod.findSymbolIndex(self, base_name) orelse return .{ .name = base_name, .exists = false };
+    const base_sym = self.symbols.items[base_idx];
+    const derived_name = base_sym.type_spec.derived_type_name orelse return null;
+    const component = symbols_mod.lookupDerivedComponent(self, derived_name, comp.name) orelse return null;
+    return .{
+        .name = base_name,
+        .type_spec = component.type_spec,
+        .rank = component.dims.len,
+        .target = base_sym.is_target and !component.pointer,
+        .pointer = component.pointer,
+        .allocatable = base_sym.is_allocatable or component.allocatable,
+    };
+}
+
+fn pointerInitializerNeedsSave(self: *context.Context, name: []const u8) bool {
+    if (self.unit.kind == .module or self.unit.kind == .program) return false;
+    if (declarationHasSaveAttribute(self.unit, name)) return false;
+    return true;
+}
+
+fn declarationHasSaveAttribute(unit: ast.ProgramUnit, name: []const u8) bool {
+    for (unit.decls) |decl| {
+        switch (decl) {
+            .type_decl => |type_decl| {
+                if (!type_decl.save) continue;
+                for (type_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            .save => |save_decl| {
+                if (save_decl.save_all) return true;
+                for (save_decl.items) |save_item| {
+                    switch (save_item) {
+                        .name => |save_name| if (std.ascii.eqlIgnoreCase(save_name, name)) return true,
+                        else => {},
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn emitDeclInitializerDiagnostic(self: *context.Context, message: []const u8) void {
+    const decl_source = self.current_decl_source orelse ast.DeclSource{};
+    self.setDiagnostic(
+        if (decl_source.line == 0) 1 else decl_source.line,
+        if (decl_source.column == 0) 1 else decl_source.column,
+        catalog.semantic.assignment_type_mismatch.code,
+        message,
+        decl_source.text,
+    );
 }
 
 pub fn isoCBindingCharacterKindShorthandType(

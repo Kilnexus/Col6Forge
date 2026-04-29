@@ -41,6 +41,9 @@ pub fn resolveCallOrSubscriptExpr(
 
     const idx = try symbols_mod.ensureSymbol(self, call.name);
     var sym = self.symbols.items[idx];
+    if (shouldRejectNonRecursiveCurrentProcedureReference(self, call.name)) {
+        return emitNonRecursiveProcedureReferenceDiagnostic(self, expr_node);
+    }
     if (shouldRejectImplicitRecursiveFunctionResultReference(self, call.name, sym, call.args.len)) {
         return emitInvalidArgumentDiagnostic(
             self,
@@ -220,6 +223,37 @@ fn shouldRejectImplicitRecursiveFunctionResultReference(
     if (!std.ascii.eqlIgnoreCase(self.unit.name, name)) return false;
     if (sym.dims.len != 0) return false;
     return true;
+}
+
+fn shouldRejectNonRecursiveCurrentProcedureReference(self: *context.Context, name: []const u8) bool {
+    if (self.unit.recursive) return false;
+    if (self.unit.kind != .subroutine and self.unit.kind != .function) return false;
+    if (std.ascii.eqlIgnoreCase(self.unit.name, name)) return true;
+    return isSyntheticSiblingEntryProcedure(self, name);
+}
+
+fn isSyntheticSiblingEntryProcedure(self: *context.Context, name: []const u8) bool {
+    for (self.unit.decls) |decl| {
+        if (decl != .interface_block) continue;
+        if (decl.interface_block.name != null) continue;
+        for (decl.interface_block.procedure_headers) |proc_header| {
+            if (proc_header.source.line != 0) continue;
+            if (std.ascii.eqlIgnoreCase(proc_header.name, name)) return true;
+        }
+    }
+    return false;
+}
+
+fn emitNonRecursiveProcedureReferenceDiagnostic(self: *context.Context, expr_node: *ast.Expr) ResolveError {
+    const source = self.sourceForExpr(expr_node) orelse ast.SourceRef{};
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_argument_count.code,
+        "Procedure is not RECURSIVE",
+        source.text,
+    );
+    return error.InvalidArgumentCount;
 }
 
 pub fn resolveSubstringExpr(

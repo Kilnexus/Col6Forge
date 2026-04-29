@@ -123,6 +123,22 @@ pub fn setParseDiagnosticForLine(
         );
         return;
     }
+    if (err == error.DuplicatePureAttribute or err == error.DuplicateElementalAttribute or err == error.DuplicateRecursiveAttribute) {
+        const message = if (err == error.DuplicatePureAttribute)
+            "Duplicate PURE attribute specified"
+        else if (err == error.DuplicateElementalAttribute)
+            "Duplicate ELEMENTAL attribute"
+        else
+            "Duplicate RECURSIVE attribute";
+        diag_bag.set(
+            line_no,
+            column,
+            catalog.parser.invalid_procedure_decl_syntax.code,
+            message,
+            line.text,
+        );
+        return;
+    }
     const info = catalog.parserInfoFor(err);
     const advice = parserAdviceFor(err);
     diag_bag.setDetailed(line_no, column, info.code, info.message, line.text, advice.notes, advice.helps);

@@ -265,6 +265,16 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 procedure_calls.emitAmbiguousReferenceDiagnostic(self, call.name);
                 return error.DuplicateDeclaration;
             }
+            if (shouldRejectNonRecursiveCurrentProcedureCall(self, call.name)) {
+                self.setDiagnostic(
+                    if (call.source.line == 0) 1 else call.source.line,
+                    if (call.source.column == 0) 1 else call.source.column,
+                    catalog.semantic.invalid_argument_count.code,
+                    "Procedure is not RECURSIVE",
+                    call.source.text,
+                );
+                return error.InvalidArgumentCount;
+            }
             if (procedure_interfaces.isAbstractInterfaceProcedure(self, call.name)) {
                 return procedure_calls.emitNamedProcedureDiagnostic(self, call.name, error.InvalidArgumentCount, "must not be referenced");
             }
@@ -510,6 +520,25 @@ fn rejectElementalCallRankMismatch(
         if (resolve_expr.exprRank(self, arg.expr.value) == array_rank) continue;
         return emitExprConstraint(self, arg.expr.value, "is a scalar");
     }
+}
+
+fn shouldRejectNonRecursiveCurrentProcedureCall(self: *context.Context, name: []const u8) bool {
+    if (self.unit.recursive) return false;
+    if (self.unit.kind != .subroutine and self.unit.kind != .function) return false;
+    if (std.ascii.eqlIgnoreCase(self.unit.name, name)) return true;
+    return isSyntheticSiblingEntryProcedure(self, name);
+}
+
+fn isSyntheticSiblingEntryProcedure(self: *context.Context, name: []const u8) bool {
+    for (self.unit.decls) |decl| {
+        if (decl != .interface_block) continue;
+        if (decl.interface_block.name != null) continue;
+        for (decl.interface_block.procedure_headers) |proc_header| {
+            if (proc_header.source.line != 0) continue;
+            if (std.ascii.eqlIgnoreCase(proc_header.name, name)) return true;
+        }
+    }
+    return false;
 }
 
 fn rejectStaticShapeMismatch(

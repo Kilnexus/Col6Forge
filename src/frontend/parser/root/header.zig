@@ -54,7 +54,7 @@ pub fn parseProgramUnitHeader(arena: std.mem.Allocator, lp: *LineParser, block_d
     var elemental = false;
     var recursive = false;
 
-    consumeProcedurePrefixes(lp, &pure, &elemental, &recursive);
+    try consumeProcedurePrefixes(lp, &pure, &elemental, &recursive);
     saw_module_prefix = lp.consumeKeyword("MODULE");
 
     if (lp.isKeywordSplit("PROGRAM")) {
@@ -72,7 +72,7 @@ pub fn parseProgramUnitHeader(arena: std.mem.Allocator, lp: *LineParser, block_d
         allow_missing_name = true;
     } else {
         type_info = try parseTypePrefix(arena, lp) orelse return error.ExpectedProgramUnit;
-        consumeProcedurePrefixes(lp, &pure, &elemental, &recursive);
+        try consumeProcedurePrefixes(lp, &pure, &elemental, &recursive);
         saw_module_prefix = lp.consumeKeyword("MODULE");
         if (!lp.isKeywordSplit("FUNCTION")) return error.ExpectedProgramUnit;
         _ = lp.consumeKeyword("FUNCTION");
@@ -631,17 +631,20 @@ fn consumeBalancedParens(lp: *LineParser) !void {
     }
 }
 
-fn consumeProcedurePrefixes(lp: *LineParser, pure: *bool, elemental: *bool, recursive: *bool) void {
+fn consumeProcedurePrefixes(lp: *LineParser, pure: *bool, elemental: *bool, recursive: *bool) !void {
     while (true) {
         if (lp.consumeKeyword("PURE")) {
+            if (pure.*) return error.DuplicatePureAttribute;
             pure.* = true;
             continue;
         }
         if (lp.consumeKeyword("ELEMENTAL")) {
+            if (elemental.*) return error.DuplicateElementalAttribute;
             elemental.* = true;
             continue;
         }
         if (lp.consumeKeyword("RECURSIVE")) {
+            if (recursive.*) return error.DuplicateRecursiveAttribute;
             recursive.* = true;
             continue;
         }

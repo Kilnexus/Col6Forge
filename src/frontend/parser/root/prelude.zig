@@ -272,6 +272,7 @@ fn renameFullPreludeDecls(
     for (use_stmt.only_items) |item| {
         if (item.generic_spec) continue;
         if (std.ascii.eqlIgnoreCase(item.local_name, item.remote_name)) continue;
+        if (prelude.decls.len == 0) continue;
         if (preludeHasDeclExport(prelude, item.remote_name)) continue;
         noteMissingUseImport(diag_bag, use_stmt, item);
         return error.UnexpectedToken;

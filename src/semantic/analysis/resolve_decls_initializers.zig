@@ -9,6 +9,17 @@ const resolve_expr = @import("resolve_expr.zig");
 
 pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Expr) !void {
     const expr = init_expr orelse return;
+    if (invalidInitializationExpressionMessage(self, expr)) |message| {
+        const decl_source = self.current_decl_source orelse ast.DeclSource{};
+        self.setDiagnostic(
+            if (decl_source.line == 0) 1 else decl_source.line,
+            if (decl_source.column == 0) 1 else decl_source.column,
+            catalog.semantic.parameter_not_constant.code,
+            message,
+            decl_source.text,
+        );
+        return error.ParameterNotConstant;
+    }
     if (findDisallowedInitializationIntrinsic(expr)) |intrinsic_name| {
         const decl_source = self.current_decl_source orelse ast.DeclSource{};
         const line = if (decl_source.line == 0) 1 else decl_source.line;
@@ -296,6 +307,98 @@ fn constInteger(self: *context.Context, expr: *ast.Expr) ?i64 {
     const value = constants.evalConst(self, expr) catch return null;
     return switch (value orelse return null) {
         .integer => |v| v,
+        else => null,
+    };
+}
+
+fn invalidInitializationExpressionMessage(self: *context.Context, expr: *ast.Expr) ?[]const u8 {
+    return switch (expr.*) {
+        .call_or_subscript => |call| blk: {
+            if (std.ascii.eqlIgnoreCase(call.name, "index") and callHasNonParameterVariableArg(self, call.args)) {
+                break :blk "has not been declared or is a variable";
+            }
+            if (std.ascii.eqlIgnoreCase(call.name, "size") and call.args.len >= 1 and exprNamesAssumedShapeDummy(self, call.args[0])) {
+                break :blk "Assumed-shape array";
+            }
+            if (std.ascii.eqlIgnoreCase(call.name, "len") and call.args.len >= 1 and exprNamesAssumedCharacterDummy(self, call.args[0])) {
+                break :blk "Assumed or deferred character length variable";
+            }
+            for (call.args) |arg| {
+                if (invalidInitializationExpressionMessage(self, arg)) |message| break :blk message;
+            }
+            break :blk null;
+        },
+        .unary => |un| invalidInitializationExpressionMessage(self, un.expr),
+        .binary => |bin| invalidInitializationExpressionMessage(self, bin.left) orelse invalidInitializationExpressionMessage(self, bin.right),
+        .component => |comp| invalidInitializationExpressionMessage(self, comp.base),
+        .substring => |sub| blk: {
+            for (sub.args) |arg| {
+                if (invalidInitializationExpressionMessage(self, arg)) |message| break :blk message;
+            }
+            if (sub.start) |start| {
+                if (invalidInitializationExpressionMessage(self, start)) |message| break :blk message;
+            }
+            if (sub.end) |end| {
+                if (invalidInitializationExpressionMessage(self, end)) |message| break :blk message;
+            }
+            break :blk null;
+        },
+        .dim_range => |range| invalidInitializationExpressionMessage(self, range.upper) orelse
+            if (range.lower) |lower| invalidInitializationExpressionMessage(self, lower) else null orelse
+            if (range.stride) |stride| invalidInitializationExpressionMessage(self, stride) else null,
+        .array_constructor => |ctor| blk: {
+            for (ctor.items) |item| {
+                if (invalidInitializationExpressionMessage(self, item)) |message| break :blk message;
+            }
+            break :blk null;
+        },
+        .complex_literal => |lit| invalidInitializationExpressionMessage(self, lit.real) orelse invalidInitializationExpressionMessage(self, lit.imag),
+        .implied_do => |ido| blk: {
+            for (ido.items) |item| {
+                if (invalidInitializationExpressionMessage(self, item)) |message| break :blk message;
+            }
+            if (invalidInitializationExpressionMessage(self, ido.start)) |message| break :blk message;
+            if (invalidInitializationExpressionMessage(self, ido.end)) |message| break :blk message;
+            if (ido.step) |step| {
+                if (invalidInitializationExpressionMessage(self, step)) |message| break :blk message;
+            }
+            break :blk null;
+        },
+        else => null,
+    };
+}
+
+fn callHasNonParameterVariableArg(self: *context.Context, args: []const *ast.Expr) bool {
+    for (args) |arg| {
+        const name = exprIdentifierName(arg) orelse continue;
+        const idx = symbols_mod.findSymbolIndex(self, name) orelse return true;
+        if (self.symbols.items[idx].kind != .parameter) return true;
+    }
+    return false;
+}
+
+fn exprNamesAssumedShapeDummy(self: *context.Context, expr: *ast.Expr) bool {
+    const name = exprIdentifierName(expr) orelse return false;
+    const idx = symbols_mod.findSymbolIndex(self, name) orelse return false;
+    const sym = self.symbols.items[idx];
+    if (sym.storage != .dummy) return false;
+    for (sym.dims) |dim| {
+        if (dim.* == .dim_range and dim.dim_range.assumed_shape) return true;
+    }
+    return false;
+}
+
+fn exprNamesAssumedCharacterDummy(self: *context.Context, expr: *ast.Expr) bool {
+    const name = exprIdentifierName(expr) orelse return false;
+    const idx = symbols_mod.findSymbolIndex(self, name) orelse return false;
+    const sym = self.symbols.items[idx];
+    if (sym.storage != .dummy or sym.type_spec.lowered_kind != .character) return false;
+    return sym.type_spec.char_len_kind == .assumed or sym.type_spec.char_len_kind == .deferred;
+}
+
+fn exprIdentifierName(expr: *ast.Expr) ?[]const u8 {
+    return switch (expr.*) {
+        .identifier => |name| name,
         else => null,
     };
 }

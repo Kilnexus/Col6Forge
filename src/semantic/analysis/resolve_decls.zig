@@ -259,6 +259,25 @@ pub fn applyDeclarator(
         if (!self.usesExplicitDiagnosticBag()) return error.InvalidUnlimitedPolymorphicEntity;
         return;
     }
+    if (sym.type_spec.assumed_type and sym.storage != .dummy) {
+        const decl_source = self.current_decl_source orelse ast.DeclSource{};
+        const message = std.fmt.allocPrint(
+            self.arena,
+            "Assumed type of variable '{s}' is only permitted for dummy arguments",
+            .{item.name},
+        ) catch "Assumed type of variable is only permitted for dummy arguments";
+        self.setDiagnosticDetailed(
+            if (decl_source.line == 0) 1 else decl_source.line,
+            if (decl_source.column == 0) 1 else decl_source.column,
+            catalog.semantic.invalid_unlimited_polymorphic_entity.code,
+            message,
+            decl_source.text,
+            &.{.{ .text = "TYPE(*) may only describe an assumed-type dummy argument." }},
+            &.{.{ .text = "Move this entity into a dummy argument list or use a concrete TYPE declaration." }},
+        );
+        if (!self.usesExplicitDiagnosticBag()) return error.InvalidUnlimitedPolymorphicEntity;
+        return;
+    }
 
     // Use the resolved symbol type after declaration merge. Non-type declarations
     // (e.g. COMMON/DIMENSION) must not accidentally erase CHARACTER length.

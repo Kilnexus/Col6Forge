@@ -46,6 +46,37 @@ test "rewritten polymorphic parameter declaration still reports parameter attrib
     try testing.expect(bagContainsMessageAtLine(&diag_bag, 5, "PARAMETER attribute"));
 }
 
+test "assumed type named constant reports assumed type before parameter initializer fallout" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program p\n" ++
+        "  type t\n" ++
+        "  end type\n" ++
+        "  type(*), parameter :: x = t()\n" ++
+        "end program p\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    var diag_bag = diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+    _ = split_api.analyzeProgramWithKnownAndOptionsAndDiagnostics(
+        arena.allocator(),
+        program,
+        &.{},
+        &.{},
+        .{},
+        &diag_bag,
+    ) catch {};
+
+    try testing.expect(bagContainsMessageAtLine(&diag_bag, 4, "Assumed type of variable"));
+}
+
 test "polymorphic function result still rejects non dummy allocatable pointer result" {
     const testing = std.testing;
     const allocator = testing.allocator;

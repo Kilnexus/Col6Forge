@@ -60,7 +60,7 @@ pub fn importPreludeDecls(
                 .decl_sources = prelude.decl_sources,
             }
         else if (!module_use.has_only)
-            try renameFullPreludeDecls(arena, prelude, module_use)
+            try renameFullPreludeDecls(arena, prelude, module_use, diag_bag)
         else
             try selectPreludeDecls(arena, prelude, module_use, diag_bag);
         var filtered_selected = std.array_list.Managed(Decl).init(arena);
@@ -264,9 +264,18 @@ fn renameFullPreludeDecls(
     arena: std.mem.Allocator,
     prelude: ModulePrelude,
     use_stmt: ast.UseStmt,
+    diag_bag: *parse_diag.Bag,
 ) !ImportedPreludeDecls {
     var renamed_decls = std.array_list.Managed(Decl).init(arena);
     var renamed_sources = std.array_list.Managed(DeclSource).init(arena);
+
+    for (use_stmt.only_items) |item| {
+        if (item.generic_spec) continue;
+        if (std.ascii.eqlIgnoreCase(item.local_name, item.remote_name)) continue;
+        if (preludeHasDeclExport(prelude, item.remote_name)) continue;
+        noteMissingUseImport(diag_bag, use_stmt, item);
+        return error.UnexpectedToken;
+    }
 
     for (prelude.decls, 0..) |decl_node, idx| {
         const local_name = if (preludeDeclExportedName(decl_node)) |exported_name|
@@ -330,8 +339,17 @@ pub fn selectPreludeDecls(
 
 fn preludeHasDeclExport(prelude: ModulePrelude, remote_name: []const u8) bool {
     for (prelude.decls) |decl_node| {
+        if (typeDeclExportsName(decl_node, remote_name)) return true;
         const exported_name = preludeDeclExportedName(decl_node) orelse continue;
         if (std.ascii.eqlIgnoreCase(exported_name, remote_name)) return true;
+    }
+    return false;
+}
+
+fn typeDeclExportsName(decl_node: Decl, name: []const u8) bool {
+    if (decl_node != .type_decl) return false;
+    for (decl_node.type_decl.items) |item| {
+        if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
     }
     return false;
 }
@@ -341,6 +359,18 @@ fn noteMissingGenericUseImport(diag_bag: *parse_diag.Bag, use_stmt: ast.UseStmt,
         std.fmt.allocPrint(diag_bag.allocator, "operator {s} referenced in USE, ONLY list not found in module '{s}'", .{ item.generic_display_name, use_stmt.module_name }) catch return
     else
         std.fmt.allocPrint(diag_bag.allocator, "generic {s} referenced in USE, ONLY list not found in module '{s}'", .{ item.remote_name, use_stmt.module_name }) catch return;
+    defer diag_bag.allocator.free(message);
+    diag_bag.set(
+        if (use_stmt.source.line == 0) 1 else use_stmt.source.line,
+        if (use_stmt.source.column == 0) 1 else use_stmt.source.column,
+        catalog.parser.generic.code,
+        message,
+        use_stmt.source.text,
+    );
+}
+
+fn noteMissingUseImport(diag_bag: *parse_diag.Bag, use_stmt: ast.UseStmt, item: ast.UseOnlyItem) void {
+    const message = std.fmt.allocPrint(diag_bag.allocator, "'{s}' not found in module '{s}'", .{ item.remote_name, use_stmt.module_name }) catch return;
     defer diag_bag.allocator.free(message);
     diag_bag.set(
         if (use_stmt.source.line == 0) 1 else use_stmt.source.line,

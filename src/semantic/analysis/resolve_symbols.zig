@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../../ast/nodes.zig");
 const case_insensitive = @import("../../common/case_insensitive.zig");
+const catalog = @import("../../common/error_catalog.zig");
 const symbols = @import("../symbol/mod.zig");
 const context = @import("context.zig");
 const intrinsics = @import("intrinsics.zig");
@@ -39,9 +40,65 @@ pub fn installBuiltinConstants(self: *context.Context) !void {
 }
 
 pub fn registerDerivedType(self: *context.Context, info: context.Context.DerivedTypeInfo) !void {
-    if (hasLocalDerivedType(self, info.name)) return;
+    if (getLowercaseMapValue(context.Context.DerivedTypeInfo, &self.derived_types, info.name)) |existing| {
+        if (sameDerivedTypeRegistration(existing, info)) return;
+        emitDuplicateDerivedTypeDiagnostic(self, existing, info);
+        return error.DuplicateDeclaration;
+    }
     const key = try lowerDup(self.arena, info.name);
     try self.derived_types.put(key, info);
+}
+
+fn sameDerivedTypeRegistration(
+    existing: context.Context.DerivedTypeInfo,
+    incoming: context.Context.DerivedTypeInfo,
+) bool {
+    if (!std.ascii.eqlIgnoreCase(existing.name, incoming.name)) return false;
+    if (sameDerivedTypeOrigin(existing.source, incoming.source)) return true;
+    if (existing.source.line != 0 or incoming.source.line != 0) return false;
+    if (existing.bind_c != incoming.bind_c) return false;
+    if (existing.bind_c) return true;
+    return ownerNamesEqual(existing.source.owner_name, incoming.source.owner_name);
+}
+
+fn ownerNamesEqual(left: ?[]const u8, right: ?[]const u8) bool {
+    if (left == null and right == null) return true;
+    if (left == null or right == null) return false;
+    return std.ascii.eqlIgnoreCase(left.?, right.?);
+}
+
+fn emitDuplicateDerivedTypeDiagnostic(
+    self: *context.Context,
+    existing: context.Context.DerivedTypeInfo,
+    incoming: context.Context.DerivedTypeInfo,
+) void {
+    const source = incoming.source;
+    const line = if (source.line == 0) 1 else source.line;
+    const column = if (source.column == 0) 1 else source.column;
+    const message = if (derivedTypeImportsAreAmbiguous(existing, incoming))
+        std.fmt.allocPrint(self.arena, "Type name '{s}' at .1. is ambiguous", .{incoming.name}) catch "Type name is ambiguous"
+    else
+        std.fmt.allocPrint(self.arena, "Derived type definition of '{s}' at .1. has already been defined", .{incoming.name}) catch "Derived type definition has already been defined";
+    self.setDiagnosticStructured(
+        line,
+        column,
+        catalog.semantic.duplicate_declaration.code,
+        message,
+        source.text,
+        "conflicting derived type here",
+        &.{.{ .text = "A derived type name must identify a single accessible type in the current scope." }},
+        &.{.{ .text = "Rename the local type or restrict the USE imports with ONLY or renaming." }},
+        &.{},
+    );
+}
+
+fn derivedTypeImportsAreAmbiguous(
+    existing: context.Context.DerivedTypeInfo,
+    incoming: context.Context.DerivedTypeInfo,
+) bool {
+    const existing_owner = existing.source.owner_name orelse return false;
+    const incoming_owner = incoming.source.owner_name orelse return false;
+    return !std.ascii.eqlIgnoreCase(existing_owner, incoming_owner);
 }
 
 pub fn hasDerivedType(self: *const context.Context, name: []const u8) bool {

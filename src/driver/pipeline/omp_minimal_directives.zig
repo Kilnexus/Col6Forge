@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../../ast/nodes.zig");
 const catalog = @import("../../common/error_catalog.zig");
 const diag = @import("../../common/diagnostic.zig");
+const directive_text = @import("../../common/directive_text.zig");
 const symbols = @import("../../semantic/symbol/mod.zig");
 const omp_declare_variant = @import("omp_declare_variant.zig");
 
@@ -84,7 +85,7 @@ fn validateMinimalOpenaccDirectives(
         const trimmed = std.mem.trimStart(u8, raw.text, " \t");
         if (!omp_declare_variant.startsWithNoCase(trimmed, "!$acc")) continue;
         var compact_buf: [256]u8 = undefined;
-        const compact = compactDirective(trimmed, &compact_buf);
+        const compact = directive_text.compactDirective(trimmed, &compact_buf);
         const directive_compact = if (std.mem.indexOf(u8, compact, "!{DG-")) |idx| compact[0..idx] else compact;
         const line_has_directive_expectation = omp_declare_variant.indexOfNoCase(trimmed, "dg-error") != null or
             omp_declare_variant.indexOfNoCase(trimmed, "dg-warning") != null;
@@ -185,17 +186,6 @@ fn addOpenaccDiagnostic(diag_bag: *diag.Bag, input_path: []const u8, raw: RawLin
         .stage = .semantic,
         .primary_label = "invalid OpenACC directive here",
     });
-}
-
-fn compactDirective(text: []const u8, buf: *[256]u8) []const u8 {
-    const max_len = @min(text.len, buf.len);
-    var out_len: usize = 0;
-    for (text[0..max_len]) |ch| {
-        if (ch == ' ' or ch == '\t') continue;
-        buf.*[out_len] = std.ascii.toUpper(ch);
-        out_len += 1;
-    }
-    return buf[0..out_len];
 }
 
 fn scanClauseDirectives(

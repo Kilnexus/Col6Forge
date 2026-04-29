@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../../../ast/nodes.zig");
+const decl_queries = @import("../../../ast/decl_queries.zig");
 const catalog = @import("../../../common/error_catalog.zig");
 const case_insensitive = @import("../../../common/case_insensitive.zig");
 const context = @import("../token_stream.zig");
@@ -279,7 +280,7 @@ fn renameFullPreludeDecls(
     }
 
     for (prelude.decls, 0..) |decl_node, idx| {
-        const local_name = if (preludeDeclExportedName(decl_node)) |exported_name|
+        const local_name = if (decl_queries.exportedName(decl_node)) |exported_name|
             renamePreludeTypeName(exported_name, use_stmt.only_items)
         else
             null;
@@ -341,7 +342,7 @@ pub fn selectPreludeDecls(
 fn preludeHasDeclExport(prelude: ModulePrelude, remote_name: []const u8) bool {
     for (prelude.decls) |decl_node| {
         if (typeDeclExportsName(decl_node, remote_name)) return true;
-        const exported_name = preludeDeclExportedName(decl_node) orelse continue;
+        const exported_name = decl_queries.exportedName(decl_node) orelse continue;
         if (std.ascii.eqlIgnoreCase(exported_name, remote_name)) return true;
     }
     return false;
@@ -395,7 +396,7 @@ fn appendPreludeDeclByName(
     const seen_key = try preludeImportSeenKey(arena, remote_name, local_name);
     if (seen.contains(seen_key)) return;
     for (prelude.decls, 0..) |decl_node, decl_idx| {
-        const exported_name = preludeDeclExportedName(decl_node) orelse continue;
+        const exported_name = decl_queries.exportedName(decl_node) orelse continue;
         if (!std.ascii.eqlIgnoreCase(exported_name, remote_name)) continue;
         try seen.put(seen_key, {});
         try appendPreludeDeclDependencies(arena, prelude, decl_node, only_items, out_decls, out_sources, seen);
@@ -502,17 +503,6 @@ fn preludeImportSeenKey(
     local_name: []const u8,
 ) ![]const u8 {
     return std.fmt.allocPrint(arena, "{s}\x1f{s}", .{ remote_name, local_name });
-}
-
-fn preludeDeclExportedName(decl_node: Decl) ?[]const u8 {
-    return switch (decl_node) {
-        .derived_type_def => |derived| derived.name,
-        .interface_block => |interface_block| interface_block.name,
-        .type_decl => |type_decl| if (type_decl.items.len == 1) type_decl.items[0].name else null,
-        .procedure => |procedure_decl| if (procedure_decl.items.len == 1) procedure_decl.items[0].name else null,
-        .parameter => |parameter_decl| if (parameter_decl.assigns.len == 1) parameter_decl.assigns[0].name else null,
-        else => null,
-    };
 }
 
 fn renamePreludeDecl(

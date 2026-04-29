@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../../ast/nodes.zig");
+const decl_queries = @import("../../ast/decl_queries.zig");
 const case_insensitive = @import("../../common/case_insensitive.zig");
 const catalog = @import("../../common/error_catalog.zig");
 const symbols = @import("../symbol/mod.zig");
@@ -679,21 +680,10 @@ fn unitAlreadyHasImportedUseDecl(self: *context.Context, module_name: []const u8
         const decl_source = if (idx < self.unit.decl_sources.len) self.unit.decl_sources[idx] else ast.DeclSource{};
         const owner_name = decl_source.owner_name orelse continue;
         if (!std.ascii.eqlIgnoreCase(owner_name, module_name)) continue;
-        const exported_name = declExportedName(decl_node) orelse continue;
+        const exported_name = decl_queries.exportedName(decl_node) orelse continue;
         if (std.ascii.eqlIgnoreCase(exported_name, local_name)) return true;
     }
     return false;
-}
-
-fn declExportedName(decl_node: ast.Decl) ?[]const u8 {
-    return switch (decl_node) {
-        .derived_type_def => |derived| derived.name,
-        .interface_block => |interface_block| interface_block.name,
-        .type_decl => |type_decl| if (type_decl.items.len == 1) type_decl.items[0].name else null,
-        .procedure => |procedure_decl| if (procedure_decl.items.len == 1) procedure_decl.items[0].name else null,
-        .parameter => |parameter_decl| if (parameter_decl.assigns.len == 1) parameter_decl.assigns[0].name else null,
-        else => null,
-    };
 }
 
 fn bindKnownUseImport(self: *context.Context, local_name: []const u8, remote_name: []const u8) ResolveError!void {
@@ -842,7 +832,7 @@ fn bindKnownModuleUseImports(self: *context.Context, module_name: []const u8) Re
         const decl_source = if (idx < self.unit.decl_sources.len) self.unit.decl_sources[idx] else ast.DeclSource{};
         const owner_name = decl_source.owner_name orelse continue;
         if (!std.ascii.eqlIgnoreCase(owner_name, module_name)) continue;
-        const exported_name = declExportedName(decl_node) orelse continue;
+        const exported_name = decl_queries.exportedName(decl_node) orelse continue;
         const lowered = try case_insensitive.lowerDup(self.arena, exported_name);
         if (seen.contains(lowered)) continue;
         try seen.put(lowered, {});

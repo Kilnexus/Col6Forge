@@ -5,10 +5,12 @@ const procedure_pass = @import("../../../common/procedure_pass.zig");
 const symbols = @import("../../symbol/mod.zig");
 const intrinsic_signature = @import("../../intrinsic_signature.zig");
 const context = @import("../context.zig");
+const decl_scan = @import("../decl_scan.zig");
 const bound_helpers = @import("calls/bound_helpers.zig");
 const constructors = @import("calls/constructors.zig");
 const lookup_helpers = @import("calls/lookup_helpers.zig");
 const procedure_interfaces = @import("../check_statements/procedure_interfaces.zig");
+const procedure_context = @import("../procedure_context.zig");
 const symbols_mod = @import("../resolve_symbols.zig");
 
 const ResolvedRefKind = symbols.ResolvedRefKind;
@@ -41,7 +43,7 @@ pub fn resolveCallOrSubscriptExpr(
 
     const idx = try symbols_mod.ensureSymbol(self, call.name);
     var sym = self.symbols.items[idx];
-    if (shouldRejectNonRecursiveCurrentProcedureReference(self, call.name)) {
+    if (procedure_context.shouldRejectNonRecursiveCurrentProcedureReference(self, call.name)) {
         return emitNonRecursiveProcedureReferenceDiagnostic(self, expr_node);
     }
     if (shouldRejectImplicitRecursiveFunctionResultReference(self, call.name, sym, call.args.len)) {
@@ -55,7 +57,7 @@ pub fn resolveCallOrSubscriptExpr(
     var kind: ResolvedRefKind = .unknown;
     var resolved_spec = sym.type_spec;
     const visible_generic_sig = try effectiveVisibleGenericSig(self, call.name, call.args, deps);
-        if (constructors.structureConstructorTypeSpec(self, call.name, sym)) |ctor_spec| {
+    if (constructors.structureConstructorTypeSpec(self, call.name, sym)) |ctor_spec| {
         const type_name = ctor_spec.derived_type_name orelse call.name;
         if (isAbstractDerivedType(self, type_name)) {
             const source = self.sourceForExpr(expr_node) orelse ast.SourceRef{};
@@ -120,8 +122,7 @@ pub fn resolveCallOrSubscriptExpr(
                     sym.applyTypeSpec(resolved_spec);
                 }
                 self.symbols.items[idx] = sym;
-            } else
-        if (sig.kind == .function) {
+            } else if (sig.kind == .function) {
                 const was_variable = sym.kind == .variable;
                 const known_result_spec = sig.result_type_spec orelse symbols_mod.lookupKnownFunctionResolvedSpec(self, call.name);
                 if (shouldCheckImplicitFunctionReferenceMismatch(self, call.name, sym, visible_generic_sig) and
@@ -169,7 +170,7 @@ pub fn resolveCallOrSubscriptExpr(
             self.symbols.items[idx] = sym;
             resolved_spec = sym.type_spec;
         } else if (sym.is_external or sym.is_intrinsic or sym.kind == .function) {
-            if (sym.is_external and !sym.type_explicit and implicitNoneActive(self)) {
+            if (sym.is_external and !sym.type_explicit and decl_scan.implicitNoneActive(self)) {
                 return emitInvalidArgumentDiagnostic(self, expr_node, catalog.semantic.unexpected_type_decl.code, "has no IMPLICIT type");
             }
             kind = .call;
@@ -230,25 +231,6 @@ fn shouldRejectImplicitRecursiveFunctionResultReference(
     return true;
 }
 
-fn shouldRejectNonRecursiveCurrentProcedureReference(self: *context.Context, name: []const u8) bool {
-    if (self.unit.recursive) return false;
-    if (self.unit.kind != .subroutine and self.unit.kind != .function) return false;
-    if (std.ascii.eqlIgnoreCase(self.unit.name, name)) return true;
-    return isSyntheticSiblingEntryProcedure(self, name);
-}
-
-fn isSyntheticSiblingEntryProcedure(self: *context.Context, name: []const u8) bool {
-    for (self.unit.decls) |decl| {
-        if (decl != .interface_block) continue;
-        if (decl.interface_block.name != null) continue;
-        for (decl.interface_block.procedure_headers) |proc_header| {
-            if (proc_header.source.line != 0) continue;
-            if (std.ascii.eqlIgnoreCase(proc_header.name, name)) return true;
-        }
-    }
-    return false;
-}
-
 fn emitNonRecursiveProcedureReferenceDiagnostic(self: *context.Context, expr_node: *ast.Expr) ResolveError {
     const source = self.sourceForExpr(expr_node) orelse ast.SourceRef{};
     self.setDiagnostic(
@@ -259,15 +241,6 @@ fn emitNonRecursiveProcedureReferenceDiagnostic(self: *context.Context, expr_nod
         source.text,
     );
     return error.InvalidArgumentCount;
-}
-
-fn implicitNoneActive(self: *const context.Context) bool {
-    var active = false;
-    for (self.unit.decls) |decl| {
-        if (decl != .implicit) continue;
-        active = decl.implicit.rules.len == 0;
-    }
-    return active;
 }
 
 pub fn resolveSubstringExpr(
@@ -940,7 +913,6 @@ fn invalidPolymorphicParameterComponentBase(self: *context.Context, expr_node: *
     const sym = self.symbols.items[idx];
     return sym.kind == .parameter and sym.type_spec.lowered_kind == .derived and sym.type_spec.polymorphic;
 }
-
 
 fn isArraySectionSubstring(sym: symbols.Symbol, sub: ast.SubstringExpr) bool {
     return sym.dims.len != 0 and sub.args.len == 0;

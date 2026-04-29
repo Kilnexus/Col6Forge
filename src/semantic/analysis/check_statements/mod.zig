@@ -15,10 +15,14 @@ const procedure_calls = @import("procedure_calls.zig");
 const expr_semantics = @import("expr_semantics.zig");
 const abstract_expr_use = @import("abstract_expr_use.zig");
 const static_shapes = @import("static_shapes.zig");
+const statement_functions = @import("statement_functions.zig");
+const stmt_diagnostics = @import("diagnostics.zig");
 const assumed_size = @import("../assumed_size.zig");
-const expr_diagnostics = @import("../expr_diagnostics.zig");
+const procedure_context = @import("../procedure_context.zig");
 
 pub const CheckError = anyerror;
+const emitCurrentStmtConstraint = stmt_diagnostics.emitCurrentStmtConstraint;
+const emitExprConstraint = stmt_diagnostics.emitExprConstraint;
 
 pub fn checkStmt(self: *context.Context, stmt: ast.Stmt) CheckError!void {
     const prev_stmt = self.current_stmt;
@@ -32,8 +36,8 @@ pub fn checkStmt(self: *context.Context, stmt: ast.Stmt) CheckError!void {
 pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void {
     switch (node) {
         .assignment => |assign| {
-            try validateStatementFunctionAssignment(self, assign);
-            try validateStatementFunctionCalls(self, assign.value);
+            try statement_functions.validateAssignment(self, assign);
+            try statement_functions.validateCalls(self, assign.value);
             if (assumed_size.exprNeedsExplicitLastUpperBound(self, assign.target)) {
                 return assumed_size.emitExprDiagnostic(self, assign.target, "upper bound in the last dimension");
             }
@@ -540,47 +544,24 @@ fn rejectElementalCallRankMismatch(
 }
 
 fn shouldRejectNonRecursiveCurrentProcedureCall(self: *context.Context, name: []const u8) bool {
-    if (self.unit.recursive) return false;
-    if (self.unit.kind != .subroutine and self.unit.kind != .function) return false;
-    if (std.ascii.eqlIgnoreCase(self.unit.name, name)) return true;
-    return isSyntheticSiblingEntryProcedure(self, name);
-}
-
-fn isSyntheticSiblingEntryProcedure(self: *context.Context, name: []const u8) bool {
-    for (self.unit.decls) |decl| {
-        if (decl != .interface_block) continue;
-        if (decl.interface_block.name != null) continue;
-        for (decl.interface_block.procedure_headers) |proc_header| {
-            if (proc_header.source.line != 0) continue;
-            if (std.ascii.eqlIgnoreCase(proc_header.name, name)) return true;
-        }
-    }
-    return false;
+    return procedure_context.shouldRejectNonRecursiveCurrentProcedureReference(self, name);
 }
 
 fn pureProcedureAssignsImpureVariable(self: *context.Context, target: *ast.Expr) bool {
-    if (!self.unit.pure) return false;
-    const name = switch (target.*) {
-        .identifier => |ident| ident,
-        .call_or_subscript => |call| call.name,
-        .substring => |sub| sub.name,
-        .component => return pureProcedureAssignsImpureVariable(self, target.component.base),
-        else => return false,
-    };
-    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
-    const sym = self.symbols.items[idx];
-    if (sym.storage == .common or sym.is_host_associated) return true;
-    if (self.unit.kind == .function and sym.storage == .dummy) return true;
-    return dummyHasIntentIn(self, name);
+    return pureProcedureUsesImpureStorage(self, target);
 }
 
 fn pureProcedureUsesImpurePointerTarget(self: *context.Context, target: *ast.Expr) bool {
+    return pureProcedureUsesImpureStorage(self, target);
+}
+
+fn pureProcedureUsesImpureStorage(self: *context.Context, target: *ast.Expr) bool {
     if (!self.unit.pure) return false;
     const name = switch (target.*) {
         .identifier => |ident| ident,
         .call_or_subscript => |call| call.name,
         .substring => |sub| sub.name,
-        .component => return pureProcedureUsesImpurePointerTarget(self, target.component.base),
+        .component => return pureProcedureUsesImpureStorage(self, target.component.base),
         else => return false,
     };
     const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
@@ -841,262 +822,11 @@ fn characterExprLogicalLen(self: *context.Context, expr_node: *ast.Expr) ?usize 
     };
 }
 
-const StatementFunctionRef = struct {
-    name: []const u8,
-    args: []*ast.Expr,
-    value: *ast.Expr,
-};
-
-fn validateStatementFunctionAssignment(self: *context.Context, assign: ast.Assignment) CheckError!void {
-    const stmt_fn = statementFunctionRef(self, assign) orelse return;
-    if (self.unit.kind == .module) {
-        return emitCurrentStmtConstraint(self, "Unexpected STATEMENT FUNCTION");
-    }
-    if (statementFunctionNameIsDummy(self, stmt_fn.name)) {
-        return emitCurrentStmtConstraint(self, "Unclassifiable statement");
-    }
-    for (stmt_fn.args) |arg| {
-        if (arg.* != .identifier) continue;
-        if (std.ascii.eqlIgnoreCase(stmt_fn.name, arg.identifier)) {
-            return emitCurrentStmtConstraint(self, "Self-referential argument");
-        }
-        if (statementFunctionArgIsArray(self, arg.identifier)) {
-            return emitCurrentStmtConstraint(self, "must be scalar");
-        }
-    }
-    if (statementFunctionValueCallsArgument(stmt_fn.value, stmt_fn.args)) {
-        return emitCurrentStmtConstraint(self, "Invalid use of statement function argument");
-    }
-}
-
-fn validateStatementFunctionCalls(self: *context.Context, expr_node: *ast.Expr) CheckError!void {
-    switch (expr_node.*) {
-        .call_or_subscript => |call| {
-            const def = findStatementFunctionDefinition(self, call.name) orelse {
-                for (call.args) |arg| try validateStatementFunctionCalls(self, arg);
-                return;
-            };
-            if (statementFunctionCallUsesKeywordActual(self, expr_node, call.name)) {
-                return emitExprConstraint(self, expr_node, "invalid in a statement function");
-            }
-            try validateStatementFunctionActualTypes(self, expr_node, def.args, call.args);
-            for (call.args) |arg| try validateStatementFunctionCalls(self, arg);
-        },
-        .substring => |sub| {
-            for (sub.args) |arg| try validateStatementFunctionCalls(self, arg);
-            if (sub.start) |start| try validateStatementFunctionCalls(self, start);
-            if (sub.end) |end| try validateStatementFunctionCalls(self, end);
-        },
-        .component => |comp| {
-            try validateStatementFunctionCalls(self, comp.base);
-            for (comp.args) |arg| try validateStatementFunctionCalls(self, arg);
-        },
-        .unary => |unary| try validateStatementFunctionCalls(self, unary.expr),
-        .binary => |binary| {
-            try validateStatementFunctionCalls(self, binary.left);
-            try validateStatementFunctionCalls(self, binary.right);
-        },
-        .complex_literal => |complex| {
-            try validateStatementFunctionCalls(self, complex.real);
-            try validateStatementFunctionCalls(self, complex.imag);
-        },
-        .array_constructor => |ctor| for (ctor.items) |item| {
-            try validateStatementFunctionCalls(self, item);
-        },
-        .dim_range => |range| {
-            if (range.lower) |lower| try validateStatementFunctionCalls(self, lower);
-            try validateStatementFunctionCalls(self, range.upper);
-            if (range.stride) |stride| try validateStatementFunctionCalls(self, stride);
-        },
-        .implied_do => |implied_do| {
-            for (implied_do.items) |item| try validateStatementFunctionCalls(self, item);
-            try validateStatementFunctionCalls(self, implied_do.start);
-            try validateStatementFunctionCalls(self, implied_do.end);
-            if (implied_do.step) |step| try validateStatementFunctionCalls(self, step);
-        },
-        .identifier, .literal => {},
-    }
-}
-
-fn statementFunctionRef(self: *context.Context, assign: ast.Assignment) ?StatementFunctionRef {
-    if (assign.target.* != .call_or_subscript) return null;
-    const call = assign.target.call_or_subscript;
-    if (call.args.len == 0) return null;
-    for (call.args) |arg| {
-        if (arg.* != .identifier) return null;
-    }
-    if (resolve_symbols.findSymbolIndex(self, call.name)) |idx| {
-        const sym = self.symbols.items[idx];
-        if (sym.dims.len != 0) return null;
-    }
-    return .{ .name = call.name, .args = call.args, .value = assign.value };
-}
-
-fn findStatementFunctionDefinition(self: *context.Context, name: []const u8) ?StatementFunctionRef {
-    for (self.unit.stmts) |stmt| {
-        if (stmt.node != .assignment) continue;
-        const stmt_fn = statementFunctionRef(self, stmt.node.assignment) orelse continue;
-        if (std.ascii.eqlIgnoreCase(stmt_fn.name, name)) return stmt_fn;
-    }
-    return null;
-}
-
-fn statementFunctionNameIsDummy(self: *context.Context, name: []const u8) bool {
-    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
-    return self.symbols.items[idx].storage == .dummy;
-}
-
-fn statementFunctionArgIsArray(self: *context.Context, name: []const u8) bool {
-    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
-    return self.symbols.items[idx].dims.len != 0;
-}
-
-fn statementFunctionValueCallsArgument(expr_node: *ast.Expr, args: []*ast.Expr) bool {
-    switch (expr_node.*) {
-        .call_or_subscript => |call| {
-            for (args) |arg| {
-                if (arg.* == .identifier and std.ascii.eqlIgnoreCase(arg.identifier, call.name) and call.args.len != 0) return true;
-            }
-            for (call.args) |actual| {
-                if (statementFunctionValueCallsArgument(actual, args)) return true;
-            }
-            return false;
-        },
-        .substring => |sub| {
-            for (sub.args) |arg| {
-                if (statementFunctionValueCallsArgument(arg, args)) return true;
-            }
-            if (sub.start) |start| if (statementFunctionValueCallsArgument(start, args)) return true;
-            if (sub.end) |end| if (statementFunctionValueCallsArgument(end, args)) return true;
-            return false;
-        },
-        .component => |comp| {
-            if (statementFunctionValueCallsArgument(comp.base, args)) return true;
-            for (comp.args) |arg| {
-                if (statementFunctionValueCallsArgument(arg, args)) return true;
-            }
-            return false;
-        },
-        .unary => |unary| return statementFunctionValueCallsArgument(unary.expr, args),
-        .binary => |binary| return statementFunctionValueCallsArgument(binary.left, args) or statementFunctionValueCallsArgument(binary.right, args),
-        .complex_literal => |complex| return statementFunctionValueCallsArgument(complex.real, args) or statementFunctionValueCallsArgument(complex.imag, args),
-        .array_constructor => |ctor| {
-            for (ctor.items) |item| {
-                if (statementFunctionValueCallsArgument(item, args)) return true;
-            }
-            return false;
-        },
-        .dim_range => |range| {
-            if (range.lower) |lower| if (statementFunctionValueCallsArgument(lower, args)) return true;
-            if (statementFunctionValueCallsArgument(range.upper, args)) return true;
-            if (range.stride) |stride| if (statementFunctionValueCallsArgument(stride, args)) return true;
-            return false;
-        },
-        .implied_do => |implied_do| {
-            for (implied_do.items) |item| {
-                if (statementFunctionValueCallsArgument(item, args)) return true;
-            }
-            if (statementFunctionValueCallsArgument(implied_do.start, args)) return true;
-            if (statementFunctionValueCallsArgument(implied_do.end, args)) return true;
-            if (implied_do.step) |step| if (statementFunctionValueCallsArgument(step, args)) return true;
-            return false;
-        },
-        .identifier, .literal => return false,
-    }
-}
-
-fn statementFunctionCallUsesKeywordActual(self: *context.Context, expr_node: *ast.Expr, call_name: []const u8) bool {
-    const source = self.sourceForExpr(expr_node) orelse return false;
-    const args_text = statementFunctionCallArgumentText(source, call_name) orelse return false;
-    var depth: usize = 0;
-    for (args_text) |ch| {
-        switch (ch) {
-            '(' => depth += 1,
-            ')' => {
-                if (depth == 0) break;
-                depth -= 1;
-            },
-            '=' => if (depth == 0) return true,
-            else => {},
-        }
-    }
-    return false;
-}
-
-fn statementFunctionCallArgumentText(source: ast.SourceRef, call_name: []const u8) ?[]const u8 {
-    const text = source.text;
-    const hinted_idx = if (source.column > 0 and source.column - 1 < text.len) source.column - 1 else 0;
-    if (callNameAt(text, hinted_idx, call_name)) {
-        return argumentTextAfterName(text, hinted_idx + call_name.len);
-    }
-    var found_idx: ?usize = null;
-    var idx: usize = 0;
-    while (idx + call_name.len <= text.len) : (idx += 1) {
-        if (!callNameAt(text, idx, call_name)) continue;
-        if (argumentTextAfterName(text, idx + call_name.len) == null) continue;
-        if (found_idx != null) return null;
-        found_idx = idx;
-    }
-    return if (found_idx) |pos| argumentTextAfterName(text, pos + call_name.len) else null;
-}
-
-fn callNameAt(text: []const u8, idx: usize, call_name: []const u8) bool {
-    if (idx + call_name.len > text.len) return false;
-    if (idx > 0 and isFortranNameChar(text[idx - 1])) return false;
-    if (idx + call_name.len < text.len and isFortranNameChar(text[idx + call_name.len])) return false;
-    return std.ascii.eqlIgnoreCase(text[idx .. idx + call_name.len], call_name);
-}
-
-fn isFortranNameChar(ch: u8) bool {
-    return std.ascii.isAlphanumeric(ch) or ch == '_';
-}
-
-fn argumentTextAfterName(text: []const u8, after_name: usize) ?[]const u8 {
-    var open_idx = after_name;
-    while (open_idx < text.len and (text[open_idx] == ' ' or text[open_idx] == '\t')) : (open_idx += 1) {}
-    if (open_idx >= text.len or text[open_idx] != '(') return null;
-    return text[open_idx + 1 ..];
-}
-
-fn validateStatementFunctionActualTypes(
-    self: *context.Context,
-    call_expr: *ast.Expr,
-    formals: []*ast.Expr,
-    actuals: []*ast.Expr,
-) CheckError!void {
-    const count = @min(formals.len, actuals.len);
-    var idx: usize = 0;
-    while (idx < count) : (idx += 1) {
-        if (formals[idx].* != .identifier) continue;
-        const formal_idx = resolve_symbols.findSymbolIndex(self, formals[idx].identifier) orelse continue;
-        const formal_spec = self.symbols.items[formal_idx].type_spec;
-        const actual_spec = resolve_expr.exprTypeSpec(self, actuals[idx]) catch continue;
-        if (formal_spec.lowered_kind == actual_spec.lowered_kind) continue;
-        return emitExprConstraint(self, call_expr, "Type mismatch in argument");
-    }
-}
-
 fn isLegacyDialectDoControlKind(kind: ast.TypeKind) bool {
     return switch (kind) {
         .integer, .real, .double_precision => true,
         else => false,
     };
-}
-
-fn emitCurrentStmtConstraint(self: *context.Context, message: []const u8) CheckError {
-    const stmt = self.current_stmt orelse return error.AssignmentTypeMismatch;
-    self.setDiagnostic(
-        if (stmt.source_line == 0) 1 else stmt.source_line,
-        if (stmt.source_column == 0) 1 else stmt.source_column,
-        catalog.semantic.assignment_type_mismatch.code,
-        message,
-        stmt.source_text,
-    );
-    return error.AssignmentTypeMismatch;
-}
-
-fn emitExprConstraint(self: *context.Context, expr_node: *ast.Expr, message: []const u8) CheckError {
-    return expr_diagnostics.emitExprAssignmentMismatch(self, expr_node, message);
 }
 
 fn rejectProcedurePointerComponentIo(self: *context.Context, expr_node: *ast.Expr) CheckError!void {

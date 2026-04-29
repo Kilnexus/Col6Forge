@@ -163,6 +163,14 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
             );
             try module_decls.append(decl_node);
             try module_decl_sources.append(root_diagnostics.sourceFromLine(line));
+        } else if (moduleLineLooksLikeStatementFunction(lp)) {
+            self.diag_bag.set(
+                line.span.start_line,
+                if (line.segments.len > 0) line.segments[0].column else 1,
+                catalog.semantic.assignment_type_mismatch.code,
+                "Unexpected STATEMENT FUNCTION",
+                line.text,
+            );
         }
         self.index += 1;
     }
@@ -210,6 +218,18 @@ pub fn parseModuleContainer(self: anytype, units: *std.array_list.Managed(Progra
         }
         try units.append(unit);
     }
+}
+
+fn moduleLineLooksLikeStatementFunction(lp: LineParser) bool {
+    var scan = lp;
+    _ = scan.expectIdentifier() orelse return false;
+    _ = scan.expect(.l_paren) orelse return false;
+    _ = scan.expectIdentifier() orelse return false;
+    while (scan.consume(.comma)) {
+        _ = scan.expectIdentifier() orelse return false;
+    }
+    _ = scan.expect(.r_paren) orelse return false;
+    return scan.peekIs(.equals);
 }
 
 pub fn parseSubmoduleContainer(self: anytype, units: *std.array_list.Managed(ProgramUnit)) !void {

@@ -46,6 +46,14 @@ pub fn checkIntrinsicCallConstraintsForCallArgs(
     name: []const u8,
     args: []const ast.CallArg,
 ) CheckError!void {
+    if (std.ascii.eqlIgnoreCase(name, "random_init")) {
+        try checkRandomInitCallConstraints(self, args);
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "random_seed")) {
+        try checkRandomSeedCallConstraints(self, args);
+        return;
+    }
     if (leaf_helpers.lookupIntrinsicArity(self, name) == null) return;
     try checkIntrinsicSpecialActualRestrictionsForCallArgs(self, name, args);
     if (std.ascii.eqlIgnoreCase(name, "move_alloc")) {
@@ -548,6 +556,80 @@ fn checkMoveAllocCallConstraints(self: *context.Context, args: []const ast.CallA
             return emitIntrinsicArgDiagnostic(self, actual.value, "ERRMSG= argument at (1) must be a scalar CHARACTER variable of at least kind 1");
         }
     }
+}
+
+fn checkRandomInitCallConstraints(self: *context.Context, args: []const ast.CallArg) CheckError!void {
+    const repeatable = nthOrKeywordActual(args, 0, "repeatable");
+    const image_distinct = nthOrKeywordActual(args, 1, "image_distinct");
+    if (repeatable) |actual| try checkRandomInitLogicalScalar(self, actual.value);
+    if (image_distinct) |actual| try checkRandomInitLogicalScalar(self, actual.value);
+}
+
+fn checkRandomInitLogicalScalar(self: *context.Context, expr_node: *ast.Expr) CheckError!void {
+    if (resolve_expr.exprRank(self, expr_node) != 0) {
+        return emitIntrinsicArgDiagnostic(self, expr_node, "must be a scalar");
+    }
+    const spec = try resolve_expr.exprTypeSpec(self, expr_node);
+    if (spec.lowered_kind != .logical) {
+        return emitIntrinsicArgDiagnostic(self, expr_node, "must be LOGICAL");
+    }
+}
+
+fn checkRandomSeedCallConstraints(self: *context.Context, args: []const ast.CallArg) CheckError!void {
+    const size_actual = nthOrKeywordActual(args, 0, "size");
+    const put_actual = nthOrKeywordActual(args, 1, "put");
+    const get_actual = nthOrKeywordActual(args, 2, "get");
+
+    if (size_actual) |actual| {
+        if (moveAllocViolatesIntentIn(self, actual.value)) {
+            return emitIntrinsicArgDiagnostic(self, actual.value, "cannot be INTENT(IN)");
+        }
+    }
+
+    var guaranteed_present: usize = 0;
+    if (size_actual) |actual| {
+        if (!exprIsOptionalDummy(self, actual.value)) guaranteed_present += 1;
+    }
+    if (put_actual) |actual| {
+        if (!exprIsOptionalDummy(self, actual.value)) guaranteed_present += 1;
+    }
+    if (get_actual) |actual| {
+        if (!exprIsOptionalDummy(self, actual.value)) guaranteed_present += 1;
+    }
+    if (guaranteed_present > 1) {
+        const diagnostic_actual = get_actual orelse put_actual orelse size_actual orelse return;
+        return emitIntrinsicArgDiagnostic(self, diagnostic_actual.value, "Too many arguments");
+    }
+}
+
+fn exprIsOptionalDummy(self: *context.Context, expr_node: *ast.Expr) bool {
+    const name = switch (expr_node.*) {
+        .identifier => |ident| ident,
+        else => return false,
+    };
+    for (self.unit.decls) |decl| {
+        switch (decl) {
+            .type_decl => |type_decl| {
+                if (!type_decl.optional) continue;
+                for (type_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            .procedure => |procedure_decl| {
+                if (!procedure_decl.optional) continue;
+                for (procedure_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            .optional => |optional_decl| {
+                for (optional_decl.names) |opt_name| {
+                    if (std.ascii.eqlIgnoreCase(opt_name, name)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
 }
 
 fn moveAllocViolatesIntentIn(self: *context.Context, expr_node: *ast.Expr) bool {

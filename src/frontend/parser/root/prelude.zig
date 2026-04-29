@@ -60,7 +60,7 @@ pub fn importPreludeDecls(
                 .decl_sources = prelude.decl_sources,
             }
         else if (!module_use.has_only)
-            try renameFullPreludeDecls(arena, prelude, module_use, diag_bag)
+            try renameFullPreludeDecls(arena, prelude, module_use)
         else
             try selectPreludeDecls(arena, prelude, module_use, diag_bag);
         var filtered_selected = std.array_list.Managed(Decl).init(arena);
@@ -264,16 +264,9 @@ fn renameFullPreludeDecls(
     arena: std.mem.Allocator,
     prelude: ModulePrelude,
     use_stmt: ast.UseStmt,
-    diag_bag: *parse_diag.Bag,
 ) !ImportedPreludeDecls {
     var renamed_decls = std.array_list.Managed(Decl).init(arena);
     var renamed_sources = std.array_list.Managed(DeclSource).init(arena);
-
-    for (use_stmt.only_items) |item| {
-        if (preludeHasDeclExport(prelude, item.remote_name)) continue;
-        noteMissingUseImport(diag_bag, use_stmt, item);
-        return error.UnexpectedToken;
-    }
 
     for (prelude.decls, 0..) |decl_node, idx| {
         const local_name = if (preludeDeclExportedName(decl_node)) |exported_name|
@@ -307,12 +300,12 @@ pub fn selectPreludeDecls(
     var selected_decls = std.array_list.Managed(Decl).init(arena);
     var selected_sources = std.array_list.Managed(DeclSource).init(arena);
     var seen = CaseInsensitiveStringHashMap(void).initContext(arena, .{});
-    var missing_import = false;
+    var missing_generic = false;
 
     for (use_stmt.only_items) |item| {
-        if (!preludeHasDeclExport(prelude, item.remote_name)) {
-            noteMissingUseImport(diag_bag, use_stmt, item);
-            missing_import = true;
+        if (item.generic_spec and !preludeHasDeclExport(prelude, item.remote_name)) {
+            noteMissingGenericUseImport(diag_bag, use_stmt, item);
+            missing_generic = true;
             continue;
         }
         try appendPreludeDeclByName(
@@ -327,7 +320,7 @@ pub fn selectPreludeDecls(
         );
     }
 
-    if (missing_import) return error.UnexpectedToken;
+    if (missing_generic) return error.UnexpectedToken;
 
     return .{
         .decls = try selected_decls.toOwnedSlice(),
@@ -337,7 +330,6 @@ pub fn selectPreludeDecls(
 
 fn preludeHasDeclExport(prelude: ModulePrelude, remote_name: []const u8) bool {
     for (prelude.decls) |decl_node| {
-        if (typeDeclExportsName(decl_node, remote_name)) return true;
         const exported_name = preludeDeclExportedName(decl_node) orelse continue;
         if (std.ascii.eqlIgnoreCase(exported_name, remote_name)) return true;
     }
@@ -349,22 +341,6 @@ fn noteMissingGenericUseImport(diag_bag: *parse_diag.Bag, use_stmt: ast.UseStmt,
         std.fmt.allocPrint(diag_bag.allocator, "operator {s} referenced in USE, ONLY list not found in module '{s}'", .{ item.generic_display_name, use_stmt.module_name }) catch return
     else
         std.fmt.allocPrint(diag_bag.allocator, "generic {s} referenced in USE, ONLY list not found in module '{s}'", .{ item.remote_name, use_stmt.module_name }) catch return;
-    defer diag_bag.allocator.free(message);
-    diag_bag.set(
-        if (use_stmt.source.line == 0) 1 else use_stmt.source.line,
-        if (use_stmt.source.column == 0) 1 else use_stmt.source.column,
-        catalog.parser.generic.code,
-        message,
-        use_stmt.source.text,
-    );
-}
-
-fn noteMissingUseImport(diag_bag: *parse_diag.Bag, use_stmt: ast.UseStmt, item: ast.UseOnlyItem) void {
-    if (item.generic_spec) {
-        noteMissingGenericUseImport(diag_bag, use_stmt, item);
-        return;
-    }
-    const message = std.fmt.allocPrint(diag_bag.allocator, "'{s}' not found in module '{s}'", .{ item.remote_name, use_stmt.module_name }) catch return;
     defer diag_bag.allocator.free(message);
     diag_bag.set(
         if (use_stmt.source.line == 0) 1 else use_stmt.source.line,
@@ -388,13 +364,6 @@ fn appendPreludeDeclByName(
     const seen_key = try preludeImportSeenKey(arena, remote_name, local_name);
     if (seen.contains(seen_key)) return;
     for (prelude.decls, 0..) |decl_node, decl_idx| {
-        if (try appendPreludeTypeDeclItemByName(arena, decl_node, remote_name, local_name, out_decls)) {
-            try seen.put(seen_key, {});
-            if (decl_idx < prelude.decl_sources.len) {
-                try out_sources.append(prelude.decl_sources[decl_idx]);
-            }
-            return;
-        }
         const exported_name = preludeDeclExportedName(decl_node) orelse continue;
         if (!std.ascii.eqlIgnoreCase(exported_name, remote_name)) continue;
         try seen.put(seen_key, {});
@@ -405,37 +374,6 @@ fn appendPreludeDeclByName(
         }
         return;
     }
-}
-
-fn typeDeclExportsName(decl_node: Decl, name: []const u8) bool {
-    if (decl_node != .type_decl) return false;
-    for (decl_node.type_decl.items) |item| {
-        if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
-    }
-    return false;
-}
-
-fn appendPreludeTypeDeclItemByName(
-    arena: std.mem.Allocator,
-    decl_node: Decl,
-    remote_name: []const u8,
-    local_name: []const u8,
-    out_decls: *std.array_list.Managed(Decl),
-) !bool {
-    if (decl_node != .type_decl) return false;
-    const type_decl = decl_node.type_decl;
-    for (type_decl.items) |item| {
-        if (!std.ascii.eqlIgnoreCase(item.name, remote_name)) continue;
-        var selected_item = item;
-        selected_item.name = local_name;
-        const items = try arena.alloc(ast.Declarator, 1);
-        items[0] = selected_item;
-        var selected_decl = type_decl;
-        selected_decl.items = items;
-        try out_decls.append(.{ .type_decl = selected_decl });
-        return true;
-    }
-    return false;
 }
 
 fn appendPreludeDeclDependencies(

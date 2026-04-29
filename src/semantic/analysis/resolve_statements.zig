@@ -441,7 +441,7 @@ fn installUseImports(self: *context.Context, use_stmt: ast.UseStmt) ResolveError
                 continue;
             }
         }
-        try bindKnownUseImportFromModule(self, use_stmt.module_name, item.local_name, item.remote_name, use_stmt);
+        try bindKnownUseImportFromModule(self, use_stmt.module_name, item.local_name, item.remote_name);
     }
 }
 
@@ -735,7 +735,6 @@ fn bindKnownUseImportFromModule(
     module_name: []const u8,
     local_name: []const u8,
     remote_name: []const u8,
-    use_stmt: ?ast.UseStmt,
 ) ResolveError!void {
     if (unitAlreadyHasImportedUseDecl(self, module_name, local_name)) return;
 
@@ -776,11 +775,6 @@ fn bindKnownUseImportFromModule(
 
     if (!isIsoCBindingModule(module_name)) {
         if (try bindKnownDataUseImportFromModule(self, module_name, local_name, remote_name)) return;
-    }
-
-    if (moduleHasKnownPreludeDecls(self, module_name)) {
-        emitMissingUseImportDiagnostic(self, module_name, remote_name, use_stmt);
-        return error.DuplicateDeclaration;
     }
 
     try bindKnownUseImport(self, local_name, remote_name);
@@ -842,31 +836,6 @@ fn bindKnownDataUseImportFromModule(
     return false;
 }
 
-fn moduleHasKnownPreludeDecls(self: *context.Context, module_name: []const u8) bool {
-    for (self.unit.decl_sources) |decl_source| {
-        const owner_name = decl_source.owner_name orelse continue;
-        if (std.ascii.eqlIgnoreCase(owner_name, module_name)) return true;
-    }
-    return false;
-}
-
-fn emitMissingUseImportDiagnostic(
-    self: *context.Context,
-    module_name: []const u8,
-    remote_name: []const u8,
-    use_stmt: ?ast.UseStmt,
-) void {
-    const source = if (use_stmt) |stmt_node| stmt_node.source else ast.SourceRef{};
-    const message = std.fmt.allocPrint(self.arena, "'{s}' not found in module '{s}'", .{ remote_name, module_name }) catch "not found in module";
-    self.setDiagnostic(
-        if (source.line == 0) 1 else source.line,
-        if (source.column == 0) 1 else source.column,
-        catalog.semantic.duplicate_declaration.code,
-        message,
-        source.text,
-    );
-}
-
 fn bindKnownModuleUseImports(self: *context.Context, module_name: []const u8) ResolveError!void {
     var seen = std.StringHashMap(void).init(self.arena);
     for (self.unit.decls, 0..) |decl_node, idx| {
@@ -877,7 +846,7 @@ fn bindKnownModuleUseImports(self: *context.Context, module_name: []const u8) Re
         const lowered = try case_insensitive.lowerDup(self.arena, exported_name);
         if (seen.contains(lowered)) continue;
         try seen.put(lowered, {});
-        try bindKnownUseImportFromModule(self, module_name, exported_name, exported_name, null);
+        try bindKnownUseImportFromModule(self, module_name, exported_name, exported_name);
     }
 
     var proc_it = self.known_procedure_sigs.iterator();
@@ -889,7 +858,7 @@ fn bindKnownModuleUseImports(self: *context.Context, module_name: []const u8) Re
         const lowered = try case_insensitive.lowerDup(self.arena, remote_name);
         if (seen.contains(lowered)) continue;
         try seen.put(lowered, {});
-        try bindKnownUseImportFromModule(self, module_name, remote_name, remote_name, null);
+        try bindKnownUseImportFromModule(self, module_name, remote_name, remote_name);
     }
 
     var fn_it = self.known_function_type_specs.iterator();
@@ -901,7 +870,7 @@ fn bindKnownModuleUseImports(self: *context.Context, module_name: []const u8) Re
         const lowered = try case_insensitive.lowerDup(self.arena, remote_name);
         if (seen.contains(lowered)) continue;
         try seen.put(lowered, {});
-        try bindKnownUseImportFromModule(self, module_name, remote_name, remote_name, null);
+        try bindKnownUseImportFromModule(self, module_name, remote_name, remote_name);
     }
 }
 

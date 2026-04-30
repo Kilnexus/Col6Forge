@@ -72,7 +72,6 @@ fn hasVisibleGenericInterface(self: *context.Context, name: []const u8) bool {
     return false;
 }
 
-
 pub fn checkImplicitExternalCallConsistencyForCall(
     self: *context.Context,
     name: []const u8,
@@ -284,4 +283,3 @@ fn implicitActualTypesCompatible(previous: symbols.TypeSpec, current: symbols.Ty
     if (previous.derived_type_name == null or current.derived_type_name == null) return false;
     return std.ascii.eqlIgnoreCase(previous.derived_type_name.?, current.derived_type_name.?);
 }
-

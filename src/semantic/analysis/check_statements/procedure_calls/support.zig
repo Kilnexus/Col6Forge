@@ -209,12 +209,62 @@ pub fn collectCallExprArgsScratch(self: *context.Context, args: []const ast.Call
     return exprs;
 }
 
+fn rejectUndeclaredSelfProcedureActualForCall(
+    self: *context.Context,
+    callee_name: []const u8,
+    args: []const ast.CallArg,
+) CheckError!void {
+    for (args) |arg| {
+        if (arg != .expr) continue;
+        try rejectUndeclaredSelfProcedureActual(self, callee_name, arg.expr.value);
+    }
+}
+
+fn rejectUndeclaredSelfProcedureActualForExpr(
+    self: *context.Context,
+    callee_name: []const u8,
+    args: []*ast.Expr,
+) CheckError!void {
+    for (args) |arg| {
+        try rejectUndeclaredSelfProcedureActual(self, callee_name, arg);
+    }
+}
+
+fn rejectUndeclaredSelfProcedureActual(
+    self: *context.Context,
+    callee_name: []const u8,
+    actual: *ast.Expr,
+) CheckError!void {
+    if (actual.* != .identifier) return;
+    const actual_name = actual.identifier;
+    if (!std.ascii.eqlIgnoreCase(actual_name, callee_name)) return;
+    if (currentUnitDeclaresExternalProcedure(self, actual_name)) return;
+    if (!knownProcedureRequiresExternalActualDeclaration(self, actual_name)) return;
+
+    const message = std.fmt.allocPrint(
+        self.arena,
+        "Procedure '{s}' used as actual argument must be explicitly declared EXTERNAL",
+        .{actual_name},
+    ) catch "procedure used as actual argument must be explicitly declared EXTERNAL";
+    return emitProcedureActualDiagnostic(self, actual, error.InvalidArgumentCount, message);
+}
+
+fn knownProcedureRequiresExternalActualDeclaration(self: *context.Context, name: []const u8) bool {
+    if (procedure_interfaces.findVisibleProcedureSource(self, name) != null) return false;
+    if (resolve_symbols.lookupKnownProcedureSig(self, name) != null) return true;
+    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
+    const sym = self.symbols.items[idx];
+    if (sym.storage == .dummy or sym.is_host_associated or sym.is_intrinsic) return false;
+    return sym.kind == .function or sym.kind == .subroutine;
+}
+
 pub fn checkProcedureActualArgsForCall(
     self: *context.Context,
     callee_name: []const u8,
     args: []const ast.CallArg,
     comptime deps: anytype,
 ) CheckError!void {
+    try rejectUndeclaredSelfProcedureActualForCall(self, callee_name, args);
     try checkImplicitExternalCallConsistencyForCall(self, callee_name, args);
     const sig = try resolvedProcedureSigForCallActuals(self, callee_name, args, deps) orelse return;
     if (resolve_symbols.isIntrinsicName(callee_name) and !(try callActualsCouldMatchProcedureSig(self, sig, args, deps))) return;
@@ -242,6 +292,7 @@ pub fn checkProcedureActualArgsForExprCall(
     args: []*ast.Expr,
     comptime deps: anytype,
 ) CheckError!void {
+    try rejectUndeclaredSelfProcedureActualForExpr(self, callee_name, args);
     try checkImplicitExternalCallConsistencyForExpr(self, callee_name, args);
     const sig = try resolvedProcedureSigForExprActuals(self, callee_name, args, deps) orelse return;
     if (resolve_symbols.isIntrinsicName(callee_name) and !(try exprActualsCouldMatchProcedureSig(self, sig, args, deps))) return;
@@ -831,7 +882,6 @@ pub fn checkExplicitInterfaceRequirementForExprArgs(
     }
 }
 
-
 pub fn hasVisibleGenericInterface(self: *context.Context, name: []const u8) bool {
     for (self.unit.decls) |decl| {
         if (decl != .interface_block) continue;
@@ -931,4 +981,3 @@ pub fn hasAmbiguousVisibleGenericInterface(self: *context.Context, name: []const
     }
     return true;
 }
-

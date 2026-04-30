@@ -433,12 +433,17 @@ pub fn processCase(
     if (expect_failure) {
         defer if (diag_text.len > 0) allocator.free(diag_text);
         defer if (match_text.len > 0) allocator.free(match_text);
-        if (!compile_failed) {
+        const lenient_error_expectation = case.expect_compile_error and !case.expect_should_fail and !check_errors;
+        if (!compile_failed and !lenient_error_expectation) {
             log_state.stderr("expected compile failure but succeeded: {s}\n", .{case.rel_path});
             return false;
         }
         if (case.expect_compile_error) {
-            if (check_errors) {
+            if (lenient_error_expectation) {
+                if (options.verbose) {
+                    log_state.stdout("strict-level off: treating dg-error as diagnostic metadata for {s}\n", .{case.rel_path});
+                }
+            } else if (check_errors) {
                 const candidate = if (match_text.len != 0) match_text else diag_text;
                 const matched = try matchExpectedErrors(allocator, case, candidate, log_state);
                 if (!matched) return false;

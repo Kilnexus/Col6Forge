@@ -20,6 +20,7 @@ const expr_attributes = @import("../expr_attributes.zig");
 const expr_diagnostics = @import("../expr_diagnostics.zig");
 const max_min_conformance = @import("max_min_conformance.zig");
 const boz_intrinsic_constraints = @import("boz_intrinsic_constraints.zig");
+const constant_expr = @import("constant_expr.zig");
 
 const ResolvedRefKind = symbols.ResolvedRefKind;
 pub const CheckError = anyerror;
@@ -396,6 +397,7 @@ pub fn checkExprType(self: *context.Context, expr: *ast.Expr, comptime deps: any
         .binary => |bin| {
             _ = try checkExprType(self, bin.left, deps);
             _ = try checkExprType(self, bin.right, deps);
+            try constant_expr.rejectDivisionByZero(self, expr, bin);
             try checkStaticElementalBinaryConformance(self, expr, bin);
             return try resolve_expr.exprType(self, expr);
         },

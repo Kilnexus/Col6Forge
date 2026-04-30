@@ -634,13 +634,14 @@ pub fn parseProgramUnitBody(
                 self.index += 1;
                 break;
             }
-            const explicit_program_unit_end = root_predicates.isProgramUnitEndTokens(line, tokens);
-            if (explicit_program_unit_end or
+            if (root_predicates.isProgramUnitEndTokens(line, tokens) or
                 (stmt_lp.isKeywordSplit("END") and
                     !root_control.isEndDoLine(stmt_lp) and
                     !root_control.isEndIfLine(stmt_lp) and
                     !root_control.isEndBlockLine(stmt_lp)))
             {
+                if (do_ctx.topIsBlockConstruct())
+                    return root_control.rejectProgramUnitEndInsideBlock(self.diag_bag, line);
                 saw_program_unit_end = true;
                 if (implicit_program_recovery and recovered_stmt_error) {
                     self.diag_bag.set(
@@ -755,7 +756,6 @@ pub fn parseProgramUnitBody(
         }
         try stmts.append(stmt_node);
     }
-
     if (implicit_program_recovery and recovered_stmt_error and saw_unexpected_end_recovery and self.lines.len != 0) {
         const eof_line = self.lines[self.lines.len - 1];
         self.diag_bag.set(

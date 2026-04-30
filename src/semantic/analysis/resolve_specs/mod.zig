@@ -18,6 +18,7 @@ const equivalence = @import("equivalence.zig");
 const procedure_interfaces = @import("../check_statements/procedure_interfaces.zig");
 const assumed_size = @import("../assumed_size.zig");
 const decl_scan = @import("../decl_scan.zig");
+const init_state = @import("../declaration_initialization_state.zig");
 const validation_helpers = @import("validation_helpers.zig");
 
 const resolvedDeclTypeSpec = helpers.resolvedDeclTypeSpec;
@@ -161,6 +162,10 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                     return error.DuplicateDeclaration;
                 }
                 const idx = try symbols_mod.ensureDeclaredSymbol(self, item.name);
+                if (item.dims.len > 0 and init_state.initializedSource(self, item.name) != null) {
+                    setAttributeConflictDiagnostic(self, "DIMENSION attribute after its initialization");
+                    return error.DuplicateDeclaration;
+                }
                 if (item.dims.len > 0 and self.symbols.items[idx].dims.len > 0) {
                     emitDuplicateDimensionDiagnostic(self, item.name);
                     return error.DuplicateDeclaration;
@@ -177,6 +182,10 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
         },
         .parameter => |param| {
             for (param.assigns) |assign| {
+                if (init_state.initializedSource(self, assign.name) != null) {
+                    setAttributeConflictDiagnostic(self, "Initializing already initialized variable");
+                    return error.DuplicateDeclaration;
+                }
                 const idx = try symbols_mod.ensureDeclaredSymbol(self, assign.name);
                 var sym = &self.symbols.items[idx];
                 sym.kind = .parameter;

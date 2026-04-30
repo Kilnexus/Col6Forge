@@ -15,6 +15,7 @@ pub const Checker = struct {
         for (ctx.unit.stmts) |stmt| {
             const diag_count_before = ctx.diagnosticCount();
             check_statements.checkStmt(ctx, stmt) catch |err| {
+                check_statements.closeCompletedDoRanges(ctx, stmt);
                 if (!ctx.usesExplicitDiagnosticBag()) return err;
                 if (first_stmt_error == null) first_stmt_error = err;
                 if (ctx.diagnosticCount() == diag_count_before) {
@@ -22,6 +23,8 @@ pub const Checker = struct {
                 }
                 continue;
             };
+            if (stmt.node == .do_loop) try check_statements.noteDoLoopStart(ctx, stmt);
+            check_statements.closeCompletedDoRanges(ctx, stmt);
         }
         if (first_stmt_error) |err| return err;
     }

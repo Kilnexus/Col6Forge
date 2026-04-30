@@ -214,6 +214,11 @@ pub const DoContext = struct {
         return false;
     }
 
+    pub fn topIsBlockConstruct(self: *const DoContext) bool {
+        if (self.scope_stack.items.len == 0) return false;
+        return self.scope_stack.items[self.scope_stack.items.len - 1].kind == .block_construct;
+    }
+
     pub fn updateTopDoName(self: *DoContext, name: []const u8, cycle_label: []const u8, exit_label: ?[]const u8) !void {
         if (self.scope_stack.items.len == 0) return error.UnexpectedToken;
         const top = &self.scope_stack.items[self.scope_stack.items.len - 1];

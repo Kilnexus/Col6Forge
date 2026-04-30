@@ -169,6 +169,12 @@ pub const Context = struct {
         kind: DeclareVariantAdjustArgKind,
     };
 
+    pub const ActiveDoControl = struct {
+        name: []const u8,
+        end_label: []const u8,
+        source: ast.SourceRef = .{},
+    };
+
     pub const BuiltinConstant = struct {
         module_name: []const u8,
         type_spec: symbols.TypeSpec,
@@ -197,6 +203,7 @@ pub const Context = struct {
     expr_type_cache: std.AutoHashMap(usize, ast.TypeKind),
     expr_type_spec_cache: std.AutoHashMap(usize, symbols.TypeSpec),
     expr_source_index: std.AutoHashMap(usize, ast.SourceRef),
+    initialized_symbols: std.StringHashMap(ast.DeclSource),
     common_block_names: std.StringHashMap(void),
     common_blocks_indexed: bool,
     equivalence_nodes: std.StringHashMap(usize),
@@ -210,6 +217,7 @@ pub const Context = struct {
     current_decl_source: ?ast.DeclSource,
     current_source: ?ast.SourceRef,
     current_stmt: ?ast.Stmt,
+    active_do_controls: std.array_list.Managed(ActiveDoControl),
     diag_bag: ?*diag.Bag,
     known_function_type_specs: *const std.StringHashMap(symbols.TypeSpec),
     known_procedure_sigs: *const std.StringHashMap(ProcedureSig),
@@ -299,6 +307,7 @@ pub const Context = struct {
             .expr_type_cache = std.AutoHashMap(usize, ast.TypeKind).init(arena),
             .expr_type_spec_cache = std.AutoHashMap(usize, symbols.TypeSpec).init(arena),
             .expr_source_index = std.AutoHashMap(usize, ast.SourceRef).init(arena),
+            .initialized_symbols = std.StringHashMap(ast.DeclSource).init(arena),
             .common_block_names = std.StringHashMap(void).init(arena),
             .common_blocks_indexed = false,
             .equivalence_nodes = std.StringHashMap(usize).init(arena),
@@ -312,6 +321,7 @@ pub const Context = struct {
             .current_decl_source = null,
             .current_source = null,
             .current_stmt = null,
+            .active_do_controls = std.array_list.Managed(ActiveDoControl).init(arena),
             .diag_bag = diag_bag,
             .known_function_type_specs = known_function_type_specs,
             .known_procedure_sigs = known_procedure_sigs,

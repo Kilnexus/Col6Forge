@@ -18,6 +18,7 @@ const static_shapes = @import("static_shapes.zig");
 const statement_functions = @import("statement_functions.zig");
 const data_stmt_checks = @import("data_stmt.zig");
 const stmt_diagnostics = @import("diagnostics.zig");
+const do_iterators = @import("do_iterators.zig");
 const assumed_size = @import("../assumed_size.zig");
 const procedure_context = @import("../procedure_context.zig");
 const decl_scan = @import("../decl_scan.zig");
@@ -35,9 +36,18 @@ pub fn checkStmt(self: *context.Context, stmt: ast.Stmt) CheckError!void {
     return checkStmtNode(self, stmt.node);
 }
 
+pub fn noteDoLoopStart(self: *context.Context, stmt: ast.Stmt) CheckError!void {
+    return do_iterators.noteLoopStart(self, stmt, stmt.node.do_loop);
+}
+
+pub fn closeCompletedDoRanges(self: *context.Context, stmt: ast.Stmt) void {
+    do_iterators.closeLoopRangesEndingAt(self, stmt);
+}
+
 pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void {
     switch (node) {
         .assignment => |assign| {
+            try do_iterators.rejectActiveControlDefinition(self, assign.target);
             try statement_functions.validateAssignment(self, assign);
             try statement_functions.validateCalls(self, assign.value);
             if (assignmentTargetHasNoImplicitType(self, assign.target)) return error.UnexpectedTypeDecl;
@@ -354,12 +364,16 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             try leaf_helpers.checkReadFormatPositiveWidths(self, read.format);
             if (read.rec) |rec| try expr_semantics.checkExpr(self, rec, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
             for (read.args) |arg| {
+                try do_iterators.rejectActiveControlDefinition(self, arg);
                 try expr_semantics.checkExpr(self, arg, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
                 try rejectProcedurePointerComponentIo(self, arg);
                 try rejectAllocatableComponentIo(self, arg);
                 try rejectPolymorphicDataTransferIo(self, arg);
             }
-            if (read.iostat) |io| try expr_semantics.checkExpr(self, io, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            if (read.iostat) |io| {
+                try do_iterators.rejectActiveControlDefinition(self, io);
+                try expr_semantics.checkExpr(self, io, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            }
             for (read.controls) |ctrl| try expr_semantics.checkExpr(self, ctrl.value, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
             try leaf_helpers.checkAdvanceControls(self, read.controls);
             try leaf_helpers.checkDataTransferAsyncControls(self, read.controls);
@@ -438,6 +452,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
         .pause => {},
         .stop => {},
         .do_loop => |loop| {
+            try do_iterators.rejectActiveControlNameDefinition(self, loop.var_name);
             const loop_idx = resolve_symbols.findSymbolIndex(self, loop.var_name) orelse return error.UnknownSymbol;
             const loop_sym = self.symbols.items[loop_idx];
             const loop_kind = loop_sym.loweredKind();

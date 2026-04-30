@@ -45,6 +45,17 @@ pub fn noteUnexpectedProgramUnitEnd(
     diag_bag.set(line.span.start_line, 1, catalog.parser.unexpected_token.code, expectedProgramUnitEndMessage(kind), line.text);
 }
 
+pub fn rejectProgramUnitEndInsideBlock(diag_bag: *parse_diag.Bag, line: logical_line.LogicalLine) error{UnexpectedToken} {
+    diag_bag.set(
+        line.span.start_line,
+        if (line.segments.len > 0) line.segments[0].column else 1,
+        catalog.parser.unexpected_token.code,
+        "Expecting END BLOCK statement",
+        line.text,
+    );
+    return error.UnexpectedToken;
+}
+
 pub fn isEndDoLine(lp: LineParser) bool {
     const end_span = lp.keywordSpan("END") orelse return false;
     const next_idx = lp.index + end_span;

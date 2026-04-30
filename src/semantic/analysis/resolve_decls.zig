@@ -19,6 +19,7 @@ const parameter_shape = @import("resolve_decls_parameter_shape.zig");
 const assumed_size = @import("assumed_size.zig");
 const deferred_shape = @import("deferred_shape.zig");
 const decl_scan = @import("decl_scan.zig");
+const init_state = @import("declaration_initialization_state.zig");
 
 const StorageClass = symbols.StorageClass;
 const CharacterLengthKind = symbols.CharacterLengthKind;
@@ -127,6 +128,7 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
             if (first_err == null) first_err = err;
             continue;
         };
+        if (!decl.parameter and item.init != null) try init_state.markInitialized(self, item.name);
     }
     if (first_err) |err| return err;
 }

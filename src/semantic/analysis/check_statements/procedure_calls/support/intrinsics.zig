@@ -40,7 +40,6 @@ const hasExplicitInterfaceSensitiveCallArg = procedure_call_actual_traits.hasExp
 const hasExplicitInterfaceSensitiveExprArg = procedure_call_actual_traits.hasExplicitInterfaceSensitiveExprArg;
 const hasKeywordActualCallArg = procedure_call_actual_traits.hasKeywordActualCallArg;
 
-
 pub fn checkIntrinsicCallConstraintsForCallArgs(
     self: *context.Context,
     name: []const u8,
@@ -74,6 +73,10 @@ pub fn checkIntrinsicCallConstraintsForCallArgs(
     }
     if (std.ascii.eqlIgnoreCase(name, "get_environment_variable")) {
         try checkGetEnvironmentVariableCallConstraints(self, args);
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "mvbits")) {
+        try checkMvbitsCallConstraints(self, args);
         return;
     }
     try checkLegacyWidecharCallConstraints(self, name, args);
@@ -115,7 +118,10 @@ pub fn checkIntrinsicCallConstraintsForExprArgs(
     }
     if (std.ascii.eqlIgnoreCase(name, "storage_size")) {
         try checkStorageSizeExprArgs(self, args);
+        return;
     }
+    try checkBitExprIntrinsicConstraints(self, name, args);
+    try checkRepeatExprArgs(self, name, args);
 }
 
 fn checkIntrinsicSpecialActualRestrictionsForCallArgs(
@@ -262,6 +268,97 @@ fn constIntegerValue(self: *context.Context, expr_node: *ast.Expr) CheckError!?i
         .integer => |int_value| int_value,
         else => null,
     };
+}
+
+fn constIntegerScalarOrSingleElement(self: *context.Context, expr_node: *ast.Expr) CheckError!?i64 {
+    if (expr_node.* == .array_constructor and expr_node.array_constructor.items.len == 1) {
+        return constIntegerValue(self, expr_node.array_constructor.items[0]);
+    }
+    if (exprIsBozLiteral(expr_node)) return literal_utils.parseBozInt(expr_node.literal.text) catch null;
+    return constIntegerValue(self, expr_node);
+}
+
+fn integerStorageBits(self: *context.Context, expr_node: *ast.Expr) CheckError!?i64 {
+    if (exprIsBozLiteral(expr_node)) return self.target_layout.default_integer_bits;
+    const spec = try resolve_expr.exprTypeSpec(self, expr_node);
+    if (spec.lowered_kind != .integer) return null;
+    const kind_bytes = spec.kind_value orelse @divTrunc(@as(i64, self.target_layout.default_integer_bits), 8);
+    return kind_bytes * 8;
+}
+
+fn checkBitExprIntrinsicConstraints(
+    self: *context.Context,
+    name: []const u8,
+    args: []*ast.Expr,
+) CheckError!void {
+    if (std.ascii.eqlIgnoreCase(name, "ibclr") or std.ascii.eqlIgnoreCase(name, "ibset")) {
+        if (args.len < 2) return;
+        const pos = try constIntegerScalarOrSingleElement(self, args[1]) orelse return;
+        if (pos < 0) return emitIntrinsicArgDiagnostic(self, args[1], "must be nonnegative");
+        const bits = try integerStorageBits(self, args[0]) orelse return;
+        if (pos >= bits) return emitIntrinsicArgDiagnostic(self, args[1], "must be less than");
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "ibits")) {
+        if (args.len < 3) return;
+        const pos = try constIntegerScalarOrSingleElement(self, args[1]) orelse return;
+        const len = try constIntegerScalarOrSingleElement(self, args[2]) orelse return;
+        if (pos < 0) return emitIntrinsicArgDiagnostic(self, args[1], "must be nonnegative");
+        if (len < 0) return emitIntrinsicArgDiagnostic(self, args[2], "must be nonnegative");
+        const bits = try integerStorageBits(self, args[0]) orelse return;
+        if (pos + len > bits) return emitIntrinsicArgDiagnostic(self, args[2], "must be less than");
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "ishft") or std.ascii.eqlIgnoreCase(name, "ishftc")) {
+        if (args.len < 2) return;
+        const shift = try constIntegerScalarOrSingleElement(self, args[1]) orelse return;
+        const size = if (args.len >= 3)
+            try constIntegerScalarOrSingleElement(self, args[2]) orelse return
+        else
+            try integerStorageBits(self, args[0]) orelse return;
+        if (size <= 0) return emitIntrinsicArgDiagnostic(self, args[2], "must be positive");
+        if (@abs(shift) > size) return emitIntrinsicArgDiagnostic(self, args[1], "absolute value of SHIFT");
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "dshiftl") or std.ascii.eqlIgnoreCase(name, "dshiftr")) {
+        if (args.len < 3) return;
+        if (exprIsBozLiteral(args[0]) and exprIsBozLiteral(args[1])) {
+            return emitIntrinsicArgDiagnostic(self, args[1], "cannot both be");
+        }
+        if (!exprIsBozLiteral(args[0]) and !exprIsBozLiteral(args[1])) {
+            const left_spec = try resolve_expr.exprTypeSpec(self, args[0]);
+            const right_spec = try resolve_expr.exprTypeSpec(self, args[1]);
+            if (left_spec.lowered_kind != right_spec.lowered_kind or left_spec.kind_value != right_spec.kind_value) {
+                return emitIntrinsicArgDiagnostic(self, args[1], "must be the same type and kind");
+            }
+        }
+        const shift = try constIntegerScalarOrSingleElement(self, args[2]) orelse return;
+        if (shift < 0) return emitIntrinsicArgDiagnostic(self, args[2], "must be nonnegative");
+        const bits = try integerStorageBits(self, args[0]) orelse try integerStorageBits(self, args[1]) orelse return;
+        if (shift > bits) return emitIntrinsicArgDiagnostic(self, args[2], "must be less than or equal");
+        return;
+    }
+    if (std.ascii.eqlIgnoreCase(name, "maskl") or std.ascii.eqlIgnoreCase(name, "maskr")) {
+        if (args.len < 1) return;
+        const bits = try constIntegerScalarOrSingleElement(self, args[0]) orelse return;
+        if (bits < 0) return emitIntrinsicArgDiagnostic(self, args[0], "must be nonnegative");
+        const kind_bits: i64 = if (args.len >= 2)
+            (try constIntegerScalarOrSingleElement(self, args[1]) orelse 4) * 8
+        else
+            self.target_layout.default_integer_bits;
+        if (bits > kind_bits) return emitIntrinsicArgDiagnostic(self, args[0], "must be less than or equal");
+    }
+}
+
+fn checkRepeatExprArgs(self: *context.Context, name: []const u8, args: []*ast.Expr) CheckError!void {
+    if (!std.ascii.eqlIgnoreCase(name, "repeat") or args.len < 2) return;
+    const copies = try constIntegerScalarOrSingleElement(self, args[1]) orelse return;
+    if (copies < 0) return emitIntrinsicArgDiagnostic(self, args[1], "Argument NCOPIES of REPEAT intrinsic is negative");
+    const spec = try resolve_expr.exprTypeSpec(self, args[0]);
+    const char_len = spec.char_len orelse return;
+    if (char_len > 0 and copies > @divTrunc(std.math.maxInt(i64), @as(i64, @intCast(char_len)))) {
+        return emitIntrinsicArgDiagnostic(self, args[1], "Argument NCOPIES of REPEAT intrinsic is too large");
+    }
 }
 
 fn checkSelectedCharKindExprArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
@@ -558,6 +655,25 @@ fn checkMoveAllocCallConstraints(self: *context.Context, args: []const ast.CallA
     }
 }
 
+fn checkMvbitsCallConstraints(self: *context.Context, args: []const ast.CallArg) CheckError!void {
+    const from = nthOrKeywordActual(args, 0, "from") orelse return;
+    const frompos = nthOrKeywordActual(args, 1, "frompos") orelse return;
+    const len = nthOrKeywordActual(args, 2, "len") orelse return;
+    const to = nthOrKeywordActual(args, 3, "to") orelse return;
+    const topos = nthOrKeywordActual(args, 4, "topos") orelse return;
+
+    const from_pos_value = try constIntegerScalarOrSingleElement(self, frompos.value) orelse return;
+    const len_value = try constIntegerScalarOrSingleElement(self, len.value) orelse return;
+    const to_pos_value = try constIntegerScalarOrSingleElement(self, topos.value) orelse return;
+    if (from_pos_value < 0) return emitIntrinsicArgDiagnostic(self, frompos.value, "must be nonnegative");
+    if (len_value < 0) return emitIntrinsicArgDiagnostic(self, len.value, "must be nonnegative");
+    if (to_pos_value < 0) return emitIntrinsicArgDiagnostic(self, topos.value, "must be nonnegative");
+    const from_bits = try integerStorageBits(self, from.value) orelse return;
+    const to_bits = try integerStorageBits(self, to.value) orelse return;
+    if (from_pos_value + len_value > from_bits) return emitIntrinsicArgDiagnostic(self, frompos.value, "must be less than");
+    if (to_pos_value + len_value > to_bits) return emitIntrinsicArgDiagnostic(self, topos.value, "must be less than");
+}
+
 fn checkRandomInitCallConstraints(self: *context.Context, args: []const ast.CallArg) CheckError!void {
     const repeatable = nthOrKeywordActual(args, 0, "repeatable");
     const image_distinct = nthOrKeywordActual(args, 1, "image_distinct");
@@ -731,11 +847,11 @@ fn checkLegacyWidecharCallConstraints(self: *context.Context, name: []const u8, 
     const char_positions: ?[]const usize = blk: {
         if (std.ascii.eqlIgnoreCase(name, "ctime")) break :blk &.{1};
         if (std.ascii.eqlIgnoreCase(name, "chdir")) break :blk &.{0};
-        if (std.ascii.eqlIgnoreCase(name, "chmod")) break :blk &.{0, 1};
+        if (std.ascii.eqlIgnoreCase(name, "chmod")) break :blk &.{ 0, 1 };
         if (std.ascii.eqlIgnoreCase(name, "fdate")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "gerror")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "getcwd")) break :blk &.{0};
-        if (std.ascii.eqlIgnoreCase(name, "getenv")) break :blk &.{0, 1};
+        if (std.ascii.eqlIgnoreCase(name, "getenv")) break :blk &.{ 0, 1 };
         if (std.ascii.eqlIgnoreCase(name, "getarg")) break :blk &.{1};
         if (std.ascii.eqlIgnoreCase(name, "getlog")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "fgetc")) break :blk &.{1};
@@ -743,12 +859,12 @@ fn checkLegacyWidecharCallConstraints(self: *context.Context, name: []const u8, 
         if (std.ascii.eqlIgnoreCase(name, "fputc")) break :blk &.{1};
         if (std.ascii.eqlIgnoreCase(name, "fput")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "hostnm")) break :blk &.{0};
-        if (std.ascii.eqlIgnoreCase(name, "link")) break :blk &.{0, 1};
+        if (std.ascii.eqlIgnoreCase(name, "link")) break :blk &.{ 0, 1 };
         if (std.ascii.eqlIgnoreCase(name, "perror")) break :blk &.{0};
-        if (std.ascii.eqlIgnoreCase(name, "rename")) break :blk &.{0, 1};
+        if (std.ascii.eqlIgnoreCase(name, "rename")) break :blk &.{ 0, 1 };
         if (std.ascii.eqlIgnoreCase(name, "lstat")) break :blk &.{0};
         if (std.ascii.eqlIgnoreCase(name, "stat")) break :blk &.{0};
-        if (std.ascii.eqlIgnoreCase(name, "symlnk")) break :blk &.{0, 1};
+        if (std.ascii.eqlIgnoreCase(name, "symlnk")) break :blk &.{ 0, 1 };
         if (std.ascii.eqlIgnoreCase(name, "system")) break :blk &.{0};
         break :blk null;
     };
@@ -868,4 +984,3 @@ fn emitIntrinsicArgDiagnostic(self: *context.Context, expr_node: *ast.Expr, mess
 fn exprHasPointerAttribute(self: *context.Context, expr_node: *ast.Expr) bool {
     return expr_attributes.isPointerEntity(self, expr_node);
 }
-

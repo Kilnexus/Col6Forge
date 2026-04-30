@@ -46,6 +46,11 @@ const IntrinsicReturnTypeMap = std.StaticStringMap(ast.TypeKind).initComptime(.{
     .{ "MAX1", .integer },
     .{ "ICHAR", .integer },
     .{ "IACHAR", .integer },
+    .{ "IBCLR", .integer },
+    .{ "IBITS", .integer },
+    .{ "IBSET", .integer },
+    .{ "ISHFT", .integer },
+    .{ "ISHFTC", .integer },
     .{ "COUNT", .integer },
     .{ "SIGNAL", .integer },
     .{ "INDEX", .integer },
@@ -68,6 +73,10 @@ const IntrinsicReturnTypeMap = std.StaticStringMap(ast.TypeKind).initComptime(.{
     .{ "SIZEOF", .integer },
     .{ "C_SIZEOF", .integer },
     .{ "STORAGE_SIZE", .integer },
+    .{ "DSHIFTL", .integer },
+    .{ "DSHIFTR", .integer },
+    .{ "MASKL", .integer },
+    .{ "MASKR", .integer },
     .{ "COMMAND_ARGUMENT_COUNT", .integer },
     .{ "VERIFY", .integer },
     .{ "ACHAR", .character },
@@ -381,7 +390,7 @@ test "inferResultType keeps SUM element type and type inquiry intrinsics return 
     const int_arg = symbols.TypeSpec.fromResolvedKind(.integer, .integer, 4);
     const derived_arg = symbols.TypeSpec.fromDerived("t");
 
-    const sum_result = try inferResultType("SUM", fixedTypeSpec(.real), &.{ int_arg });
+    const sum_result = try inferResultType("SUM", fixedTypeSpec(.real), &.{int_arg});
     try testing.expectEqual(ast.TypeKind.integer, sum_result.lowered_kind);
     try testing.expectEqual(@as(?i64, 4), sum_result.kind_value);
 

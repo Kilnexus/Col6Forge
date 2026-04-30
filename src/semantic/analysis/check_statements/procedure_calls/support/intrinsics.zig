@@ -164,6 +164,7 @@ fn checkIntrinsicSpecialActualRestriction(
     if (exprIsNoArgCheck(self, expr_node) and !intrinsicAllowsNoArgCheck(name)) {
         return emitIntrinsicArgDiagnostic(self, expr_node, "Variable with NO_ARG_CHECK attribute at (1) is only permitted as argument to the intrinsic functions C_LOC and PRESENT");
     }
+    if (std.ascii.eqlIgnoreCase(name, "c_loc") and actual_idx == 0 and !expr_attributes.isCAddressableDataTarget(self, expr_node)) return emitIntrinsicArgDiagnostic(self, expr_node, "Argument X at (1) to C_LOC shall have either the POINTER or the TARGET attribute");
     if (exprIsBozLiteral(expr_node)) {
         if (std.ascii.eqlIgnoreCase(name, "c_sizeof")) {
             return emitIntrinsicArgDiagnostic(self, expr_node, "cannot appear");

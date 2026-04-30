@@ -19,6 +19,7 @@ const array_constructor_items = @import("array_constructor_items.zig");
 const expr_attributes = @import("../expr_attributes.zig");
 const expr_diagnostics = @import("../expr_diagnostics.zig");
 const max_min_conformance = @import("max_min_conformance.zig");
+const boz_intrinsic_constraints = @import("boz_intrinsic_constraints.zig");
 
 const ResolvedRefKind = symbols.ResolvedRefKind;
 pub const CheckError = anyerror;
@@ -60,6 +61,7 @@ pub fn checkSpecialExprCallConstraints(
     try checkAssumedSizeInquiryArrayArg(self, name, args);
     try checkStaticMatmulConformance(self, call_expr, name, args);
     try max_min_conformance.checkStaticMaxMinConformance(self, name, args);
+    try boz_intrinsic_constraints.checkExprCall(self, name, args);
     try checkLegacyWidecharExprCallConstraints(self, name, args);
     if (intrinsicRequiresDoublePrecisionArgs(name)) {
         for (args) |arg| {

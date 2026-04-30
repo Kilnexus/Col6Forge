@@ -4,6 +4,7 @@ const symbols = @import("symbol/mod.zig");
 
 const IntrinsicReturnTypeMap = std.StaticStringMap(ast.TypeKind).initComptime(.{
     .{ "CMPLX", .complex },
+    .{ "COMPLEX", .complex },
     .{ "CONJG", .complex },
     .{ "CSIN", .complex },
     .{ "CCOS", .complex },
@@ -49,6 +50,9 @@ const IntrinsicReturnTypeMap = std.StaticStringMap(ast.TypeKind).initComptime(.{
     .{ "IBCLR", .integer },
     .{ "IBITS", .integer },
     .{ "IBSET", .integer },
+    .{ "IAND", .integer },
+    .{ "IEOR", .integer },
+    .{ "IOR", .integer },
     .{ "ISHFT", .integer },
     .{ "ISHFTC", .integer },
     .{ "COUNT", .integer },
@@ -77,6 +81,10 @@ const IntrinsicReturnTypeMap = std.StaticStringMap(ast.TypeKind).initComptime(.{
     .{ "DSHIFTR", .integer },
     .{ "MASKL", .integer },
     .{ "MASKR", .integer },
+    .{ "MERGE_BITS", .integer },
+    .{ "AND", .integer },
+    .{ "OR", .integer },
+    .{ "XOR", .integer },
     .{ "COMMAND_ARGUMENT_COUNT", .integer },
     .{ "VERIFY", .integer },
     .{ "ACHAR", .character },

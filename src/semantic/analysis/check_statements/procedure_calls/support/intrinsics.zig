@@ -21,6 +21,7 @@ const procedure_call_actual_traits = @import("../../procedure_call_actual_traits
 const procedure_call_diagnostics = @import("../../procedure_call_diagnostics.zig");
 const procedure_interfaces = @import("../../procedure_interfaces.zig");
 const shift_intrinsics = @import("shift_intrinsics.zig");
+const coarray_intrinsics = @import("coarray_intrinsics.zig");
 
 pub const CheckError = anyerror;
 const DiagnosticSource = procedure_call_diagnostics.DiagnosticSource;
@@ -125,6 +126,7 @@ pub fn checkIntrinsicCallConstraintsForExprArgs(
         if (args.len >= 1 and resolve_expr.exprRank(self, args[0]) != 0) return emitIntrinsicArgDiagnostic(self, args[0], "argument of 'c_associated' intrinsic at (1) must be a scalar");
         if (args.len >= 2 and resolve_expr.exprRank(self, args[1]) != 0) return emitIntrinsicArgDiagnostic(self, args[1], "argument of 'c_associated' intrinsic at (1) must be a scalar");
     }
+    try coarray_intrinsics.checkExprArgs(self, name, args);
     try shift_intrinsics.checkExprArgs(self, name, args);
     try checkBitExprIntrinsicConstraints(self, name, args);
     try checkRepeatExprArgs(self, name, args);

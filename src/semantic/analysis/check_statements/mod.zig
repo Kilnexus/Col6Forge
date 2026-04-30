@@ -185,6 +185,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             if (pureProcedureUsesImpurePointerTarget(self, assign.value)) {
                 return emitExprConstraint(self, assign.value, "Bad target");
             }
+            try rejectCharacterPointerLengthMismatch(self, assign.target, assign.value);
             try procedure_calls.rejectDefinitelyNoncontiguousPointerAssociation(self, assign.target, assign.value);
             try procedure_calls.checkProcedurePointerAssignmentCompatibility(self, assign.target, assign.value, .{
                 .dummyArgTypeCompatible = dummyArgTypeCompatible,
@@ -866,6 +867,22 @@ fn rejectProcedurePointerComponentIo(self: *context.Context, expr_node: *ast.Exp
         if (!component.procedure or !component.pointer) continue;
         return emitExprConstraint(self, expr_node, "cannot have procedure pointer components");
     }
+}
+
+fn rejectCharacterPointerLengthMismatch(self: *context.Context, target: *ast.Expr, value: *ast.Expr) CheckError!void {
+    const target_spec = resolve_expr.exprTypeSpec(self, target) catch return;
+    if (target_spec.lowered_kind != .character or target_spec.char_len_kind == .deferred) return;
+    const value_spec = resolve_expr.exprTypeSpec(self, value) catch return;
+    if (value_spec.lowered_kind != .character or value_spec.char_len_kind == .deferred) return;
+    const target_len = target_spec.char_len orelse return;
+    const value_len = value_spec.char_len orelse return;
+    if (target_len == value_len) return;
+    const message = std.fmt.allocPrint(
+        self.arena,
+        "Unequal character lengths ({d}/{d})",
+        .{ target_len, value_len },
+    ) catch "Unequal character lengths";
+    return emitExprConstraint(self, value, message);
 }
 
 fn rejectAllocatableComponentIo(self: *context.Context, expr_node: *ast.Expr) CheckError!void {

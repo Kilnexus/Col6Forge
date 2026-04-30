@@ -106,7 +106,17 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
         .import => {},
         .intent => {},
         .optional => {},
-        .value => {},
+        .value => |value_decl| {
+            var first_error: ?anyerror = null;
+            for (value_decl.names) |name| {
+                validateCharacterValueDummy(self, name) catch |err| {
+                    if (!self.usesExplicitDiagnosticBag()) return err;
+                    if (first_error == null) first_error = err;
+                    continue;
+                };
+            }
+            if (first_error) |err| return err;
+        },
         .interface_block => |interface_block| {
             try interfaces.validateExplicitInterfaceBlock(self, interface_block);
         },
@@ -405,6 +415,58 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
         },
         .type_decl => return error.UnexpectedTypeDecl,
     }
+}
+
+fn validateCharacterValueDummy(self: *context.Context, name: []const u8) !void {
+    if (!currentUnitHasDummyArg(self, name)) return;
+    const idx = symbols_mod.findSymbolIndex(self, name) orelse return;
+    const sym = self.symbols.items[idx];
+    if (sym.type_spec.lowered_kind != .character) return;
+    if (sym.type_spec.char_len_kind != .constant) {
+        setSourceDiagnostic(self, self.unit.source, "VALUE attribute must have constant length");
+        return error.InvalidArgumentCount;
+    }
+    if (valueDummyUsesCCharKind(self, name) and (sym.type_spec.char_len orelse 1) != 1) {
+        setSourceDiagnostic(self, self.unit.source, "VALUE attribute must have length one");
+        return error.InvalidArgumentCount;
+    }
+}
+
+fn currentUnitHasDummyArg(self: *const context.Context, name: []const u8) bool {
+    for (self.unit.args) |arg| {
+        if (std.ascii.eqlIgnoreCase(arg, name)) return true;
+    }
+    return false;
+}
+
+fn valueDummyUsesCCharKind(self: *const context.Context, name: []const u8) bool {
+    for (self.unit.decls) |decl| {
+        if (decl != .type_decl) continue;
+        const type_decl = decl.type_decl;
+        if (type_decl.type_kind != .character) continue;
+        for (type_decl.items) |item| {
+            if (!std.ascii.eqlIgnoreCase(item.name, name)) continue;
+            const selector = type_decl.kind_selector orelse return false;
+            return exprReferencesIdentifier(selector, "c_char");
+        }
+    }
+    return false;
+}
+
+fn exprReferencesIdentifier(expr: *ast.Expr, name: []const u8) bool {
+    return switch (expr.*) {
+        .identifier => |ident| std.ascii.eqlIgnoreCase(ident, name),
+        .unary => |un| exprReferencesIdentifier(un.expr, name),
+        .binary => |bin| exprReferencesIdentifier(bin.left, name) or exprReferencesIdentifier(bin.right, name),
+        .call_or_subscript => |call| blk: {
+            if (std.ascii.eqlIgnoreCase(call.name, name)) break :blk true;
+            for (call.args) |arg| {
+                if (exprReferencesIdentifier(arg, name)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
 }
 
 fn implicitNoneActive(self: *const context.Context) bool {

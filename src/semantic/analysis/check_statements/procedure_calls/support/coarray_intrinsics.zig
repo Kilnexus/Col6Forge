@@ -4,6 +4,7 @@ const context = @import("../../../context.zig");
 const constants = @import("../../../resolve_const.zig");
 const resolve_expr = @import("../../../resolve_expr.zig");
 const expr_diagnostics = @import("../../../expr_diagnostics.zig");
+const static_shapes = @import("../../static_shapes.zig");
 
 pub const CheckError = anyerror;
 
@@ -11,6 +12,61 @@ pub fn checkExprArgs(self: *context.Context, name: []const u8, args: []*ast.Expr
     if (std.ascii.eqlIgnoreCase(name, "image_status")) return checkImageStatusArgs(self, args);
     if (std.ascii.eqlIgnoreCase(name, "failed_images")) return checkImageSetArgs(self, name, args);
     if (std.ascii.eqlIgnoreCase(name, "stopped_images")) return checkImageSetArgs(self, name, args);
+    if (std.ascii.eqlIgnoreCase(name, "findloc")) return checkFindlocArgs(self, args);
+    if (std.ascii.eqlIgnoreCase(name, "maxloc") or std.ascii.eqlIgnoreCase(name, "minloc")) return checkLocMaskArgs(self, name, args);
+}
+
+fn checkFindlocArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {
+    if (args.len < 2) return;
+    const array_spec = try resolve_expr.exprTypeSpec(self, args[0]);
+    const value_spec = try resolve_expr.exprTypeSpec(self, args[1]);
+    if (array_spec.lowered_kind != value_spec.lowered_kind) return expr_diagnostics.emitExprInvalidArgument(self, args[1], "must be in type conformance to argument");
+    if (args.len < 3) return;
+    if (exprLineHasKeyword(self, args[2], "kind")) return checkFindlocKindArg(self, args[2]);
+    if (exprLineHasKeyword(self, args[2], "dim")) return checkFindlocDimArg(self, args[0], args[2]);
+    if (exprLineHasKeyword(self, args[2], "mask")) return checkFindlocMaskArg(self, args[0], args[2]);
+    const mask_spec = try resolve_expr.exprTypeSpec(self, args[2]);
+    if (mask_spec.lowered_kind == .logical) try checkFindlocMaskShape(self, args[0], args[2]);
+}
+
+fn checkFindlocMaskArg(self: *context.Context, array_arg: *ast.Expr, mask_arg: *ast.Expr) CheckError!void {
+    const spec = try resolve_expr.exprTypeSpec(self, mask_arg);
+    if (spec.lowered_kind != .logical) return expr_diagnostics.emitExprInvalidArgument(self, mask_arg, "'mask' argument of 'findloc' intrinsic at (1) must be LOGICAL");
+    try checkFindlocMaskShape(self, array_arg, mask_arg);
+}
+
+fn checkLocMaskArgs(self: *context.Context, name: []const u8, args: []*ast.Expr) CheckError!void {
+    for (args) |arg| {
+        if (!exprLineHasKeyword(self, arg, "mask")) continue;
+        const spec = try resolve_expr.exprTypeSpec(self, arg);
+        if (spec.lowered_kind == .logical) return;
+        const message = try std.fmt.allocPrint(self.arena, "'mask' argument of '{s}' intrinsic at (1) must be LOGICAL", .{name});
+        return expr_diagnostics.emitExprInvalidArgument(self, arg, message);
+    }
+}
+
+fn checkFindlocDimArg(self: *context.Context, array_arg: *ast.Expr, dim_arg: *ast.Expr) CheckError!void {
+    const spec = try resolve_expr.exprTypeSpec(self, dim_arg);
+    if (spec.lowered_kind != .integer) return expr_diagnostics.emitExprInvalidArgument(self, dim_arg, "must be INTEGER");
+    const value = constInteger(self, dim_arg) orelse return;
+    if (value < 1 or value > resolve_expr.exprRank(self, array_arg)) return expr_diagnostics.emitExprInvalidArgument(self, dim_arg, "is not a valid dimension index");
+}
+
+fn checkFindlocKindArg(self: *context.Context, kind_arg: *ast.Expr) CheckError!void {
+    const value = constInteger(self, kind_arg) orelse return;
+    if (value != 1 and value != 2 and value != 4 and value != 8) return expr_diagnostics.emitExprInvalidArgument(self, kind_arg, "Invalid kind for INTEGER");
+}
+
+fn checkFindlocMaskShape(self: *context.Context, array_arg: *ast.Expr, mask_arg: *ast.Expr) CheckError!void {
+    const array_shape = static_shapes.staticShapeForExpr(self, array_arg) orelse return;
+    const mask_shape = static_shapes.staticShapeForExpr(self, mask_arg) orelse return;
+    if (array_shape.len == mask_shape.len) {
+        for (array_shape, mask_shape) |lhs, rhs| {
+            if (lhs != rhs) return expr_diagnostics.emitExprInvalidArgument(self, mask_arg, "Different shape for arguments 'array' and 'mask'");
+        }
+        return;
+    }
+    return expr_diagnostics.emitExprInvalidArgument(self, mask_arg, "Different shape for arguments 'array' and 'mask'");
 }
 
 fn checkImageStatusArgs(self: *context.Context, args: []*ast.Expr) CheckError!void {

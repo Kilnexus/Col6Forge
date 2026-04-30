@@ -91,6 +91,11 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
         };
         if (decl.external) {
             self.symbols.items[idx].is_external = true;
+            decl_initializers.validateExternalProcedureInitializer(self, item) catch |err| {
+                if (!self.usesExplicitDiagnosticBag()) return err;
+                if (first_err == null) first_err = err;
+                continue;
+            };
             try validateExternalCharacterDeclarator(self, self.symbols.items[idx], item);
         }
         try validateKnownFunctionResultDeclaration(self, self.symbols.items[idx], true);

@@ -43,6 +43,15 @@ pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Ex
     try validateRestrictedInitializationInquiry(self, expr);
 }
 
+pub fn validateExternalProcedureInitializer(
+    self: *context.Context,
+    item: ast.Declarator,
+) !void {
+    if (item.init == null) return;
+    emitDeclInitializerDiagnostic(self, "may not have an initializer");
+    return error.DuplicateDeclaration;
+}
+
 pub fn validateDataPointerInitializer(
     self: *context.Context,
     decl: ast.TypeDecl,

@@ -99,7 +99,6 @@ pub fn validateBinaryOperands(op: ast.BinaryOp, left_kind: ast.TypeKind, right_k
         },
         .eq, .ne => {
             if ((isNumericType(left_kind) and isNumericType(right_kind)) or
-                (isLogicalType(left_kind) and isLogicalType(right_kind)) or
                 (isCharacterType(left_kind) and isCharacterType(right_kind))) return;
             return error.InvalidArithmeticOperands;
         },

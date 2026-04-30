@@ -181,6 +181,8 @@ pub const EquivalenceGroup = struct {
 
 pub const ImplicitDecl = struct {
     rules: []ImplicitRule,
+    none_type: bool = false,
+    none_external: bool = false,
 };
 
 pub const ImplicitRule = struct {

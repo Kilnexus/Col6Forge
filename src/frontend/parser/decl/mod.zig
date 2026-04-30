@@ -68,7 +68,7 @@ pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
         _ = lp.consumeKeyword("IMPLICIT");
         if (lp.isKeywordSplit("NONE")) {
             _ = lp.consumeKeyword("NONE");
-            return .{ .implicit = .{ .rules = try arena.alloc(ImplicitRule, 0) } };
+            return .{ .implicit = try parseImplicitNoneDecl(lp, arena) };
         }
         var rules = std.array_list.Managed(ImplicitRule).init(arena);
         while (lp.peek()) |_| {
@@ -258,6 +258,28 @@ pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
         .bind_c = attrs.bind_c,
         .bind_name_expr = attrs.bind_name_expr,
     } };
+}
+
+fn parseImplicitNoneDecl(lp: *LineParser, arena: std.mem.Allocator) !ast.ImplicitDecl {
+    const empty_rules = try arena.alloc(ImplicitRule, 0);
+    var none_type = true;
+    var none_external = true;
+    if (lp.consume(.l_paren)) {
+        none_type = false;
+        none_external = false;
+        if (lp.peekIs(.r_paren)) {
+            none_type = true;
+            none_external = true;
+        }
+        while (!lp.peekIs(.r_paren)) {
+            const tok = lp.expectIdentifier() orelse return error.UnexpectedToken;
+            const text = lp.tokenText(tok);
+            if (std.ascii.eqlIgnoreCase(text, "TYPE")) none_type = true else if (std.ascii.eqlIgnoreCase(text, "EXTERNAL")) none_external = true else return error.UnexpectedToken;
+            if (!lp.consume(.comma)) break;
+        }
+        _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
+    }
+    return .{ .rules = empty_rules, .none_type = none_type, .none_external = none_external };
 }
 
 fn parseCrayPointerDeclarators(lp: *LineParser, arena: std.mem.Allocator) ![]ast.Declarator {

@@ -22,6 +22,7 @@ const expr_diagnostics = @import("../expr_diagnostics.zig");
 const max_min_conformance = @import("max_min_conformance.zig");
 const boz_intrinsic_constraints = @import("boz_intrinsic_constraints.zig");
 const constant_expr = @import("constant_expr.zig");
+const dim_intrinsics = @import("dim_intrinsics.zig");
 
 const ResolvedRefKind = symbols.ResolvedRefKind;
 pub const CheckError = anyerror;
@@ -60,6 +61,7 @@ pub fn checkSpecialExprCallConstraints(
     args: []*ast.Expr,
 ) CheckError!void {
     try checkInquiryDimArg(self, name, args);
+    try dim_intrinsics.checkMaxMinDimArgs(self, name, args);
     try checkAssumedSizeInquiryArrayArg(self, name, args);
     try checkStaticMatmulConformance(self, call_expr, name, args);
     try max_min_conformance.checkStaticMaxMinConformance(self, name, args);

@@ -17,29 +17,13 @@ const expr_attributes = @import("../../../expr_attributes.zig");
 const expr_diagnostics = @import("../../../expr_diagnostics.zig");
 const abstract_expr_use = @import("../../abstract_expr_use.zig");
 const leaf_helpers = @import("../../leaf_helpers.zig");
-const procedure_call_actual_traits = @import("../../procedure_call_actual_traits.zig");
 const procedure_call_diagnostics = @import("../../procedure_call_diagnostics.zig");
 const c_funloc = @import("c_funloc.zig");
+const procedure_size = @import("procedure_size.zig");
 const shift_intrinsics = @import("shift_intrinsics.zig");
 const coarray_intrinsics = @import("coarray_intrinsics.zig");
 pub const CheckError = anyerror;
-const DiagnosticSource = procedure_call_diagnostics.DiagnosticSource;
-const Advice = procedure_call_diagnostics.Advice;
-const invalidArgumentAdvice = procedure_call_diagnostics.invalidArgumentAdvice;
-const appendUniqueDeclSource = procedure_call_diagnostics.appendUniqueDeclSource;
-const emitStructuredProcedureDiagnostic = procedure_call_diagnostics.emitStructuredProcedureDiagnostic;
-const emitProcedureActualDiagnostic = procedure_call_diagnostics.emitProcedureActualDiagnostic;
-const emitProcedureActualCallDiagnostic = procedure_call_diagnostics.emitProcedureActualCallDiagnostic;
-const emitProcedureActualCallWarning = procedure_call_diagnostics.emitProcedureActualCallWarning;
-const emitVariableDefinitionContextDiagnostic = procedure_call_diagnostics.emitVariableDefinitionContextDiagnostic;
 const exprIsVariableDefinitionActual = procedure_call_diagnostics.exprIsVariableDefinitionActual;
-const abstractPassedObjectTypeName = procedure_call_actual_traits.abstractPassedObjectTypeName;
-const emitAbstractPassedObjectDiagnostic = procedure_call_actual_traits.emitAbstractPassedObjectDiagnostic;
-const hasProcedureActualCallArg = procedure_call_actual_traits.hasProcedureActualCallArg;
-const hasProcedureActualExprArg = procedure_call_actual_traits.hasProcedureActualExprArg;
-const hasExplicitInterfaceSensitiveCallArg = procedure_call_actual_traits.hasExplicitInterfaceSensitiveCallArg;
-const hasExplicitInterfaceSensitiveExprArg = procedure_call_actual_traits.hasExplicitInterfaceSensitiveExprArg;
-const hasKeywordActualCallArg = procedure_call_actual_traits.hasKeywordActualCallArg;
 pub fn checkIntrinsicCallConstraintsForCallArgs(
     self: *context.Context,
     name: []const u8,
@@ -164,6 +148,9 @@ fn checkIntrinsicSpecialActualRestriction(
     if (std.ascii.eqlIgnoreCase(name, "c_loc") and actual_idx == 0 and !expr_attributes.isCAddressableDataTarget(self, expr_node)) return emitIntrinsicArgDiagnostic(self, expr_node, "Argument X at (1) to C_LOC shall have either the POINTER or the TARGET attribute");
     if (std.ascii.eqlIgnoreCase(name, "c_funloc") and actual_idx == 0) {
         return c_funloc.checkActual(self, expr_node, emitIntrinsicArgDiagnostic);
+    }
+    if ((std.ascii.eqlIgnoreCase(name, "c_sizeof") or std.ascii.eqlIgnoreCase(name, "sizeof")) and actual_idx == 0) {
+        return procedure_size.checkActual(self, name, expr_node, emitIntrinsicArgDiagnostic);
     }
     if (exprIsBozLiteral(expr_node)) {
         if (std.ascii.eqlIgnoreCase(name, "c_sizeof")) {

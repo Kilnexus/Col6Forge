@@ -39,7 +39,6 @@ const subNoOverflow = equivalence.subNoOverflow;
 pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
     switch (decl) {
         .implicit => |imp| {
-            try validateImplicitOrdering(self, imp);
             for (imp.rules) |rule| {
                 const resolved_rule_type = try resolvedDeclTypeSpec(
                     self,
@@ -445,31 +444,6 @@ fn emitDuplicateDimensionDiagnostic(self: *context.Context, target_name: []const
         &.{.{ .text = "Keep the DIMENSION information on only one declaration of this symbol." }},
         secondary_spans[0..],
     );
-}
-
-fn validateImplicitOrdering(self: *context.Context, imp: ast.ImplicitDecl) !void {
-    const current_idx = self.current_decl_index orelse 0;
-    var saw_implicit_rule = false;
-    var saw_none_type = false;
-    var saw_none_external = false;
-    for (self.unit.decls[0..current_idx]) |decl| {
-        if (decl != .implicit) continue;
-        if (decl.implicit.rules.len != 0) saw_implicit_rule = true;
-        saw_none_type = saw_none_type or decl.implicit.none_type or (decl.implicit.rules.len == 0 and !decl.implicit.none_external);
-        saw_none_external = saw_none_external or decl.implicit.none_external;
-    }
-    if ((imp.none_type and saw_none_type) or (imp.none_external and saw_none_external)) {
-        setAttributeConflictDiagnostic(self, "Duplicate IMPLICIT NONE statement");
-        return error.DuplicateDeclaration;
-    }
-    if (imp.none_type and saw_implicit_rule) {
-        setAttributeConflictDiagnostic(self, "IMPLICIT NONE type statement following an IMPLICIT statement");
-        return error.DuplicateDeclaration;
-    }
-    if (imp.rules.len != 0 and saw_none_type) {
-        setAttributeConflictDiagnostic(self, "IMPLICIT statement following an IMPLICIT NONE type statement");
-        return error.DuplicateDeclaration;
-    }
 }
 
 fn emitImplicitCharLenTypingDiagnostics(self: *context.Context, expr: *ast.Expr) bool {

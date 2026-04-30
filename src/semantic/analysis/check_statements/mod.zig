@@ -19,7 +19,6 @@ const statement_functions = @import("statement_functions.zig");
 const stmt_diagnostics = @import("diagnostics.zig");
 const assumed_size = @import("../assumed_size.zig");
 const procedure_context = @import("../procedure_context.zig");
-const decl_scan = @import("../decl_scan.zig");
 
 pub const CheckError = anyerror;
 const emitCurrentStmtConstraint = stmt_diagnostics.emitCurrentStmtConstraint;
@@ -37,7 +36,6 @@ pub fn checkStmt(self: *context.Context, stmt: ast.Stmt) CheckError!void {
 pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void {
     switch (node) {
         .assignment => |assign| {
-            try rejectImplicitNoneAssignmentTarget(self, assign.target);
             try statement_functions.validateAssignment(self, assign);
             try statement_functions.validateCalls(self, assign.value);
             if (assumed_size.exprNeedsExplicitLastUpperBound(self, assign.target)) {
@@ -301,7 +299,6 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             if (procedure_interfaces.isAbstractInterfaceProcedure(self, call.name)) {
                 return procedure_calls.emitNamedProcedureDiagnostic(self, call.name, error.InvalidArgumentCount, "must not be referenced");
             }
-            try rejectImplicitExternalNoneCall(self, call);
             try expr_semantics.checkSpecialCallConstraints(self, call.name, procedure_calls.collectCallExprArgsScratch(self, call.args));
             try procedure_calls.checkIntrinsicCallConstraintsForCallArgs(self, call.name, call.args);
             try procedure_calls.checkExplicitInterfaceRequirementForCallArgs(self, call.name, call.args, call_idx);
@@ -554,72 +551,6 @@ fn rejectElementalCallRankMismatch(
 
 fn shouldRejectNonRecursiveCurrentProcedureCall(self: *context.Context, name: []const u8) bool {
     return procedure_context.shouldRejectNonRecursiveCurrentProcedureReference(self, name);
-}
-
-fn rejectImplicitNoneAssignmentTarget(self: *context.Context, target: *ast.Expr) CheckError!void {
-    if (!decl_scan.implicitNoneActive(self)) return;
-    const name = assignmentRootName(target) orelse return;
-    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return;
-    const sym = self.symbols.items[idx];
-    if (sym.type_explicit or sym.storage != .local or sym.is_generated_temp) return;
-    const source = self.sourceForExpr(target) orelse
-        if (self.current_stmt) |stmt| ast.SourceRef{ .line = stmt.source_line, .column = stmt.source_column, .text = stmt.source_text } else self.current_source orelse ast.SourceRef{};
-    const message = std.fmt.allocPrint(self.arena, "Symbol '{s}' at .1. has no IMPLICIT type", .{name}) catch "has no IMPLICIT type";
-    self.setDiagnostic(
-        if (source.line == 0) 1 else source.line,
-        if (source.column == 0) 1 else source.column,
-        catalog.semantic.unexpected_type_decl.code,
-        message,
-        source.text,
-    );
-    return error.UnexpectedTypeDecl;
-}
-
-fn assignmentRootName(expr: *ast.Expr) ?[]const u8 {
-    return switch (expr.*) {
-        .identifier => |name| name,
-        .component => |comp| assignmentRootName(comp.base),
-        .substring => |sub| sub.name,
-        else => null,
-    };
-}
-
-fn rejectImplicitExternalNoneCall(self: *context.Context, call: ast.CallStmt) CheckError!void {
-    if (!decl_scan.implicitExternalNoneActive(self)) return;
-    if (resolve_symbols.isIntrinsicName(call.name)) return;
-    if (hasExplicitProcedureDeclaration(self.unit.decls, call.name)) return;
-    const message = std.fmt.allocPrint(self.arena, "Procedure '{s}' called at .1. is not explicitly declared", .{call.name}) catch "Procedure is not explicitly declared";
-    self.setDiagnostic(
-        if (call.source.line == 0) 1 else call.source.line,
-        if (call.source.column == 0) 1 else call.source.column,
-        catalog.semantic.unexpected_type_decl.code,
-        message,
-        call.source.text,
-    );
-    return error.UnexpectedTypeDecl;
-}
-
-fn hasExplicitProcedureDeclaration(decls: []const ast.Decl, name: []const u8) bool {
-    for (decls) |decl| switch (decl) {
-        .external => |ext| if (nameListContains(ext.names, name)) return true,
-        .intrinsic => |intr| if (nameListContains(intr.names, name)) return true,
-        .procedure => |proc| {
-            for (proc.items) |item| if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
-        },
-        .interface_block => |block| {
-            if (nameListContains(block.procedures, name)) return true;
-            if (nameListContains(block.specific_procedures, name)) return true;
-            if (nameListContains(block.module_procedures, name)) return true;
-            for (block.procedure_headers) |proc| if (std.ascii.eqlIgnoreCase(proc.name, name)) return true;
-        },
-        else => {},
-    };
-    return false;
-}
-
-fn nameListContains(names: []const []const u8, name: []const u8) bool {
-    for (names) |item| if (std.ascii.eqlIgnoreCase(item, name)) return true;
-    return false;
 }
 
 fn pureProcedureAssignsImpureVariable(self: *context.Context, target: *ast.Expr) bool {

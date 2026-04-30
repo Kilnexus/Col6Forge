@@ -32,16 +32,7 @@ pub fn implicitNoneActive(self: *const context.Context) bool {
     var active = false;
     for (self.unit.decls) |decl| {
         if (decl != .implicit) continue;
-        active = decl.implicit.none_type or (decl.implicit.rules.len == 0 and !decl.implicit.none_external);
-    }
-    return active;
-}
-
-pub fn implicitExternalNoneActive(self: *const context.Context) bool {
-    var active = false;
-    for (self.unit.decls) |decl| {
-        if (decl != .implicit) continue;
-        active = decl.implicit.none_external;
+        active = decl.implicit.rules.len == 0;
     }
     return active;
 }

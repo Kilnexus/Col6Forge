@@ -42,6 +42,28 @@ pub fn checkDefaultCharacterControlExpr(self: *context.Context, expr_node: *ast.
     return error.InvalidIoControlType;
 }
 
+pub fn checkIoFormatExpr(self: *context.Context, expr_node: *ast.Expr) CheckError!void {
+    const spec = try resolve_expr.exprTypeSpec(self, expr_node);
+    if (spec.lowered_kind == .integer) return;
+    if (spec.lowered_kind == .character and (spec.kind_value orelse 1) == 1) return;
+    const source = self.sourceForExpr(expr_node) orelse self.current_source orelse ast.SourceRef{};
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_io_control_type.code,
+        "FORMAT expression must be of type default-kind CHARACTER or of INTEGER",
+        source.text,
+    );
+    return error.InvalidIoControlType;
+}
+
+pub fn checkFormatSpec(self: *context.Context, format_spec: ast.FormatSpec) CheckError!void {
+    switch (format_spec) {
+        .expr => |fmt_expr| try checkIoFormatExpr(self, fmt_expr),
+        else => {},
+    }
+}
+
 pub fn checkNamedDefaultCharacterControls(
     self: *context.Context,
     controls: []const ast.ControlItem,
@@ -52,6 +74,27 @@ pub fn checkNamedDefaultCharacterControls(
         if (!textInSet(name, names)) continue;
         self.setCurrentSource(if (ctrl.source.line != 0) ctrl.source else self.sourceForExpr(ctrl.value));
         try checkDefaultCharacterControlExpr(self, ctrl.value);
+    }
+}
+
+pub fn rejectNamedIoControl(
+    self: *context.Context,
+    controls: []const ast.ControlItem,
+    name: []const u8,
+    message: []const u8,
+) CheckError!void {
+    for (controls) |ctrl| {
+        const ctrl_name = ctrl.name orelse continue;
+        if (!std.ascii.eqlIgnoreCase(ctrl_name, name)) continue;
+        const source = if (ctrl.source.line != 0) ctrl.source else (self.sourceForExpr(ctrl.value) orelse self.current_source orelse ast.SourceRef{});
+        self.setDiagnostic(
+            if (source.line == 0) 1 else source.line,
+            if (source.column == 0) 1 else source.column,
+            catalog.semantic.invalid_io_control_value.code,
+            message,
+            source.text,
+        );
+        return error.InvalidIoControlValue;
     }
 }
 

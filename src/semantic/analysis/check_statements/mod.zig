@@ -325,6 +325,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
         },
         .write => |write| {
             try expr_semantics.checkExpr(self, write.unit, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            try leaf_helpers.checkFormatSpec(self, write.format);
             if (write.rec) |rec| try expr_semantics.checkExpr(self, rec, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
             for (write.args) |arg| {
                 try expr_semantics.checkExpr(self, arg, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
@@ -333,10 +334,12 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             }
             if (write.iostat) |io| try expr_semantics.checkExpr(self, io, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
             for (write.controls) |ctrl| try expr_semantics.checkExpr(self, ctrl.value, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            try leaf_helpers.rejectNamedIoControl(self, write.controls, "END", "END tag is not allowed in output statement");
             try leaf_helpers.checkNamedDefaultCharacterControls(self, write.controls, &.{ "BLANK", "DELIM", "PAD", "ROUND", "SIGN" });
         },
         .read => |read| {
             try expr_semantics.checkExpr(self, read.unit, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            try leaf_helpers.checkFormatSpec(self, read.format);
             if (read.rec) |rec| try expr_semantics.checkExpr(self, rec, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
             for (read.args) |arg| {
                 try expr_semantics.checkExpr(self, arg, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });

@@ -105,6 +105,47 @@ pub fn checkNamedCharacterControls(
     }
 }
 
+pub fn checkAdvanceControls(self: *context.Context, controls: []const ast.ControlItem) CheckError!void {
+    try checkNamedCharacterControls(self, controls, &.{"ADVANCE"});
+    for (controls) |ctrl| {
+        const name = ctrl.name orelse continue;
+        if (!std.ascii.eqlIgnoreCase(name, "ADVANCE")) continue;
+        const text = controlLiteralText(ctrl.value) orelse continue;
+        if (std.ascii.eqlIgnoreCase(text, "YES") or std.ascii.eqlIgnoreCase(text, "NO")) continue;
+        const source = if (ctrl.source.line != 0) ctrl.source else (self.sourceForExpr(ctrl.value) orelse self.current_source orelse ast.SourceRef{});
+        self.setDiagnostic(
+            if (source.line == 0) 1 else source.line,
+            if (source.column == 0) 1 else source.column,
+            catalog.semantic.invalid_io_control_value.code,
+            "ADVANCE= specifier at (1) must have value = YES or NO.",
+            source.text,
+        );
+        return error.InvalidIoControlValue;
+    }
+}
+
+pub fn checkDataTransferAsyncControls(self: *context.Context, controls: []const ast.ControlItem) CheckError!void {
+    for (controls) |ctrl| {
+        const name = ctrl.name orelse continue;
+        if (!std.ascii.eqlIgnoreCase(name, "ASYNCHRONOUS")) continue;
+        try checkDefaultCharacterControlExpr(self, ctrl.value);
+        if (dataTransferAsyncExprIsInit(self, ctrl.value)) continue;
+        const source = if (ctrl.source.line != 0) ctrl.source else (self.sourceForExpr(ctrl.value) orelse self.current_source orelse ast.SourceRef{});
+        const message = if (exprContainsNonIntrinsicCall(self, ctrl.value))
+            "must be an intrinsic function"
+        else
+            "does not reduce to a constant expression";
+        self.setDiagnostic(
+            if (source.line == 0) 1 else source.line,
+            if (source.column == 0) 1 else source.column,
+            catalog.semantic.invalid_io_control_value.code,
+            message,
+            source.text,
+        );
+        return error.InvalidIoControlValue;
+    }
+}
+
 pub fn rejectNamedIoControl(
     self: *context.Context,
     controls: []const ast.ControlItem,
@@ -124,6 +165,58 @@ pub fn rejectNamedIoControl(
         );
         return error.InvalidIoControlValue;
     }
+}
+
+fn dataTransferAsyncExprIsInit(self: *context.Context, expr_node: *ast.Expr) bool {
+    switch (expr_node.*) {
+        .literal => return true,
+        .identifier => |name| return symbolIsParameter(self, name),
+        .unary => |un| return dataTransferAsyncExprIsInit(self, un.expr),
+        .binary => |bin| return dataTransferAsyncExprIsInit(self, bin.left) and dataTransferAsyncExprIsInit(self, bin.right),
+        .call_or_subscript => |call| {
+            if (!callNameIsIntrinsic(self, call.name)) return false;
+            for (call.args) |arg| {
+                if (!dataTransferAsyncExprIsInit(self, arg)) return false;
+            }
+            return true;
+        },
+        .substring => |sub| {
+            if (!symbolIsParameter(self, sub.name)) return false;
+            if (sub.start) |start| if (!dataTransferAsyncExprIsInit(self, start)) return false;
+            if (sub.end) |end| if (!dataTransferAsyncExprIsInit(self, end)) return false;
+            return true;
+        },
+        .complex_literal => |lit| return dataTransferAsyncExprIsInit(self, lit.real) and dataTransferAsyncExprIsInit(self, lit.imag),
+        else => return false,
+    }
+}
+
+fn exprContainsNonIntrinsicCall(self: *context.Context, expr_node: *ast.Expr) bool {
+    switch (expr_node.*) {
+        .call_or_subscript => |call| {
+            if (!callNameIsIntrinsic(self, call.name)) return true;
+            for (call.args) |arg| {
+                if (exprContainsNonIntrinsicCall(self, arg)) return true;
+            }
+            return false;
+        },
+        .unary => |un| return exprContainsNonIntrinsicCall(self, un.expr),
+        .binary => |bin| return exprContainsNonIntrinsicCall(self, bin.left) or exprContainsNonIntrinsicCall(self, bin.right),
+        .complex_literal => |lit| return exprContainsNonIntrinsicCall(self, lit.real) or exprContainsNonIntrinsicCall(self, lit.imag),
+        .substring => |sub| {
+            if (sub.start) |start| if (exprContainsNonIntrinsicCall(self, start)) return true;
+            if (sub.end) |end| if (exprContainsNonIntrinsicCall(self, end)) return true;
+            return false;
+        },
+        else => return false,
+    }
+}
+
+fn callNameIsIntrinsic(self: *context.Context, name: []const u8) bool {
+    if (resolve_symbols.findSymbolIndex(self, name)) |idx| {
+        return self.symbols.items[idx].is_intrinsic;
+    }
+    return intrinsics.arity(name) != null;
 }
 
 pub fn checkReadFormatPositiveWidths(self: *context.Context, format_spec: ast.FormatSpec) CheckError!void {

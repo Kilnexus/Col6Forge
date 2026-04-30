@@ -29,6 +29,17 @@ fn emitCharacterKindMismatch(
     self.setDiagnostic(src.line, src.column, @import("../../../common/error_catalog.zig").semantic.invalid_arithmetic_operands.code, message, src.text);
 }
 
+fn emitComparisonOperandMismatch(self: *context.Context, left_expr: *ast.Expr, right_expr: *ast.Expr) void {
+    const src = self.current_source orelse self.sourceForExpr(right_expr) orelse self.sourceForExpr(left_expr) orelse return;
+    self.setDiagnostic(
+        src.line,
+        src.column,
+        @import("../../../common/error_catalog.zig").semantic.invalid_arithmetic_operands.code,
+        "Operands of comparison operator are incompatible",
+        src.text,
+    );
+}
+
 pub fn validateBinaryOperandSpecs(
     self: *context.Context,
     op: ast.BinaryOp,
@@ -38,9 +49,16 @@ pub fn validateBinaryOperandSpecs(
     right_expr: *ast.Expr,
     comptime deps: anytype,
 ) !symbols.TypeSpec {
-    try deps.validateBinaryOperands(op, left_spec.lowered_kind, right_spec.lowered_kind);
+    deps.validateBinaryOperands(op, left_spec.lowered_kind, right_spec.lowered_kind) catch |err| {
+        if (isComparisonOp(op)) emitComparisonOperandMismatch(self, left_expr, right_expr);
+        return err;
+    };
     switch (op) {
         .eq, .ne, .lt, .le, .gt, .ge => {
+            if (isMixedHollerithComparison(left_expr, right_expr)) {
+                emitComparisonOperandMismatch(self, left_expr, right_expr);
+                return error.InvalidArithmeticOperands;
+            }
             if (left_spec.lowered_kind == .character and right_spec.lowered_kind == .character and
                 defaultCharacterKind(left_spec.kind_value) != defaultCharacterKind(right_spec.kind_value))
             {
@@ -61,6 +79,23 @@ pub fn validateBinaryOperandSpecs(
         },
         else => return promoteNumericTypeSpec(self, left_expr, right_expr, deps),
     }
+}
+
+fn isComparisonOp(op: ast.BinaryOp) bool {
+    return switch (op) {
+        .eq, .ne, .lt, .le, .gt, .ge => true,
+        else => false,
+    };
+}
+
+fn isMixedHollerithComparison(left_expr: *ast.Expr, right_expr: *ast.Expr) bool {
+    const left_hollerith = isHollerithLiteral(left_expr);
+    const right_hollerith = isHollerithLiteral(right_expr);
+    return left_hollerith != right_hollerith;
+}
+
+fn isHollerithLiteral(expr: *ast.Expr) bool {
+    return expr.* == .literal and expr.literal.kind == .hollerith;
 }
 
 pub fn concatResultSpec(left_spec: symbols.TypeSpec, right_spec: symbols.TypeSpec) symbols.TypeSpec {

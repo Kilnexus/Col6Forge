@@ -121,6 +121,10 @@ pub fn checkIntrinsicCallConstraintsForExprArgs(
         try checkStorageSizeExprArgs(self, args);
         return;
     }
+    if (std.ascii.eqlIgnoreCase(name, "c_associated")) {
+        if (args.len >= 1 and resolve_expr.exprRank(self, args[0]) != 0) return emitIntrinsicArgDiagnostic(self, args[0], "argument of 'c_associated' intrinsic at (1) must be a scalar");
+        if (args.len >= 2 and resolve_expr.exprRank(self, args[1]) != 0) return emitIntrinsicArgDiagnostic(self, args[1], "argument of 'c_associated' intrinsic at (1) must be a scalar");
+    }
     try shift_intrinsics.checkExprArgs(self, name, args);
     try checkBitExprIntrinsicConstraints(self, name, args);
     try checkRepeatExprArgs(self, name, args);

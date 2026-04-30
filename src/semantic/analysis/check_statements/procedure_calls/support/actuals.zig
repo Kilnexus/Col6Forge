@@ -446,7 +446,10 @@ pub fn checkDataActualArgCompatibility(
         return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "must be simply contiguous");
     }
     if (skip_no_arg_check_compat) return;
-    if (formal.assumed_rank) return;
+    if (formal.assumed_rank) {
+        try checkAssumedRankDummyActualConstraints(self, callee_name, formal, actual_expr, actual_spec);
+        return;
+    }
     if (formal.rank == 0 and actual_rank > 0 and calleeAllowsElementalArrayActuals(self, callee_name)) {
         if (assumed_size.exprNeedsExplicitLastUpperBound(self, actual_expr)) {
             return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "upper bound in the last dimension");
@@ -492,6 +495,91 @@ fn checkAllocatablePolymorphicActualConstraint(
     if (!std.ascii.eqlIgnoreCase(formal_name, actual_name)) {
         return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "must have the same declared type");
     }
+}
+
+fn checkAssumedRankDummyActualConstraints(
+    self: *context.Context,
+    callee_name: ?[]const u8,
+    formal: context.Context.ProcedureSig.ArgSig,
+    actual_expr: *ast.Expr,
+    actual_spec: symbols.TypeSpec,
+) CheckError!void {
+    if (actual_spec.assumed_type and !actualIsAssumedShapeOrRank(self, actual_expr)) {
+        const message = std.fmt.allocPrint(
+            self.arena,
+            "Assumed-type actual argument at (1) corresponding to assumed-rank dummy argument '{s}' must be assumed-shape or assumed-rank",
+            .{formal.name},
+        ) catch "Assumed-type actual argument corresponding to assumed-rank dummy must be assumed-shape or assumed-rank";
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, message);
+    }
+    if (formal.intent != .out) return;
+    if (!actualIsAssumedSizeOrRestrictedAssumedRank(self, actual_expr)) return;
+    if (actual_spec.polymorphic or derivedTypeNeedsIntentOutAssumedRankProtection(self, actual_spec)) {
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "Assumed-rank actual argument is not permitted for this INTENT(OUT) dummy");
+    }
+}
+
+fn actualIsAssumedShapeOrRank(self: *context.Context, expr_node: *ast.Expr) bool {
+    const sym = rootActualSymbol(self, expr_node) orelse return false;
+    return dimsRepresentAssumedRank(sym.dims) or dimsRepresentAssumedShape(sym.dims);
+}
+
+fn actualIsAssumedSizeOrRestrictedAssumedRank(self: *context.Context, expr_node: *ast.Expr) bool {
+    if (assumed_size.exprHasAssumedSizeArray(self, expr_node)) return true;
+    const sym = rootActualSymbol(self, expr_node) orelse return false;
+    if (!dimsRepresentAssumedRank(sym.dims)) return false;
+    return !sym.is_pointer and !sym.is_allocatable;
+}
+
+fn rootActualSymbol(self: *context.Context, expr_node: *ast.Expr) ?symbols.Symbol {
+    const name = switch (expr_node.*) {
+        .identifier => |ident| ident,
+        else => return null,
+    };
+    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return null;
+    return self.symbols.items[idx];
+}
+
+fn dimsRepresentAssumedRank(dims: []const *ast.Expr) bool {
+    if (dims.len != 1) return false;
+    return switch (dims[0].*) {
+        .dim_range => |range| range.from_dotdot,
+        else => false,
+    };
+}
+
+fn dimsRepresentAssumedShape(dims: []const *ast.Expr) bool {
+    if (dims.len == 0) return false;
+    for (dims) |dim| {
+        if (dim.* != .dim_range or !dim.dim_range.assumed_shape) return false;
+    }
+    return true;
+}
+
+fn derivedTypeNeedsIntentOutAssumedRankProtection(self: *context.Context, spec: symbols.TypeSpec) bool {
+    if (spec.lowered_kind != .derived) return false;
+    const type_name = spec.derived_type_name orelse return false;
+    const info = resolve_symbols.lookupDerivedType(self, type_name) orelse return false;
+    if (info.final_subroutines.len != 0) return true;
+    for (info.components) |component| {
+        if (component.allocatable) return true;
+    }
+    if (derivedTypeHasDefaultInitializer(self, type_name)) return true;
+    return false;
+}
+
+fn derivedTypeHasDefaultInitializer(self: *context.Context, type_name: []const u8) bool {
+    for (self.unit.decls) |decl| {
+        if (decl != .derived_type_def) continue;
+        if (!std.ascii.eqlIgnoreCase(decl.derived_type_def.name, type_name)) continue;
+        for (decl.derived_type_def.components) |component_decl| {
+            for (component_decl.items) |item| {
+                if (item.init != null) return true;
+            }
+        }
+        return false;
+    }
+    return false;
 }
 
 fn exprIsAllocatableActual(self: *context.Context, expr_node: *ast.Expr) bool {

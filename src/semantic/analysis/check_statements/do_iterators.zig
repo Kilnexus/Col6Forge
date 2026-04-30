@@ -26,11 +26,8 @@ pub fn closeLoopRangesEndingAt(self: *context.Context, stmt: ast.Stmt) void {
 }
 
 pub fn rejectActiveControlDefinition(self: *context.Context, expr_node: *ast.Expr) !void {
-    const target_name = rootDefinedName(expr_node) orelse return;
-    for (self.active_do_controls.items) |control| {
-        if (!std.ascii.eqlIgnoreCase(control.name, target_name)) continue;
-        return emitDoControlDefinitionDiagnostic(self, expr_node, control);
-    }
+    const control = activeControlForDefinition(self, expr_node) orelse return;
+    return emitDoControlDefinitionDiagnostic(self, expr_node, control);
 }
 
 pub fn rejectActiveControlNameDefinition(self: *context.Context, name: []const u8) !void {
@@ -38,6 +35,15 @@ pub fn rejectActiveControlNameDefinition(self: *context.Context, name: []const u
         if (!std.ascii.eqlIgnoreCase(control.name, name)) continue;
         return emitDoControlNameDiagnostic(self, name, control);
     }
+}
+
+pub fn activeControlForDefinition(self: *context.Context, expr_node: *ast.Expr) ?context.Context.ActiveDoControl {
+    const target_name = rootDefinedName(expr_node) orelse return null;
+    for (self.active_do_controls.items) |control| {
+        if (!std.ascii.eqlIgnoreCase(control.name, target_name)) continue;
+        return control;
+    }
+    return null;
 }
 
 fn rootDefinedName(expr_node: *ast.Expr) ?[]const u8 {

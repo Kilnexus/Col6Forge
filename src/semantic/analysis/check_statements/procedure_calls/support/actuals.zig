@@ -19,6 +19,7 @@ const leaf_helpers = @import("../../leaf_helpers.zig");
 const procedure_call_actual_traits = @import("../../procedure_call_actual_traits.zig");
 const procedure_call_diagnostics = @import("../../procedure_call_diagnostics.zig");
 const procedure_interfaces = @import("../../procedure_interfaces.zig");
+const do_actuals = @import("do_actuals.zig");
 const intrinsics = @import("intrinsics.zig");
 const pointer_dummy = @import("pointer_dummy.zig");
 const resolution = @import("resolution.zig");
@@ -405,6 +406,7 @@ pub fn checkDataActualArgCompatibility(
         );
     }
     try resolve_expr.resolveExpr(self, actual_expr);
+    try do_actuals.rejectActiveDoControlForIntent(self, formal, actual_expr);
     if ((formal.intent == .out or formal.intent == .inout) and !exprIsVariableDefinitionActual(self, actual_expr)) {
         return emitVariableDefinitionContextDiagnostic(self, callee_name, formal.name, actual_expr);
     }

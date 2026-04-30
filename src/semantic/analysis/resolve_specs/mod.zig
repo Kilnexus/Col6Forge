@@ -135,6 +135,10 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
         },
         .dimension => |dim| {
             for (dim.items) |item| {
+                if (currentFunctionOriginalNameWithResultName(self, item.name)) {
+                    setAttributeConflictDiagnostic(self, "RESULT variable");
+                    return error.DuplicateDeclaration;
+                }
                 if (self.unit.elemental and self.unit.kind == .function) {
                     const result_name = self.unit.result_name orelse self.unit.name;
                     if (std.ascii.eqlIgnoreCase(item.name, result_name)) {
@@ -505,6 +509,11 @@ fn implicitNoneActive(self: *const context.Context) bool {
         active = decl.implicit.rules.len == 0;
     }
     return active;
+}
+
+fn currentFunctionOriginalNameWithResultName(self: *const context.Context, name: []const u8) bool {
+    if (self.unit.kind != .function or self.unit.result_name == null) return false;
+    return std.ascii.eqlIgnoreCase(name, self.unit.name);
 }
 
 fn emitDuplicateDimensionDiagnostic(self: *context.Context, target_name: []const u8) void {

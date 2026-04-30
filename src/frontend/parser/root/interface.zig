@@ -147,6 +147,18 @@ pub fn noteUnexpectedInterfaceEof(diag_bag: *parse_diag.Bag, line: logical_line.
     diag_bag.set(line.span.start_line, 1, catalog.parser.unexpected_eof.code, "Unexpected end of file", line.text);
 }
 
+pub fn consumeUnexpectedInterfaceStart(diag_bag: *parse_diag.Bag, line: logical_line.LogicalLine, lp: *LineParser) bool {
+    if (!lp.consumeKeyword("INTERFACE") and !(lp.consumeKeyword("ABSTRACT") and lp.consumeKeyword("INTERFACE"))) return false;
+    diag_bag.set(line.span.start_line, 1, catalog.parser.unexpected_token.code, "Unexpected INTERFACE statement", line.text);
+    return true;
+}
+
+pub fn consumeUnexpectedAttributeDeclaration(diag_bag: *parse_diag.Bag, line: logical_line.LogicalLine, lp: *LineParser) bool {
+    if (!lp.consumeKeyword("EXTERNAL")) return false;
+    diag_bag.set(line.span.start_line, 1, catalog.parser.unexpected_token.code, "Unexpected attribute declaration statement in INTERFACE", line.text);
+    return true;
+}
+
 pub fn parseInterfaceGenericName(arena: std.mem.Allocator, lp: *LineParser) !?[]const u8 {
     if (lp.peek() == null) return null;
     if (lp.isKeywordSplit("ASSIGNMENT")) {

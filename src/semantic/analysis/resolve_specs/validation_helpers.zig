@@ -92,11 +92,16 @@ pub fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDe
     for (derived.components, 0..) |type_decl, component_idx| {
         if (type_decl.type_kind != .derived) continue;
         const derived_name = type_decl.derived_type_name orelse continue;
-        if (symbols_mod.hasDerivedType(self, derived_name)) continue;
         const component_source = if (component_idx < derived.component_sources.len)
             derived.component_sources[component_idx]
         else
             self.current_decl_source orelse ast.DeclSource{};
+        if (!type_decl.pointer and !type_decl.allocatable and derivedTypeIsDeclaredLater(self, self.current_decl_source, derived_name)) {
+            setSourceDiagnostic(self, component_source, "has not been previously defined");
+            if (first_error == null) first_error = error.UnexpectedTypeDecl;
+            continue;
+        }
+        if (symbols_mod.hasDerivedType(self, derived_name)) continue;
         if (findUnitDerivedTypeDeclSource(self, derived_name)) |decl_source| {
             setSourceDiagnosticWithRelated(
                 self,
@@ -140,6 +145,13 @@ pub fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDe
     }
 
     if (first_error) |err| return err;
+}
+
+fn derivedTypeIsDeclaredLater(self: *context.Context, current_source: ?ast.DeclSource, name: []const u8) bool {
+    const candidate = symbols_mod.lookupDerivedType(self, name) orelse return false;
+    const source = current_source orelse return false;
+    if (candidate.source.line == 0 or source.line == 0) return false;
+    return candidate.source.line > source.line;
 }
 
 fn validateDerivedDescriptorComponentShapes(self: *context.Context, derived: ast.DerivedTypeDef) ?anyerror {

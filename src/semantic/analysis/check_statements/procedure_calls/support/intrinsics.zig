@@ -20,6 +20,7 @@ const leaf_helpers = @import("../../leaf_helpers.zig");
 const procedure_call_actual_traits = @import("../../procedure_call_actual_traits.zig");
 const procedure_call_diagnostics = @import("../../procedure_call_diagnostics.zig");
 const procedure_interfaces = @import("../../procedure_interfaces.zig");
+const shift_intrinsics = @import("shift_intrinsics.zig");
 
 pub const CheckError = anyerror;
 const DiagnosticSource = procedure_call_diagnostics.DiagnosticSource;
@@ -120,6 +121,7 @@ pub fn checkIntrinsicCallConstraintsForExprArgs(
         try checkStorageSizeExprArgs(self, args);
         return;
     }
+    try shift_intrinsics.checkExprArgs(self, name, args);
     try checkBitExprIntrinsicConstraints(self, name, args);
     try checkRepeatExprArgs(self, name, args);
 }

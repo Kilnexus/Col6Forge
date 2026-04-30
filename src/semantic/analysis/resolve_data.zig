@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../../ast/nodes.zig");
+const catalog = @import("../../common/error_catalog.zig");
 const context = @import("context.zig");
 const resolve_const = @import("resolve_const.zig");
 const resolve_symbols = @import("resolve_symbols.zig");
@@ -99,11 +100,22 @@ const DataValueCursor = struct {
 
 pub fn lowerDataStatements(ctx: *context.Context) !void {
     if (ctx.unit.stmts.len == 0) return;
+    var first_error: ?anyerror = null;
     for (ctx.unit.stmts) |*stmt| {
         if (stmt.node == .data and stmt.node.data.groups.len > 0) {
-            stmt.node = .{ .data = try lowerDataStmt(ctx, stmt.node.data) };
+            const prev_stmt = ctx.current_stmt;
+            ctx.setCurrentStmt(stmt.*);
+            const lowered = lowerDataStmt(ctx, stmt.node.data) catch |err| {
+                ctx.current_stmt = prev_stmt;
+                if (!ctx.usesExplicitDiagnosticBag()) return err;
+                if (first_error == null) first_error = err;
+                continue;
+            };
+            ctx.current_stmt = prev_stmt;
+            stmt.node = .{ .data = lowered };
         }
     }
+    if (first_error) |err| return err;
     if (ctx.unit_backing) |unit_ptr| {
         unit_ptr.stmts = ctx.unit.stmts;
     }
@@ -195,14 +207,24 @@ fn expandTargetExpr(
             if (step_val == 0) return error.UnsupportedImpliedDo;
 
             var iter = start_val;
+            var invalid_scalar_substring: ?*ast.Expr = null;
+            var had_diagnostic = false;
             if (step_val > 0) {
                 while (iter <= end_val) : (iter += step_val) {
                     const iter_expr = try makeIntegerLiteral(ctx, iter);
                     for (implied.items) |item| {
+                        if (invalid_scalar_substring == null) {
+                            invalid_scalar_substring = scalarSubstringUsesImpliedDoVar(ctx, item, implied.var_name);
+                        }
                         const expanded = if (exprContainsIdentifier(item, implied.var_name))
                             try cloneExprWithSubstCheap(ctx, item, implied.var_name, iter_expr)
                         else
                             item;
+                        if (try validateDataSubstringBounds(ctx, expanded)) {
+                            had_diagnostic = true;
+                            if (!ctx.usesExplicitDiagnosticBag()) return error.InvalidDataStatement;
+                            continue;
+                        }
                         try expandTargetExpr(ctx, expanded, out);
                     }
                 }
@@ -210,19 +232,80 @@ fn expandTargetExpr(
                 while (iter >= end_val) : (iter += step_val) {
                     const iter_expr = try makeIntegerLiteral(ctx, iter);
                     for (implied.items) |item| {
+                        if (invalid_scalar_substring == null) {
+                            invalid_scalar_substring = scalarSubstringUsesImpliedDoVar(ctx, item, implied.var_name);
+                        }
                         const expanded = if (exprContainsIdentifier(item, implied.var_name))
                             try cloneExprWithSubstCheap(ctx, item, implied.var_name, iter_expr)
                         else
                             item;
+                        if (try validateDataSubstringBounds(ctx, expanded)) {
+                            had_diagnostic = true;
+                            if (!ctx.usesExplicitDiagnosticBag()) return error.InvalidDataStatement;
+                            continue;
+                        }
                         try expandTargetExpr(ctx, expanded, out);
                     }
                 }
             }
+            if (had_diagnostic) return error.InvalidDataStatement;
+            if (invalid_scalar_substring) |expr| {
+                emitDataDiagnostic(ctx, expr, "Invalid substring in data-implied-do");
+                return error.InvalidDataStatement;
+            }
         },
         else => {
+            if (try validateDataSubstringBounds(ctx, node)) return error.InvalidDataStatement;
             try ensureAppendBudget(out.items.len, 1);
             try out.append(node);
         },
+    }
+}
+
+fn scalarSubstringUsesImpliedDoVar(ctx: *context.Context, node: *ast.Expr, var_name: []const u8) ?*ast.Expr {
+    return switch (node.*) {
+        .substring => |sub| blk: {
+            const idx = resolve_symbols.findSymbolIndex(ctx, sub.name) orelse break :blk null;
+            if (ctx.symbols.items[idx].dims.len != 0) break :blk null;
+            if (sub.start) |start| {
+                if (exprContainsIdentifier(start, var_name)) break :blk node;
+            }
+            if (sub.end) |end| {
+                if (exprContainsIdentifier(end, var_name)) break :blk node;
+            }
+            break :blk null;
+        },
+        .component => |comp| scalarSubstringUsesImpliedDoVar(ctx, comp.base, var_name),
+        .implied_do => null,
+        else => null,
+    };
+}
+
+fn validateDataSubstringBounds(ctx: *context.Context, node: *ast.Expr) !bool {
+    switch (node.*) {
+        .substring => |sub| {
+            const idx = resolve_symbols.findSymbolIndex(ctx, sub.name) orelse return false;
+            const sym = ctx.symbols.items[idx];
+            if (!sym.isCharacter()) return false;
+            const char_len = sym.effectiveCharLen() orelse return false;
+            if (sub.start) |start_expr| {
+                const start = (try evalConstInt(ctx, start_expr)) orelse return false;
+                if (start < 1) {
+                    emitDataDiagnostic(ctx, start_expr, "Substring start index at (1) is less than one");
+                    return true;
+                }
+            }
+            if (sub.end) |end_expr| {
+                const end = (try evalConstInt(ctx, end_expr)) orelse return false;
+                if (end > @as(i64, @intCast(char_len))) {
+                    emitDataDiagnostic(ctx, end_expr, "Substring end index at (1) exceeds the string length");
+                    return true;
+                }
+            }
+            return false;
+        },
+        .component => |comp| return validateDataSubstringBounds(ctx, comp.base),
+        else => return false,
     }
 }
 
@@ -595,4 +678,20 @@ fn exprContainsIdentifier(node: *ast.Expr, name: []const u8) bool {
 
 fn ensureAppendBudget(current_len: usize, add_len: usize) !void {
     _ = std.math.add(usize, current_len, add_len) catch return error.DataExpansionTooLarge;
+}
+
+fn emitDataDiagnostic(ctx: *context.Context, expr: *ast.Expr, message: []const u8) void {
+    const source = ctx.sourceForExpr(expr) orelse blk: {
+        if (ctx.current_stmt) |stmt| {
+            break :blk ast.SourceRef{ .line = stmt.source_line, .column = stmt.source_column, .text = stmt.source_text };
+        }
+        break :blk ast.SourceRef{};
+    };
+    ctx.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_data_stmt_reference.code,
+        message,
+        source.text,
+    );
 }

@@ -118,7 +118,7 @@ pub fn literalTypeSpec(lit: ast.Literal) symbols.TypeSpec {
     return switch (lit.kind) {
         .integer => symbols.TypeSpec.fromResolvedKind(.integer, .integer, integerLiteralKindValue(lit.text)),
         .real => realLiteralTypeSpec(lit.text),
-        .logical => symbols.TypeSpec.fromResolvedKind(.logical, .logical, null),
+        .logical => symbols.TypeSpec.fromResolvedKind(.logical, .logical, integerLiteralKindValue(lit.text)),
         .string, .hollerith => symbols.TypeSpec.fromResolvedKind(.character, .character, null).withCharacterLength(.constant, literal_utils.literalByteLen(lit) orelse lit.text.len),
         .assumed_size => symbols.TypeSpec.fromResolvedKind(.integer, .integer, null),
     };

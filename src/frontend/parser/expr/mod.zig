@@ -368,12 +368,14 @@ fn parsePrimary(lp: *LineParser, arena: std.mem.Allocator, depth: usize) ParseEx
         },
         .dot_op => {
             if (shared.dotOpIs(lp.*, "TRUE")) {
-                _ = lp.next();
-                return shared.makeExprNode(arena, .{ .literal = .{ .kind = .logical, .text = "1" } }, start_source);
+                const logical_tok = lp.next();
+                const text = try logicalLiteralText(arena, lp.tokenText(logical_tok), "1");
+                return shared.makeExprNode(arena, .{ .literal = .{ .kind = .logical, .text = text } }, start_source);
             }
             if (shared.dotOpIs(lp.*, "FALSE")) {
-                _ = lp.next();
-                return shared.makeExprNode(arena, .{ .literal = .{ .kind = .logical, .text = "0" } }, start_source);
+                const logical_tok = lp.next();
+                const text = try logicalLiteralText(arena, lp.tokenText(logical_tok), "0");
+                return shared.makeExprNode(arena, .{ .literal = .{ .kind = .logical, .text = text } }, start_source);
             }
             if (shared.dotOpIs(lp.*, "NOT")) {
                 _ = lp.next();
@@ -434,4 +436,11 @@ fn parseDefinedDotOperatorName(arena: std.mem.Allocator, text: []const u8) ?[]co
     while (i < text.len and std.ascii.isWhitespace(text[i])) : (i += 1) {}
     if (start == end or i >= text.len or text[i] != '.') return null;
     return arena.dupe(u8, text[start..end]) catch null;
+}
+
+fn logicalLiteralText(arena: std.mem.Allocator, source_text: []const u8, base: []const u8) ![]const u8 {
+    const close_dot = std.mem.lastIndexOfScalar(u8, source_text, '.') orelse return base;
+    const suffix = source_text[close_dot + 1 ..];
+    if (suffix.len == 0 or suffix[0] != '_') return base;
+    return try std.fmt.allocPrint(arena, "{s}{s}", .{ base, suffix });
 }

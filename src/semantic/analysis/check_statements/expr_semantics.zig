@@ -6,6 +6,7 @@ const context = @import("../context.zig");
 const resolve_const = @import("../resolve_const.zig");
 const constants = @import("../resolve_const.zig");
 const resolve_expr = @import("../resolve_expr.zig");
+const type_helpers = @import("../resolve_expr/type_helpers.zig");
 const resolve_calls = @import("../resolve_expr/calls.zig");
 const resolve_symbols = @import("../resolve_symbols.zig");
 const literal_utils = @import("../../evaluator/literals.zig");
@@ -333,6 +334,17 @@ fn validateCharacterLiteralRepresentability(
     return error.AssignmentTypeMismatch;
 }
 
+fn validateLogicalLiteralKind(
+    self: *context.Context,
+    expr_node: *ast.Expr,
+    lit: ast.Literal,
+) CheckError!void {
+    if (lit.kind != .logical) return;
+    const kind_value = type_helpers.integerLiteralKindValue(lit.text) orelse return;
+    if (kind_value == 1 or kind_value == 2 or kind_value == 4 or kind_value == 8) return;
+    return emitExprConstraintDiagnostic(self, expr_node, "kind for logical constant is not supported");
+}
+
 fn intrinsicRequiresDoublePrecisionArgs(name: []const u8) bool {
     return std.ascii.eqlIgnoreCase(name, "dabs") or
         std.ascii.eqlIgnoreCase(name, "dacos") or
@@ -382,6 +394,7 @@ pub fn checkExprType(self: *context.Context, expr: *ast.Expr, comptime deps: any
         .identifier => return try resolve_expr.exprType(self, expr),
         .literal => |lit| {
             try validateCharacterLiteralRepresentability(self, expr, lit);
+            try validateLogicalLiteralKind(self, expr, lit);
             return try resolve_expr.exprType(self, expr);
         },
         .array_constructor => |ctor| {

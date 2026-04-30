@@ -933,10 +933,15 @@ fn checkCFPointerCallConstraints(self: *context.Context, args: []const ast.CallA
     if (fptr_spec.polymorphic) {
         return emitIntrinsicArgDiagnostic(self, fptr, "Argument FPTR at (2) to C_F_POINTER shall not be polymorphic");
     }
-    const shape = actuals.shape orelse return;
-    if (resolve_expr.exprRank(self, fptr) != 0) return;
-
-    return emitIntrinsicArgDiagnostic(self, shape, "Unexpected SHAPE argument at (1) to C_F_POINTER with scalar FPTR");
+    const fptr_rank = resolve_expr.exprRank(self, fptr);
+    const shape = actuals.shape orelse {
+        if (fptr_rank != 0) return emitIntrinsicArgDiagnostic(self, fptr, "Expected SHAPE argument to C_F_POINTER with array FPTR");
+        return;
+    };
+    if (fptr_rank == 0) return emitIntrinsicArgDiagnostic(self, shape, "Unexpected SHAPE argument at (1) to C_F_POINTER with scalar FPTR");
+    if (resolve_expr.exprRank(self, shape) != 1) return emitIntrinsicArgDiagnostic(self, shape, "SHAPE argument to C_F_POINTER must be of rank 1");
+    const shape_spec = try resolve_expr.exprTypeSpec(self, shape);
+    if (shape_spec.lowered_kind != .integer) return emitIntrinsicArgDiagnostic(self, shape, "SHAPE argument to C_F_POINTER must be INTEGER");
 }
 
 fn checkCFProcPointerCallConstraints(self: *context.Context, args: []const ast.CallArg) CheckError!void {

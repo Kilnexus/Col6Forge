@@ -6,6 +6,7 @@ const bind_c_shared = @import("bind_c_shared.zig");
 
 pub fn validateBindCInterfaceProcedure(self: *context.Context, proc_header: ast.InterfaceProcedure) !void {
     if (!proc_header.bind_c and proc_header.bind_name == null) return;
+    try validateBindCInterfaceDummies(self, proc_header);
     if (proc_header.kind != .function) return;
 
     const result = findCharacterResult(proc_header) orelse return;
@@ -33,6 +34,46 @@ pub fn validateBindCInterfaceProcedure(self: *context.Context, proc_header: ast.
         );
         return error.InvalidCharLen;
     }
+}
+
+fn validateBindCInterfaceDummies(self: *context.Context, proc_header: ast.InterfaceProcedure) !void {
+    for (proc_header.decls, 0..) |decl, decl_idx| {
+        if (decl != .type_decl) continue;
+        const type_decl = decl.type_decl;
+        const source = if (decl_idx < proc_header.decl_sources.len) proc_header.decl_sources[decl_idx] else proc_header.source;
+        for (type_decl.items) |item| {
+            if (!nameInList(proc_header.args, item.name)) continue;
+            if (type_decl.optional and type_decl.value_attr) {
+                return emitInterfaceBindCDummyDiagnostic(self, source, "BIND(C) dummy argument cannot have both OPTIONAL and VALUE attributes");
+            }
+            if (type_decl.polymorphic) {
+                return emitInterfaceBindCDummyDiagnostic(self, source, "BIND(C) dummy argument is not C interoperable");
+            }
+            if (type_decl.type_kind == .character and (type_decl.allocatable or type_decl.pointer) and !item.char_len_deferred) {
+                return emitInterfaceBindCDummyDiagnostic(self, source, "BIND(C) character dummy argument must have deferred length");
+            }
+        }
+    }
+}
+
+fn emitInterfaceBindCDummyDiagnostic(self: *context.Context, source: ast.DeclSource, message: []const u8) !void {
+    self.setDiagnosticDetailed(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_char_len.code,
+        message,
+        source.text,
+        &.{.{ .text = "BIND(C) interface dummy arguments must satisfy C interoperability constraints." }},
+        &.{.{ .text = "Adjust the dummy declaration or remove BIND(C) from the interface procedure." }},
+    );
+    return error.InvalidCharLen;
+}
+
+fn nameInList(names: []const []const u8, target: []const u8) bool {
+    for (names) |name| {
+        if (std.ascii.eqlIgnoreCase(name, target)) return true;
+    }
+    return false;
 }
 
 const CharacterResultInfo = struct {

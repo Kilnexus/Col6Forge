@@ -55,6 +55,10 @@ pub fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDe
         setAttributeConflictDiagnostic(self, "BIND");
         if (first_error == null) first_error = error.DuplicateDeclaration;
     }
+    if (validateDerivedParent(self, derived)) |err| {
+        if (!self.usesExplicitDiagnosticBag()) return err;
+        if (first_error == null) first_error = err;
+    }
 
     if (validateBindCCharacterComponents(self, derived)) |err| {
         if (!self.usesExplicitDiagnosticBag()) return err;
@@ -147,7 +151,37 @@ pub fn validateDerivedTypeDef(self: *context.Context, derived: ast.DerivedTypeDe
     if (first_error) |err| return err;
 }
 
+fn validateDerivedParent(self: *context.Context, derived: ast.DerivedTypeDef) ?anyerror {
+    const parent_name = derived.parent_name orelse return null;
+    const source = self.current_decl_source orelse ast.DeclSource{};
+    if (derivedTypeIsDeclaredLater(self, source, parent_name)) {
+        setSourceDiagnostic(self, source, "has not been previously defined");
+        return error.UnexpectedTypeDecl;
+    }
+    const parent = symbols_mod.lookupDerivedType(self, parent_name) orelse {
+        setSourceDiagnostic(self, source, "has not been previously defined");
+        return error.UnexpectedTypeDecl;
+    };
+    if (parent.sequence) {
+        setSourceDiagnostic(self, source, "Cannot extend type because it is a SEQUENCE type");
+        return error.UnexpectedTypeDecl;
+    }
+    if (parent.bind_c) {
+        setSourceDiagnostic(self, source, "Cannot extend type because it is BIND(C)");
+        return error.UnexpectedTypeDecl;
+    }
+    return null;
+}
+
 fn derivedTypeIsDeclaredLater(self: *context.Context, current_source: ?ast.DeclSource, name: []const u8) bool {
+    if (self.current_decl_index) |current_idx| {
+        var decl_idx = current_idx + 1;
+        while (decl_idx < self.unit.decls.len) : (decl_idx += 1) {
+            const decl = self.unit.decls[decl_idx];
+            if (decl != .derived_type_def) continue;
+            if (std.ascii.eqlIgnoreCase(decl.derived_type_def.name, name)) return true;
+        }
+    }
     const candidate = symbols_mod.lookupDerivedType(self, name) orelse return false;
     const source = current_source orelse return false;
     if (candidate.source.line == 0 or source.line == 0) return false;

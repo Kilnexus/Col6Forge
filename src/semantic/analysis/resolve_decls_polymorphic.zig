@@ -12,6 +12,7 @@ pub fn validateTypeDecl(
     sym: symbols.Symbol,
 ) !void {
     try validatePureIntentOutPolymorphicFinalizerConstraint(self, decl, declared_type, sym);
+    try validatePureFunctionResultPolymorphicAllocatable(self, declared_type, sym);
     if (declared_type.lowered_kind != .derived or !declared_type.polymorphic) return;
     if (self.unit.kind == .function) {
         const result_name = self.unit.result_name orelse self.unit.name;
@@ -45,6 +46,52 @@ pub fn validateTypeDecl(
         &.{.{ .text = "Add POINTER or ALLOCATABLE, or move this CLASS entity to a dummy argument list." }},
     );
     return error.InvalidUnlimitedPolymorphicEntity;
+}
+
+fn validatePureFunctionResultPolymorphicAllocatable(
+    self: *context.Context,
+    declared_type: symbols.TypeSpec,
+    sym: symbols.Symbol,
+) !void {
+    if (!self.unit.pure or self.unit.kind != .function) return;
+    if (!isFunctionResultSymbol(self, sym.name)) return;
+    if (declared_type.polymorphic and sym.is_allocatable) {
+        emitPureFunctionResultDiagnostic(self, "function result is polymorphic allocatable");
+        return error.InvalidUnlimitedPolymorphicEntity;
+    }
+    if (declared_type.lowered_kind != .derived) return;
+    const derived_name = declared_type.derived_type_name orelse return;
+    if (!derivedTypeHasPolymorphicAllocatableComponent(self, derived_name)) return;
+    emitPureFunctionResultDiagnostic(self, "function result has polymorphic allocatable component");
+    return error.InvalidUnlimitedPolymorphicEntity;
+}
+
+fn isFunctionResultSymbol(self: *context.Context, name: []const u8) bool {
+    const result_name = self.unit.result_name orelse self.unit.name;
+    return std.ascii.eqlIgnoreCase(name, result_name);
+}
+
+fn derivedTypeHasPolymorphicAllocatableComponent(self: *context.Context, derived_name: []const u8) bool {
+    const info = symbols_mod.lookupDerivedType(self, derived_name) orelse return false;
+    for (info.components) |component| {
+        if (component.allocatable and component.type_spec.polymorphic) return true;
+        if (component.type_spec.lowered_kind != .derived) continue;
+        const component_type_name = component.type_spec.derived_type_name orelse continue;
+        if (std.ascii.eqlIgnoreCase(component_type_name, derived_name)) continue;
+        if (derivedTypeHasPolymorphicAllocatableComponent(self, component_type_name)) return true;
+    }
+    return false;
+}
+
+fn emitPureFunctionResultDiagnostic(self: *context.Context, message: []const u8) void {
+    const source = self.unit.source;
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_unlimited_polymorphic_entity.code,
+        message,
+        source.text,
+    );
 }
 
 fn validatePureIntentOutPolymorphicFinalizerConstraint(

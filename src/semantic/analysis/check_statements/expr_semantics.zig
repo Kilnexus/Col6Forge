@@ -412,7 +412,7 @@ pub fn checkExprType(self: *context.Context, expr: *ast.Expr, comptime deps: any
         .binary => |bin| {
             _ = try checkExprType(self, bin.left, deps);
             _ = try checkExprType(self, bin.right, deps);
-            try constant_expr.rejectDivisionByZero(self, expr, bin);
+            try constant_expr.rejectDivisionByZero(self, expr, bin, deps);
             try checkStaticElementalBinaryConformance(self, expr, bin);
             return try resolve_expr.exprType(self, expr);
         },

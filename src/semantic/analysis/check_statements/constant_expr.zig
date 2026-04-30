@@ -9,8 +9,10 @@ pub fn rejectDivisionByZero(
     self: *context.Context,
     expr_node: *ast.Expr,
     bin: ast.BinaryExpr,
+    comptime deps: anytype,
 ) CheckError!void {
     if (bin.op != .div) return;
+    if (shouldDeferArrayConstructorDivisionByZero(bin, deps)) return;
     const value = (try resolve_const.evalConst(self, bin.right)) orelse return;
     const zero = switch (value) {
         .integer => |int| int == 0,
@@ -28,4 +30,19 @@ pub fn rejectDivisionByZero(
         source.text,
     );
     return error.DivisionByZero;
+}
+
+fn shouldDeferArrayConstructorDivisionByZero(bin: ast.BinaryExpr, comptime deps: anytype) bool {
+    const defer_array_ctor = comptime if (@hasField(@TypeOf(deps), "defer_array_constructor_division_by_zero"))
+        deps.defer_array_constructor_division_by_zero
+    else
+        false;
+    return defer_array_ctor and (isArrayConstructor(bin.left) or isArrayConstructor(bin.right));
+}
+
+fn isArrayConstructor(expr_node: *ast.Expr) bool {
+    return switch (expr_node.*) {
+        .array_constructor => true,
+        else => false,
+    };
 }

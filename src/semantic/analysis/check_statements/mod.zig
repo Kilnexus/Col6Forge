@@ -63,6 +63,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             });
             const value_ty = try expr_semantics.checkExprType(self, assign.value, .{
                 .dummyArgTypeCompatible = dummyArgTypeCompatible,
+                .defer_array_constructor_division_by_zero = true,
             });
             const target_spec = try resolve_expr.exprTypeSpec(self, assign.target);
             const value_spec = try resolve_expr.exprTypeSpec(self, assign.value);

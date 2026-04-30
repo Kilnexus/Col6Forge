@@ -47,6 +47,28 @@ pub fn emitCharacterLenTypingDiagnostic(self: *context.Context, expr: *ast.Expr)
     return true;
 }
 
+pub fn emitCharacterLenScalarIntegerDiagnostic(self: *context.Context) void {
+    const decl_source = self.current_decl_source orelse ast.DeclSource{};
+    self.setDiagnostic(
+        if (decl_source.line == 0) 1 else decl_source.line,
+        if (decl_source.column == 0) 1 else decl_source.column,
+        catalog.semantic.invalid_char_len.code,
+        "Scalar INTEGER expression",
+        decl_source.text,
+    );
+}
+
+pub fn emitUnitNoImplicitDiagnostic(self: *context.Context) void {
+    const source = self.unit.source;
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_char_len.code,
+        "has no IMPLICIT type",
+        source.text,
+    );
+}
+
 pub fn emitExternalCharacterLenDiagnostic(self: *context.Context) void {
     emitCurrentDeclSimpleDiagnostic(self, catalog.semantic.invalid_char_len.code, "must be declared with a constant character length");
 }

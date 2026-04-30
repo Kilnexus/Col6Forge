@@ -515,6 +515,11 @@ pub fn applyDeclarator(
             // Explicit LEN expressions inside procedures may denote automatic
             // CHARACTER objects whose length is only known at entry.
             if (runtime_char_len_ok) {
+                if (spec_expr.runtimeCharacterLengthHasNoImplicitType(self, len_expr)) {
+                    decl_diag.emitUnitNoImplicitDiagnostic(self);
+                    decl_diag.emitCharacterLenScalarIntegerDiagnostic(self);
+                    return error.InvalidCharLen;
+                }
                 sym.applyTypeSpec(sym.type_spec.withCharacterLength(.deferred, null));
                 return;
             }

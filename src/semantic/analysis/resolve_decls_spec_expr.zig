@@ -205,6 +205,48 @@ pub fn validateRestrictedSpecExpr(self: *context.Context, expr: *ast.Expr) !void
     }
 }
 
+pub fn runtimeCharacterLengthHasNoImplicitType(self: *context.Context, expr: *ast.Expr) bool {
+    return implicitTypingDisabled(self) and exprHasUnknownIdentifier(self, expr);
+}
+
+fn exprHasUnknownIdentifier(self: *context.Context, expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .identifier => |name| symbols_mod.findSymbolIndex(self, name) == null,
+        .unary => |un| exprHasUnknownIdentifier(self, un.expr),
+        .binary => |bin| exprHasUnknownIdentifier(self, bin.left) or exprHasUnknownIdentifier(self, bin.right),
+        .call_or_subscript => |call| exprListHasUnknownIdentifier(self, call.args),
+        .component => |comp| exprHasUnknownIdentifier(self, comp.base) or exprListHasUnknownIdentifier(self, comp.args),
+        .substring => |sub| blk: {
+            if (exprListHasUnknownIdentifier(self, sub.args)) break :blk true;
+            if (sub.start) |start| if (exprHasUnknownIdentifier(self, start)) break :blk true;
+            if (sub.end) |end| if (exprHasUnknownIdentifier(self, end)) break :blk true;
+            break :blk false;
+        },
+        .dim_range => |range| blk: {
+            if (range.lower) |lower| if (exprHasUnknownIdentifier(self, lower)) break :blk true;
+            if (exprHasUnknownIdentifier(self, range.upper)) break :blk true;
+            if (range.stride) |stride| if (exprHasUnknownIdentifier(self, stride)) break :blk true;
+            break :blk false;
+        },
+        .array_constructor => |ctor| exprListHasUnknownIdentifier(self, ctor.items),
+        .complex_literal => |lit| exprHasUnknownIdentifier(self, lit.real) or exprHasUnknownIdentifier(self, lit.imag),
+        .implied_do => |ido| blk: {
+            if (exprListHasUnknownIdentifier(self, ido.items)) break :blk true;
+            if (exprHasUnknownIdentifier(self, ido.start) or exprHasUnknownIdentifier(self, ido.end)) break :blk true;
+            if (ido.step) |step| if (exprHasUnknownIdentifier(self, step)) break :blk true;
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+fn exprListHasUnknownIdentifier(self: *context.Context, exprs: []const *ast.Expr) bool {
+    for (exprs) |expr| {
+        if (exprHasUnknownIdentifier(self, expr)) return true;
+    }
+    return false;
+}
+
 fn implicitTypingDisabled(self: *context.Context) bool {
     const limit = if (self.current_decl_index) |idx| idx else self.unit.decls.len;
     var decl_idx: usize = 0;

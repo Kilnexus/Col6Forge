@@ -20,6 +20,7 @@ const procedure_call_actual_traits = @import("../../procedure_call_actual_traits
 const procedure_call_diagnostics = @import("../../procedure_call_diagnostics.zig");
 const procedure_interfaces = @import("../../procedure_interfaces.zig");
 const intrinsics = @import("intrinsics.zig");
+const pointer_dummy = @import("pointer_dummy.zig");
 const resolution = @import("resolution.zig");
 const sequence_association = @import("sequence_association.zig");
 
@@ -446,6 +447,7 @@ pub fn checkDataActualArgCompatibility(
     if (!skip_no_arg_check_compat and formal.pointer and formal.contiguous and exprIsDefinitelyNoncontiguous(self, actual_expr)) {
         return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "must be simply contiguous");
     }
+    try pointer_dummy.checkActual(self, callee_name, formal, actual_expr);
     try checkVolatileAndAsynchronousActualRestrictions(self, callee_name, formal, actual_expr);
     if (skip_no_arg_check_compat) return;
     if (formal.requires_descriptor and assumed_size.exprNeedsExplicitLastUpperBound(self, actual_expr)) return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "cannot be an assumed-size array");

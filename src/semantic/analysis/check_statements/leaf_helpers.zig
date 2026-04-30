@@ -79,6 +79,32 @@ pub fn checkNamedDefaultCharacterControls(
     }
 }
 
+pub fn checkNamedCharacterControls(
+    self: *context.Context,
+    controls: []const ast.ControlItem,
+    names: []const []const u8,
+) CheckError!void {
+    for (controls) |ctrl| {
+        const name = ctrl.name orelse continue;
+        if (!textInSet(name, names)) continue;
+        const spec = try resolve_expr.exprTypeSpec(self, ctrl.value);
+        if (spec.lowered_kind == .character) {
+            if ((spec.kind_value orelse 1) == 1) continue;
+            self.setCurrentSource(if (ctrl.source.line != 0) ctrl.source else self.sourceForExpr(ctrl.value));
+            try checkDefaultCharacterControlExpr(self, ctrl.value);
+        }
+        const source = if (ctrl.source.line != 0) ctrl.source else (self.sourceForExpr(ctrl.value) orelse self.current_source orelse ast.SourceRef{});
+        self.setDiagnostic(
+            if (source.line == 0) 1 else source.line,
+            if (source.column == 0) 1 else source.column,
+            catalog.semantic.invalid_io_control_type.code,
+            "I/O control specifier must be of type CHARACTER",
+            source.text,
+        );
+        return error.InvalidIoControlType;
+    }
+}
+
 pub fn rejectNamedIoControl(
     self: *context.Context,
     controls: []const ast.ControlItem,
@@ -98,6 +124,38 @@ pub fn rejectNamedIoControl(
         );
         return error.InvalidIoControlValue;
     }
+}
+
+pub fn checkReadFormatPositiveWidths(self: *context.Context, format_spec: ast.FormatSpec) CheckError!void {
+    switch (format_spec) {
+        .inline_items => |items| try checkReadFormatItemsPositiveWidths(self, items),
+        else => {},
+    }
+}
+
+fn checkReadFormatItemsPositiveWidths(self: *context.Context, items: []const ast.FormatItem) CheckError!void {
+    for (items) |item| {
+        switch (item) {
+            .int => |fmt| if (fmt.width == 0) return emitReadFormatWidthDiagnostic(self),
+            .real, .real_fixed => |fmt| if (fmt.width == 0) return emitReadFormatWidthDiagnostic(self),
+            .char => |fmt| if (fmt.width == 0) return emitReadFormatWidthDiagnostic(self),
+            .logical => |fmt| if (fmt.width == 0) return emitReadFormatWidthDiagnostic(self),
+            .repeat_group => |group| try checkReadFormatItemsPositiveWidths(self, group.items),
+            else => {},
+        }
+    }
+}
+
+fn emitReadFormatWidthDiagnostic(self: *context.Context) CheckError!void {
+    const source = self.current_source orelse ast.SourceRef{};
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_format_statement.code,
+        "Positive width required in format",
+        source.text,
+    );
+    return error.InvalidFormatStatement;
 }
 
 pub fn checkDataTransferUnit(self: *context.Context, expr_node: *ast.Expr) CheckError!void {

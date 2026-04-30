@@ -685,6 +685,34 @@ test "parseProgram rejects contained procedure name matching host dummy" {
     try testing.expect(std.mem.indexOf(u8, diag.message, "conflicts with DUMMY argument") != null);
 }
 
+test "parseProgram rejects contained procedure name matching host generic" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program host\n" ++
+        "interface i1\n" ++
+        "  subroutine s1(i)\n" ++
+        "  end subroutine\n" ++
+        "end interface\n" ++
+        "contains\n" ++
+        "  subroutine i1(i)\n" ++
+        "  end subroutine\n" ++
+        "end program\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var diag_bag = parse_diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    try testing.expectError(error.UnexpectedToken, parseProgramWithDiagnostics(arena.allocator(), lines, &diag_bag));
+    const diag = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(diag);
+    try testing.expect(std.mem.indexOf(u8, diag.message, "already defined as a generic") != null);
+}
+
 test "parseProgram does not treat END BLOCK as unit terminator" {
     const testing = std.testing;
     const allocator = testing.allocator;

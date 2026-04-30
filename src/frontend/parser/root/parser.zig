@@ -209,6 +209,7 @@ pub const Parser = struct {
             const unit_start_index = self.index;
             const unit = try self.parseProgramUnit();
             try self.validateContainedProcedureNameAgainstHostDummies(unit);
+            try self.validateContainedProcedureNameAgainstHostGenerics(unit);
             if (unit.is_module_procedure and self.pending_owner_name == null) {
                 const header_line = self.lines[unit_start_index];
                 self.diag_bag.set(
@@ -251,6 +252,34 @@ pub const Parser = struct {
             }
         }
         return .{ .units = try units.toOwnedSlice() };
+    }
+
+    fn validateContainedProcedureNameAgainstHostGenerics(self: *Parser, unit: ProgramUnit) !void {
+        if (unit.owner_name == null) return;
+        const owner_decls = self.pending_owner_decls orelse return;
+        for (owner_decls) |owner_decl| {
+            if (owner_decl != .interface_block) continue;
+            const generic_name = owner_decl.interface_block.name orelse continue;
+            if (!std.ascii.eqlIgnoreCase(generic_name, unit.name)) continue;
+            self.diag_bag.set(
+                if (unit.source.line == 0) 1 else unit.source.line,
+                if (unit.source.column == 0) 1 else unit.source.column,
+                catalog.semantic.duplicate_declaration.code,
+                "already defined as a generic",
+                unit.source.text,
+            );
+            if (self.index > 0) {
+                const end_line = self.lines[self.index - 1];
+                self.diag_bag.set(
+                    end_line.span.start_line,
+                    if (end_line.segments.len > 0) end_line.segments[0].column else 1,
+                    catalog.parser.unexpected_token.code,
+                    "Expecting END PROGRAM statement",
+                    end_line.text,
+                );
+            }
+            return error.UnexpectedToken;
+        }
     }
 
     fn validateContainedProcedureNameAgainstHostDummies(self: *Parser, unit: ProgramUnit) !void {

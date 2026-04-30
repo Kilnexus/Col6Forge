@@ -63,6 +63,7 @@ pub fn inferProcedureArgSigsWithKnown(
             else
                 null,
             .procedure_has_explicit_interface = decl_info.interface_procedure != null or declarator_sig != null,
+            .procedure_pure = if (decl_info.interface_procedure) |proc| proc.pure else if (declarator_sig) |sig| sig.pure else false,
             .procedure_arg_count = if (decl_info.interface_procedure) |proc| proc.args.len else if (declarator_sig) |sig| sig.arg_count else 0,
             .procedure_alt_return_count = if (decl_info.interface_procedure) |proc| proc.alt_return_dummy_count else if (declarator_sig) |sig| sig.alt_return_count else 0,
             .procedure_result_type_spec = if (decl_info.interface_procedure) |proc|
@@ -283,6 +284,7 @@ pub fn inferInterfaceProcedureArgSigs(
             else
                 null,
             .procedure_has_explicit_interface = decl_info.interface_procedure != null or declarator_sig != null,
+            .procedure_pure = if (decl_info.interface_procedure) |proc| proc.pure else if (declarator_sig) |sig| sig.pure else false,
             .procedure_arg_count = if (decl_info.interface_procedure) |proc| proc.args.len else if (declarator_sig) |sig| sig.arg_count else 0,
             .procedure_alt_return_count = if (decl_info.interface_procedure) |proc| proc.alt_return_dummy_count else if (declarator_sig) |sig| sig.alt_return_count else 0,
             .procedure_result_type_spec = if (decl_info.interface_procedure) |proc|

@@ -110,6 +110,7 @@ pub const Context = struct {
             no_arg_check: bool = false,
             is_procedure: bool = false,
             procedure_kind: ?ast.ProgramUnitKind = null,
+            procedure_pure: bool = false,
             procedure_has_explicit_interface: bool = false,
             procedure_arg_count: usize = 0,
             procedure_alt_return_count: usize = 0,

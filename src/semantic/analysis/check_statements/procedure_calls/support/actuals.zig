@@ -1,15 +1,9 @@
 const std = @import("std");
 const ast = @import("../../../../../ast/nodes.zig");
-const common_diag = @import("../../../../../common/diagnostic.zig");
-const catalog = @import("../../../../../common/error_catalog.zig");
-const procedure_pass = @import("../../../../../common/procedure_pass.zig");
-const free_form = @import("../../../../../frontend/free_form.zig");
-const parser = @import("../../../../../frontend/parser/mod.zig");
 const symbols = @import("../../../../symbol/mod.zig");
 const intrinsic_signature = @import("../../../../intrinsic_signature.zig");
 const procedure_inference = @import("../../../../split/api/procedure_inference.zig");
 const context = @import("../../../context.zig");
-const constants = @import("../../../resolve_const.zig");
 const resolve_expr = @import("../../../resolve_expr.zig");
 const resolve_symbols = @import("../../../resolve_symbols.zig");
 const assumed_size = @import("../../../assumed_size.zig");
@@ -19,6 +13,7 @@ const leaf_helpers = @import("../../leaf_helpers.zig");
 const procedure_call_actual_traits = @import("../../procedure_call_actual_traits.zig");
 const procedure_call_diagnostics = @import("../../procedure_call_diagnostics.zig");
 const procedure_interfaces = @import("../../procedure_interfaces.zig");
+const allocatable_actuals = @import("allocatable_actuals.zig");
 const do_actuals = @import("do_actuals.zig");
 const intrinsics = @import("intrinsics.zig");
 const pointer_dummy = @import("pointer_dummy.zig");
@@ -26,11 +21,6 @@ const resolution = @import("resolution.zig");
 const sequence_association = @import("sequence_association.zig");
 
 pub const CheckError = anyerror;
-const DiagnosticSource = procedure_call_diagnostics.DiagnosticSource;
-const Advice = procedure_call_diagnostics.Advice;
-const invalidArgumentAdvice = procedure_call_diagnostics.invalidArgumentAdvice;
-const appendUniqueDeclSource = procedure_call_diagnostics.appendUniqueDeclSource;
-const emitStructuredProcedureDiagnostic = procedure_call_diagnostics.emitStructuredProcedureDiagnostic;
 const emitProcedureActualDiagnostic = procedure_call_diagnostics.emitProcedureActualDiagnostic;
 const emitProcedureActualCallDiagnostic = procedure_call_diagnostics.emitProcedureActualCallDiagnostic;
 const emitProcedureActualCallWarning = procedure_call_diagnostics.emitProcedureActualCallWarning;
@@ -224,6 +214,9 @@ pub fn checkProcedureActualSigCompatibility(
             return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, passingGlobalProcedureMessage(sig.kind));
         }
     }
+    if (formal.procedure_pure and !sig.pure) {
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "Mismatch in PURE attribute");
+    }
     if (formal.procedure_result_type_spec) |expected_result| {
         if (sig.kind == .function) {
             const actual_result = actualSigResultType(sig);
@@ -342,6 +335,7 @@ pub fn structureConstructorProcedureFormalArg(
         .type_spec = component.type_spec,
         .is_procedure = true,
         .procedure_kind = sig.kind,
+        .procedure_pure = sig.pure,
         .procedure_has_explicit_interface = component.procedure_has_explicit_interface,
         .procedure_arg_count = sig.arg_count,
         .procedure_alt_return_count = sig.alt_return_count,
@@ -413,6 +407,7 @@ pub fn checkDataActualArgCompatibility(
     const skip_no_arg_check_compat = formal.no_arg_check;
     const actual_rank = procedureActualExprRank(self, actual_expr);
     const actual_spec = try resolve_expr.exprTypeSpec(self, actual_expr);
+    try allocatable_actuals.check(self, callee_name, formal, actual_expr, skip_no_arg_check_compat);
     if (!skip_no_arg_check_compat) {
         try checkAllocatablePolymorphicActualConstraint(self, callee_name, formal, actual_expr, actual_spec);
     }

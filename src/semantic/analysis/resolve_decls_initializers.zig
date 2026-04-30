@@ -39,6 +39,7 @@ pub fn validateDeclaratorInitializer(self: *context.Context, init_expr: ?*ast.Ex
         return error.ParameterNotConstant;
     }
     try validateInvalidDerivedArrayConstructorInitializer(self, expr);
+    try validateAllocatableComponentConstructorInitializer(self, expr);
     try validateRestrictedInitializationInquiry(self, expr);
 }
 
@@ -555,6 +556,41 @@ fn validateInvalidDerivedArrayConstructorInitializer(self: *context.Context, exp
         decl_source.text,
     );
     return error.UnexpectedToken;
+}
+
+fn validateAllocatableComponentConstructorInitializer(self: *context.Context, expr: *ast.Expr) !void {
+    const decl_source = self.current_decl_source orelse return;
+    const call = switch (expr.*) {
+        .call_or_subscript => |call| call,
+        else => return,
+    };
+    const derived = symbols_mod.lookupDerivedType(self, call.name) orelse return;
+    var has_allocatable_component = false;
+    for (derived.components) |component| {
+        if (component.allocatable) {
+            has_allocatable_component = true;
+            break;
+        }
+    }
+    if (!has_allocatable_component) return;
+    for (call.args) |arg| {
+        if (isNullInitializerExpr(arg)) continue;
+        self.setDiagnostic(
+            if (decl_source.line == 0) 1 else decl_source.line,
+            if (decl_source.column == 0) 1 else decl_source.column,
+            catalog.semantic.parameter_not_constant.code,
+            "Invalid initialization expression",
+            decl_source.text,
+        );
+        return error.ParameterNotConstant;
+    }
+}
+
+fn isNullInitializerExpr(expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .call_or_subscript => |call| std.ascii.eqlIgnoreCase(call.name, "null"),
+        else => false,
+    };
 }
 
 fn declarationTargetNameFromSource(text: []const u8) ?[]const u8 {

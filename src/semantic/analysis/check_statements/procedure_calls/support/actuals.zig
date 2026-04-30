@@ -564,21 +564,7 @@ fn derivedTypeNeedsIntentOutAssumedRankProtection(self: *context.Context, spec: 
     for (info.components) |component| {
         if (component.allocatable) return true;
     }
-    if (derivedTypeHasDefaultInitializer(self, type_name)) return true;
-    return false;
-}
-
-fn derivedTypeHasDefaultInitializer(self: *context.Context, type_name: []const u8) bool {
-    for (self.unit.decls) |decl| {
-        if (decl != .derived_type_def) continue;
-        if (!std.ascii.eqlIgnoreCase(decl.derived_type_def.name, type_name)) continue;
-        for (decl.derived_type_def.components) |component_decl| {
-            for (component_decl.items) |item| {
-                if (item.init != null) return true;
-            }
-        }
-        return false;
-    }
+    if (assumed_size.derivedTypeHasDefaultInitializer(self, type_name)) return true;
     return false;
 }
 

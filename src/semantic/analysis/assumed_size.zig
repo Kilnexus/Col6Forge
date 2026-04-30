@@ -183,7 +183,7 @@ fn missingLastUpperBoundForArgs(
     };
 }
 
-fn derivedTypeHasDefaultInitializer(self: *context.Context, derived_name: []const u8) bool {
+pub fn derivedTypeHasDefaultInitializer(self: *context.Context, derived_name: []const u8) bool {
     for (self.unit.decls) |decl| {
         if (decl != .derived_type_def) continue;
         if (!std.ascii.eqlIgnoreCase(decl.derived_type_def.name, derived_name)) continue;

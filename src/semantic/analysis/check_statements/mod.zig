@@ -325,6 +325,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
         },
         .write => |write| {
             try expr_semantics.checkExpr(self, write.unit, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            try leaf_helpers.checkDataTransferUnit(self, write.unit);
             try leaf_helpers.checkFormatSpec(self, write.format);
             if (write.rec) |rec| try expr_semantics.checkExpr(self, rec, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
             for (write.args) |arg| {
@@ -339,6 +340,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
         },
         .read => |read| {
             try expr_semantics.checkExpr(self, read.unit, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            try leaf_helpers.checkDataTransferUnit(self, read.unit);
             try leaf_helpers.checkFormatSpec(self, read.format);
             if (read.rec) |rec| try expr_semantics.checkExpr(self, rec, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
             for (read.args) |arg| {
@@ -370,6 +372,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
         },
         .inquire => |inq| {
             for (inq.controls) |ctrl| try expr_semantics.checkExpr(self, ctrl.value, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            try leaf_helpers.checkInquireFileUnitControls(self, inq.controls);
         },
         .close => |cls| {
             for (cls.controls) |ctrl| {

@@ -4,7 +4,9 @@ const catalog = @import("../../../common/error_catalog.zig");
 const case_insensitive = @import("../../../common/case_insensitive.zig");
 const context = @import("../context.zig");
 const intrinsics = @import("../intrinsics.zig");
+const resolve_const = @import("../resolve_const.zig");
 const resolve_expr = @import("../resolve_expr.zig");
+const resolve_symbols = @import("../resolve_symbols.zig");
 
 pub const CheckError = anyerror;
 
@@ -96,6 +98,97 @@ pub fn rejectNamedIoControl(
         );
         return error.InvalidIoControlValue;
     }
+}
+
+pub fn checkDataTransferUnit(self: *context.Context, expr_node: *ast.Expr) CheckError!void {
+    const spec = try resolve_expr.exprTypeSpec(self, expr_node);
+    if (spec.lowered_kind == .integer) return;
+    if (spec.lowered_kind == .character and !exprReferencesParameter(self, expr_node)) return;
+    const source = self.sourceForExpr(expr_node) orelse self.current_source orelse ast.SourceRef{};
+    const message = if (spec.lowered_kind == .character)
+        "internal file unit must not be a character PARAMETER"
+    else
+        "UNIT expression must be an INTEGER expression or a CHARACTER variable";
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_io_control_type.code,
+        message,
+        source.text,
+    );
+    return error.InvalidIoControlType;
+}
+
+pub fn checkInquireFileUnitControls(self: *context.Context, controls: []const ast.ControlItem) CheckError!void {
+    var saw_file = false;
+    var saw_unit = false;
+    var fallback_source: ?ast.SourceRef = null;
+    for (controls) |ctrl| {
+        if (fallback_source == null) fallback_source = ctrl.source;
+        if (ctrl.name) |name| {
+            if (std.ascii.eqlIgnoreCase(name, "FILE")) {
+                saw_file = true;
+            } else if (std.ascii.eqlIgnoreCase(name, "UNIT")) {
+                saw_unit = true;
+                try checkInquireUnitValue(self, ctrl);
+            }
+        } else {
+            saw_unit = true;
+            try checkInquireUnitValue(self, ctrl);
+        }
+    }
+    if (saw_file and saw_unit) {
+        return emitInquireControlDiagnostic(self, fallback_source, "INQUIRE statement cannot contain both FILE and UNIT");
+    }
+    if (!saw_file and !saw_unit) {
+        return emitInquireControlDiagnostic(self, fallback_source, "INQUIRE requires either FILE or UNIT");
+    }
+}
+
+fn checkInquireUnitValue(self: *context.Context, ctrl: ast.ControlItem) CheckError!void {
+    const value = (try resolve_const.evalConst(self, ctrl.value)) orelse return;
+    const unit = switch (value) {
+        .integer => |int| int,
+        else => return,
+    };
+    if (unit != -1 and unit != -2) return;
+    const source = if (ctrl.source.line != 0) ctrl.source else (self.sourceForExpr(ctrl.value) orelse self.current_source orelse ast.SourceRef{});
+    const message = std.fmt.allocPrint(self.arena, "UNIT number cannot be {d}", .{unit}) catch "invalid negative UNIT number";
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_io_control_value.code,
+        message,
+        source.text,
+    );
+    return error.InvalidIoControlValue;
+}
+
+fn emitInquireControlDiagnostic(self: *context.Context, source_opt: ?ast.SourceRef, message: []const u8) CheckError!void {
+    const source = source_opt orelse self.current_source orelse ast.SourceRef{};
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_io_control_value.code,
+        message,
+        source.text,
+    );
+    return error.InvalidIoControlValue;
+}
+
+fn exprReferencesParameter(self: *context.Context, expr_node: *ast.Expr) bool {
+    switch (expr_node.*) {
+        .identifier => |name| return symbolIsParameter(self, name),
+        .call_or_subscript => |call| return symbolIsParameter(self, call.name),
+        .substring => |sub| return symbolIsParameter(self, sub.name),
+        .component => |comp| return exprReferencesParameter(self, comp.base),
+        else => return false,
+    }
+}
+
+fn symbolIsParameter(self: *context.Context, name: []const u8) bool {
+    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
+    return self.symbols.items[idx].kind == .parameter;
 }
 
 pub fn controlLiteralText(expr_node: *ast.Expr) ?[]const u8 {

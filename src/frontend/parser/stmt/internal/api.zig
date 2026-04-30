@@ -64,6 +64,16 @@ fn maybeSetBareCallLikeVariableDiagnostic(
     return true;
 }
 
+fn maybeSetMissingPrintIoListDiagnostic(diag_bag: *parse_diag.Bag, line: logical_line.LogicalLine, tokens: []lexer.Token) bool {
+    if (tokens.len == 0) return false;
+    var scan = LineParser.init(line, tokens);
+    if (!scan.consumeKeyword("PRINT")) return false;
+    const last = tokens[tokens.len - 1];
+    if (last.kind != .comma) return false;
+    diag_bag.set(last.line, last.column, catalog.parser.unexpected_token.code, "PRINT trailing comma without an I/O list is not allowed", line.text);
+    return true;
+}
+
 fn actionCallbacks() action_stmt.ActionCallbacks {
     return .{
         .maybeAttachLoopExitLabelFn = control_flow_bridge.maybeAttachLoopExitLabel,
@@ -240,7 +250,10 @@ pub fn parseStatementWithDiagnostics(
     }
     const action_node = action_stmt.parseActionStmtNode(arena, line, &lp, do_ctx, .top_level, actionCallbacks()) catch |err| {
         if (!diag_bag.has()) {
-            if (!(err == error.UnexpectedToken and maybeSetBareCallLikeVariableDiagnostic(arena, diag_bag, line, tokens))) {
+            if (!(err == error.UnexpectedToken and
+                (maybeSetMissingPrintIoListDiagnostic(diag_bag, line, tokens) or
+                    maybeSetBareCallLikeVariableDiagnostic(arena, diag_bag, line, tokens))))
+            {
                 setParseDiagnosticFromStream(diag_bag, line, lp, err);
             }
         }

@@ -205,6 +205,7 @@ pub fn parsePrintStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtE
 
     var args: []*Expr = &.{};
     if (lp.consume(.comma)) {
+        if (lp.peek() == null) return error.UnexpectedToken;
         args = try parseIoList(arena, lp);
     }
     const unit_expr = try makeIntegerLiteral(arena, 6);

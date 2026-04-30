@@ -640,6 +640,27 @@ test "parseProgram captures explicit RESULT variable name in function header" {
     try testing.expectEqualStrings("F", unit.result_name.?);
 }
 
+test "parseProgram assigns typed function header declaration to RESULT variable" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "integer function f() result(r)\n" ++
+        "  r = 1\n" ++
+        "end function\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parseProgram(arena.allocator(), lines);
+
+    try testing.expectEqual(@as(usize, 1), program.units.len);
+    const unit = program.units[0];
+    try testing.expect(unit.decls[0] == .type_decl);
+    try testing.expectEqualStrings("r", unit.decls[0].type_decl.items[0].name);
+}
+
 test "parseProgram does not treat END BLOCK as unit terminator" {
     const testing = std.testing;
     const allocator = testing.allocator;
@@ -804,4 +825,3 @@ test "parseProgramWithDiagnostics accepts select type over parameterized class s
     try testing.expectEqual(@as(usize, 2), program.units.len);
     try testing.expect(diag_bag.take() == null);
 }
-

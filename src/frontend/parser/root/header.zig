@@ -127,8 +127,9 @@ pub fn parseProgramUnitHeader(arena: std.mem.Allocator, lp: *LineParser, block_d
     var type_decl: ?ast.Decl = null;
     if (type_info) |info| {
         const decl_items = try arena.alloc(ast.Declarator, 1);
+        const result_decl_name = if (kind == .function) result_name orelse name else name;
         decl_items[0] = .{
-            .name = name,
+            .name = result_decl_name,
             .dims = &.{},
             .char_len = info.char_len,
             .char_len_deferred = false,

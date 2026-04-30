@@ -359,7 +359,6 @@ pub fn processCase(
     options: Options,
     log_state: *LogState,
 ) !bool {
-    const check_errors = options.strict_level == .err_only or options.strict_level == .warning or options.strict_level == .full;
     const check_warnings = options.strict_level == .warning or options.strict_level == .full;
     const check_aux = options.strict_level == .full;
     const check_output = options.strict_level == .full;
@@ -433,23 +432,14 @@ pub fn processCase(
     if (expect_failure) {
         defer if (diag_text.len > 0) allocator.free(diag_text);
         defer if (match_text.len > 0) allocator.free(match_text);
-        const lenient_error_expectation = case.expect_compile_error and !case.expect_should_fail and !check_errors;
-        if (!compile_failed and !lenient_error_expectation) {
+        if (!compile_failed) {
             log_state.stderr("expected compile failure but succeeded: {s}\n", .{case.rel_path});
             return false;
         }
         if (case.expect_compile_error) {
-            if (lenient_error_expectation) {
-                if (options.verbose) {
-                    log_state.stdout("strict-level off: treating dg-error as diagnostic metadata for {s}\n", .{case.rel_path});
-                }
-            } else if (check_errors) {
-                const candidate = if (match_text.len != 0) match_text else diag_text;
-                const matched = try matchExpectedErrors(allocator, case, candidate, log_state);
-                if (!matched) return false;
-            } else if (options.verbose) {
-                log_state.stdout("strict-level off: skipping dg-error text check for {s}\n", .{case.rel_path});
-            }
+            const candidate = if (match_text.len != 0) match_text else diag_text;
+            const matched = try matchExpectedErrors(allocator, case, candidate, log_state);
+            if (!matched) return false;
         }
         if (check_warnings and case.expected_warning_patterns.len > 0) {
             const candidate = if (match_text.len != 0) match_text else diag_text;

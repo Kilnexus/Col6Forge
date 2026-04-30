@@ -163,8 +163,7 @@ pub fn printUsage(file: zig_api.File) !void {
         \\
         \\Notes:
         \\  - Phase-1 executes `dg-do compile` tests.
-        \\  - `dg-error` expectations are diagnostic metadata at strict-level off.
-        \\  - `dg-error` failure and text matching start at strict-level error.
+        \\  - `dg-error` expectations are checked against failure diagnostics.
         \\  - `dg-warning` expectations are enforced in strict-level warning/full.
         \\  - `dg-message`/`dg-note`/`dg-bogus` expectations are enforced in strict-level full.
         \\  - `dg-output`/`dg-prune-output` expectations are enforced in strict-level full.

@@ -257,6 +257,7 @@ pub fn emitVariableDefinitionContextDiagnostic(
 }
 
 pub fn exprIsVariableDefinitionActual(self: *context.Context, expr: *ast.Expr) bool {
+    if (exprIsParenthesizedAtSource(self, expr)) return false;
     return switch (expr.*) {
         .identifier => |name| blk: {
             const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;
@@ -280,6 +281,33 @@ pub fn exprIsVariableDefinitionActual(self: *context.Context, expr: *ast.Expr) b
             break :blk true;
         },
         else => false,
+    };
+}
+
+pub fn exprIsParenthesizedAtSource(self: *context.Context, expr: *ast.Expr) bool {
+    const source = self.sourceForExpr(expr) orelse return false;
+    if (source.column == 0 or source.column > source.text.len) return false;
+    const start = source.column - 1;
+    var left = start;
+    while (left > 0) {
+        left -= 1;
+        if (source.text[left] == ' ' or source.text[left] == '\t') continue;
+        break;
+    }
+    const expr_len = sourceExprLeadLen(expr);
+    var right = start + expr_len;
+    while (right < source.text.len and (source.text[right] == ' ' or source.text[right] == '\t')) : (right += 1) {}
+    return source.text[left] == '(' and right < source.text.len and source.text[right] == ')';
+}
+
+fn sourceExprLeadLen(expr: *ast.Expr) usize {
+    return switch (expr.*) {
+        .identifier => |name| name.len,
+        .literal => |lit| lit.text.len,
+        .call_or_subscript => |call| call.name.len,
+        .substring => |sub| sub.name.len,
+        .component => |comp| sourceExprLeadLen(comp.base),
+        else => 1,
     };
 }
 

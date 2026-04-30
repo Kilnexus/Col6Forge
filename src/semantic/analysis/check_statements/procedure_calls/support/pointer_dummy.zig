@@ -10,6 +10,16 @@ pub fn checkActual(
     actual_expr: *ast.Expr,
 ) anyerror!void {
     if (!formal.pointer) return;
+    if (diagnostics.exprIsParenthesizedAtSource(self, actual_expr)) {
+        return diagnostics.emitProcedureActualCallDiagnostic(
+            self,
+            callee_name,
+            formal.name,
+            actual_expr,
+            error.InvalidArgumentCount,
+            "must be a pointer or a valid target",
+        );
+    }
     if (formal.intent == .in) {
         if (expr_attributes.isPointerEntity(self, actual_expr) or expr_attributes.isCAddressableDataTarget(self, actual_expr)) return;
     } else if (expr_attributes.isPointerEntity(self, actual_expr)) {

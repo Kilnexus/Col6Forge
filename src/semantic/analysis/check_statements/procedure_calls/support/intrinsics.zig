@@ -20,6 +20,7 @@ const leaf_helpers = @import("../../leaf_helpers.zig");
 const procedure_call_diagnostics = @import("../../procedure_call_diagnostics.zig");
 const c_funloc = @import("c_funloc.zig");
 const procedure_size = @import("procedure_size.zig");
+const present_intrinsic = @import("present_intrinsic.zig");
 const shift_intrinsics = @import("shift_intrinsics.zig");
 const coarray_intrinsics = @import("coarray_intrinsics.zig");
 pub const CheckError = anyerror;
@@ -151,6 +152,9 @@ fn checkIntrinsicSpecialActualRestriction(
     }
     if ((std.ascii.eqlIgnoreCase(name, "c_sizeof") or std.ascii.eqlIgnoreCase(name, "sizeof")) and actual_idx == 0) {
         return procedure_size.checkActual(self, name, expr_node, emitIntrinsicArgDiagnostic);
+    }
+    if (std.ascii.eqlIgnoreCase(name, "present") and actual_idx == 0) {
+        return present_intrinsic.checkActual(self, expr_node, emitIntrinsicArgDiagnostic);
     }
     if (exprIsBozLiteral(expr_node)) {
         if (std.ascii.eqlIgnoreCase(name, "c_sizeof")) {

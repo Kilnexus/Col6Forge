@@ -113,7 +113,7 @@ fn shouldTrackImplicitExternalCall(self: *context.Context, name: []const u8) boo
     if (resolve_symbols.findSymbolIndex(self, name)) |idx| {
         const sym = self.symbols.items[idx];
         if ((sym.kind == .function or sym.kind == .subroutine) and !sym.is_external) return false;
-        if (sym.is_intrinsic or sym.is_external) return false;
+        if (sym.is_intrinsic) return false;
     }
     return true;
 }

@@ -18,6 +18,7 @@ const assumed_size = @import("../assumed_size.zig");
 const array_constructor_items = @import("array_constructor_items.zig");
 const expr_attributes = @import("../expr_attributes.zig");
 const expr_diagnostics = @import("../expr_diagnostics.zig");
+const max_min_conformance = @import("max_min_conformance.zig");
 
 const ResolvedRefKind = symbols.ResolvedRefKind;
 pub const CheckError = anyerror;
@@ -58,7 +59,7 @@ pub fn checkSpecialExprCallConstraints(
     try checkInquiryDimArg(self, name, args);
     try checkAssumedSizeInquiryArrayArg(self, name, args);
     try checkStaticMatmulConformance(self, call_expr, name, args);
-    try checkStaticMaxMinConformance(self, name, args);
+    try max_min_conformance.checkStaticMaxMinConformance(self, name, args);
     try checkLegacyWidecharExprCallConstraints(self, name, args);
     if (intrinsicRequiresDoublePrecisionArgs(name)) {
         for (args) |arg| {
@@ -200,43 +201,6 @@ fn checkStaticMatmulConformance(
     const rhs_inner = rhs_shape[0];
     if (lhs_inner != rhs_inner) {
         return emitExprConstraintDiagnostic(self, call_expr, "Different shape");
-    }
-}
-
-fn checkStaticMaxMinConformance(
-    self: *context.Context,
-    name: []const u8,
-    args: []*ast.Expr,
-) CheckError!void {
-    if (!leaf_helpers.isHomogeneousMaxMinIntrinsic(name)) return;
-
-    var expected_rank: ?usize = null;
-    var expected_shape: ?[]const i64 = null;
-    for (args) |arg| {
-        // MIN/MAX scalar actuals broadcast; array actuals must be mutually conformable.
-        const actual_rank = resolve_expr.exprRank(self, arg);
-        if (actual_rank == 0) continue;
-        if (expected_rank == null) {
-            expected_rank = actual_rank;
-            expected_shape = static_shapes.staticShapeForExpr(self, arg);
-            continue;
-        }
-        if (expected_rank.? != actual_rank) {
-            return emitExprConstraintDiagnostic(self, arg, "Incompatible ranks");
-        }
-        const actual_shape = static_shapes.staticShapeForExpr(self, arg) orelse continue;
-        const prior_shape = expected_shape orelse {
-            expected_shape = actual_shape;
-            continue;
-        };
-        if (prior_shape.len != actual_shape.len) {
-            return emitExprConstraintDiagnostic(self, arg, "Different shape for arguments");
-        }
-        for (prior_shape, actual_shape) |expected_extent, actual_extent| {
-            if (expected_extent != actual_extent) {
-                return emitExprConstraintDiagnostic(self, arg, "Different shape for arguments");
-            }
-        }
     }
 }
 

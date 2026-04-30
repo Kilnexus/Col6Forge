@@ -450,6 +450,7 @@ pub fn checkDataActualArgCompatibility(
     }
     try checkVolatileAndAsynchronousActualRestrictions(self, callee_name, formal, actual_expr);
     if (skip_no_arg_check_compat) return;
+    if (formal.requires_descriptor and assumed_size.exprNeedsExplicitLastUpperBound(self, actual_expr)) return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "cannot be an assumed-size array");
     if (formal.assumed_rank) {
         try checkAssumedRankDummyActualConstraints(self, callee_name, formal, actual_expr, actual_spec);
         return;

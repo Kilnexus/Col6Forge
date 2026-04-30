@@ -5,8 +5,16 @@ const Program = ast.Program;
 const ProgramUnit = ast.ProgramUnit;
 
 pub fn expandEntries(arena: std.mem.Allocator, program: Program) !Program {
-    var units = std.array_list.Managed(ProgramUnit).init(arena);
+    var owner_entry_interfaces = std.StringHashMap(ast.InterfaceBlock).init(arena);
     for (program.units) |unit| {
+        if (unit.kind != .subroutine and unit.kind != .function) continue;
+        const iface = (try makeVisibleSiblingEntryInterface(arena, unit, "")) orelse continue;
+        try owner_entry_interfaces.put(unit.name, iface);
+    }
+
+    var units = std.array_list.Managed(ProgramUnit).init(arena);
+    for (program.units) |raw_unit| {
+        const unit = try prependOwnerEntryInterface(arena, raw_unit, &owner_entry_interfaces);
         if (unit.kind != .subroutine and unit.kind != .function) {
             try units.append(unit);
             continue;
@@ -96,6 +104,20 @@ pub fn expandEntries(arena: std.mem.Allocator, program: Program) !Program {
         }
     }
     return .{ .units = try units.toOwnedSlice() };
+}
+
+fn prependOwnerEntryInterface(
+    arena: std.mem.Allocator,
+    unit: ProgramUnit,
+    owner_entry_interfaces: *const std.StringHashMap(ast.InterfaceBlock),
+) !ProgramUnit {
+    const owner_name = unit.owner_name orelse return unit;
+    const iface = owner_entry_interfaces.get(owner_name) orelse return unit;
+    var out = unit;
+    out.decls = try prependDecl(arena, unit.decls, .{ .interface_block = iface });
+    out.decl_sources = try prependDeclSource(arena, unit.decl_sources, .{});
+    out.prelude_decl_count += 1;
+    return out;
 }
 
 fn makeVisibleSiblingEntryInterface(

@@ -14,6 +14,7 @@ fn isSyntheticSiblingEntryProcedure(self: *context.Context, name: []const u8) bo
         if (decl.interface_block.name != null) continue;
         for (decl.interface_block.procedure_headers) |proc_header| {
             if (proc_header.source.line != 0) continue;
+            if (proc_header.recursive) continue;
             if (std.ascii.eqlIgnoreCase(proc_header.name, name)) return true;
         }
     }

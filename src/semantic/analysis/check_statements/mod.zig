@@ -16,6 +16,7 @@ const expr_semantics = @import("expr_semantics.zig");
 const abstract_expr_use = @import("abstract_expr_use.zig");
 const static_shapes = @import("static_shapes.zig");
 const statement_functions = @import("statement_functions.zig");
+const data_stmt_checks = @import("data_stmt.zig");
 const stmt_diagnostics = @import("diagnostics.zig");
 const assumed_size = @import("../assumed_size.zig");
 const procedure_context = @import("../procedure_context.zig");
@@ -419,6 +420,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
         },
         .data => |data| {
             for (data.inits) |init| {
+                try data_stmt_checks.checkDataInit(self, init);
                 try expr_semantics.checkExpr(self, init.target, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
                 try expr_semantics.checkExpr(self, init.value, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
             }

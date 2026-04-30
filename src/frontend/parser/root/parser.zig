@@ -153,7 +153,11 @@ pub const Parser = struct {
     fn parseProgram(self: *Parser) !Program {
         var units = std.array_list.Managed(ProgramUnit).init(self.arena);
         while (self.index < self.lines.len) {
-            root_diagnostics.noteFallbackForLine(self.diag_bag, self.lines[self.index]);
+            const current_line = self.lines[self.index];
+            root_diagnostics.noteFallbackForLine(self.diag_bag, current_line);
+            if (try self.rejectStatementLabelWithoutStatement(self.index)) {
+                return error.UnexpectedToken;
+            }
             if (self.isStandaloneEndAt(self.index)) {
                 if (self.pending_owner_name != null) {
                     self.pending_owner_name = null;
@@ -430,6 +434,9 @@ pub const Parser = struct {
                 self.index += 1;
                 continue;
             };
+            if (try self.rejectStatementLabelWithoutStatement(self.index)) {
+                return error.UnexpectedToken;
+            }
             if (root_predicates.isSubmoduleHeaderTokens(line, tokens)) {
                 self.diag_bag.set(
                     line.span.start_line,
@@ -528,6 +535,32 @@ pub const Parser = struct {
             self.index += 1;
         }
         return error.UnexpectedEOF;
+    }
+
+    fn rejectStatementLabelWithoutStatement(self: *Parser, line_index: usize) !bool {
+        const line = self.lines[line_index];
+        const label_only_comment = lineTextIsLabelOnlyComment(line.text);
+        if (line.label == null and !label_only_comment) return false;
+        const tokens = try self.tokensForIndex(line_index);
+        if (tokens.len != 0 and !label_only_comment) return false;
+        self.diag_bag.set(
+            line.span.start_line,
+            if (line.segments.len > 0) line.segments[0].column else 1,
+            catalog.parser.unexpected_token.code,
+            "Statement label without statement",
+            line.text,
+        );
+        return true;
+    }
+
+    fn lineTextIsLabelOnlyComment(text: []const u8) bool {
+        var idx: usize = 0;
+        while (idx < text.len and (text[idx] == ' ' or text[idx] == '\t')) : (idx += 1) {}
+        const digits_start = idx;
+        while (idx < text.len and std.ascii.isDigit(text[idx])) : (idx += 1) {}
+        if (idx == digits_start or idx - digits_start > 5) return false;
+        while (idx < text.len and (text[idx] == ' ' or text[idx] == '\t')) : (idx += 1) {}
+        return idx >= text.len or text[idx] == '!';
     }
 
     pub fn parseInterfaceBlock(self: *Parser) anyerror!Decl {

@@ -45,6 +45,35 @@ pub fn normalizeFixedFormWithMapMode(
         const trimmed_code = std.mem.trimEnd(u8, code, " \t");
 
         if (trimmed_code.len == 0 and !layout.is_cont) {
+            const label_only = try parseLabel(allocator, line);
+            if (label_only != null) {
+                if (in_stmt) {
+                    const text_owned = try makeTextOwned(allocator, &buffer);
+                    const segments_owned = try makeSegmentsOwned(
+                        allocator,
+                        &segments,
+                        coarse_source_map,
+                        current_start,
+                        text_owned.len,
+                    );
+                    try list.append(.{
+                        .label = current_label,
+                        .text = text_owned,
+                        .span = .{ .start_line = current_start, .end_line = current_end },
+                        .segments = segments_owned,
+                    });
+                    in_stmt = false;
+                    current_label = null;
+                    string_state = .{};
+                }
+                try list.append(.{
+                    .label = label_only,
+                    .text = try allocator.dupe(u8, ""),
+                    .span = .{ .start_line = line_no, .end_line = line_no },
+                    .segments = try allocator.alloc(Segment, 0),
+                });
+                continue;
+            }
             if (in_stmt) {
                 const text_owned = try makeTextOwned(allocator, &buffer);
                 const segments_owned = try makeSegmentsOwned(

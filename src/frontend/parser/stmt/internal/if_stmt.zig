@@ -171,6 +171,18 @@ pub fn parseIfStatement(
     }
 
     const stmt_node = try action_stmt.parseInlineStmtNode(lp, arena, do_ctx, action_callbacks);
+    if (lp.peek()) |tok| {
+        if (stmt_node.* == .stop) {
+            diag_bag.set(
+                tok.line,
+                tok.column,
+                catalog.parser.unexpected_token.code,
+                "Syntax error in STOP",
+                lp.line.text,
+            );
+            return error.UnexpectedToken;
+        }
+    }
     // Logical IF bodies are parsed from the current logical line only.
     // This parser owns advancing the line cursor by exactly one line.
     index.* += 1;

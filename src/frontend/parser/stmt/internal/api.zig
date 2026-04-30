@@ -250,7 +250,10 @@ pub fn parseStatementWithDiagnostics(
     }
     const action_node = action_stmt.parseActionStmtNode(arena, line, &lp, do_ctx, .top_level, actionCallbacks()) catch |err| {
         if (!diag_bag.has()) {
-            if (!(err == error.UnexpectedToken and
+            if (err == error.PeriodRequired) {
+                const tok = lp.peek() orelse tokens[tokens.len - 1];
+                diag_bag.set(tok.line, tok.column, catalog.parser.unexpected_token.code, "Period required", line.text);
+            } else if (!(err == error.UnexpectedToken and
                 (maybeSetMissingPrintIoListDiagnostic(diag_bag, line, tokens) or
                     maybeSetBareCallLikeVariableDiagnostic(arena, diag_bag, line, tokens))))
             {

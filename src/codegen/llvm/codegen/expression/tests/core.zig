@@ -68,6 +68,14 @@ test "emitLiteral and emitConstTyped produce expected IR types" {
     try testing.expectEqual(IRType.f64, lit_real_wp.ty);
     try testing.expectEqualStrings("1.0", lit_real_wp.name);
 
+    const lit_logical_true = try emitLiteral(&harness.ctx, &builder, .{ .kind = .logical, .text = "1_TF" });
+    try testing.expectEqual(IRType.i1, lit_logical_true.ty);
+    try testing.expectEqualStrings("1", lit_logical_true.name);
+
+    const lit_logical_false = try emitLiteral(&harness.ctx, &builder, .{ .kind = .logical, .text = "0_8" });
+    try testing.expectEqual(IRType.i1, lit_logical_false.ty);
+    try testing.expectEqualStrings("0", lit_logical_false.name);
+
     const const_val = emitConstTyped(&harness.ctx, &builder, .{ .integer = 7 }, .real);
     try testing.expectEqual(IRType.f32, const_val.ty);
 }

@@ -5,6 +5,7 @@ const ir = @import("../../../ir.zig");
 const llvm_types = @import("../../types.zig");
 const context = @import("../context/mod.zig");
 const utils = @import("../utils.zig");
+const literal_utils = @import("../../../../semantic/evaluator/literals.zig");
 
 const complex = @import("complex.zig");
 
@@ -37,7 +38,7 @@ pub fn emitLiteral(ctx: *Context, builder: anytype, lit: Literal) !ValueRef {
             const normalized = try utils.formatFloatLiteral(ctx.allocator, lit.text, ty);
             return .{ .name = normalized, .ty = ty, .is_ptr = false };
         },
-        .logical => return .{ .name = lit.text, .ty = .i1, .is_ptr = false },
+        .logical => return .{ .name = try normalizeLogicalLiteral(lit.text), .ty = .i1, .is_ptr = false },
         .string => {
             const bytes = try utils.decodeStringLiteral(ctx.allocator, lit.text);
             return emitStringLiteral(ctx, builder, bytes);
@@ -48,6 +49,10 @@ pub fn emitLiteral(ctx: *Context, builder: anytype, lit: Literal) !ValueRef {
         },
         .assumed_size => return error.UnsupportedLiteral,
     }
+}
+
+fn normalizeLogicalLiteral(text: []const u8) ![]const u8 {
+    return if (try literal_utils.parseLogical(text)) "1" else "0";
 }
 
 fn emitStringLiteral(ctx: *Context, builder: anytype, bytes: []const u8) !ValueRef {

@@ -538,6 +538,10 @@ fn validateGenericInterfaceProcedures(self: *context.Context, interface_block: a
     }
 
     for (interface_block.module_procedures, 0..) |procedure_name, idx| {
+        if (symbols_mod.isIntrinsicName(procedure_name)) {
+            setSourceDiagnostic(self, interface_block.module_procedure_sources[idx], "Intrinsic procedure cannot be a MODULE PROCEDURE");
+            return error.DuplicateDeclaration;
+        }
         const sig = symbols_mod.lookupKnownProcedureSig(self, procedure_name) orelse continue;
         const kind: GenericInterfaceKind = switch (sig.kind) {
             .subroutine => .subroutine,

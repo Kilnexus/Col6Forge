@@ -147,6 +147,42 @@ fn scalarCharacterSequenceElementCount(self: *context.Context, expr: *ast.Expr) 
     };
 }
 
+pub fn actualHasVectorSubscript(self: *context.Context, expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .call_or_subscript => |call| blk: {
+            const idx = resolve_symbols.findSymbolIndex(self, call.name) orelse break :blk false;
+            if (self.symbols.items[idx].dims.len == 0) break :blk false;
+            for (call.args) |arg| {
+                if (arg.* != .dim_range and resolve_expr.exprRank(self, arg) > 0) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+pub fn actualIsPointerArray(self: *context.Context, expr: *ast.Expr) bool {
+    const name = switch (expr.*) {
+        .identifier => |ident| ident,
+        else => return false,
+    };
+    const idx = resolve_symbols.findSymbolIndex(self, name) orelse return false;
+    const sym = self.symbols.items[idx];
+    return sym.is_pointer and sym.dims.len != 0;
+}
+
+pub fn actualIsArraySection(expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .call_or_subscript => |call| blk: {
+            for (call.args) |arg| {
+                if (arg.* == .dim_range) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
 pub fn componentInfoForExpr(
     self: *context.Context,
     comp: ast.ComponentExpr,

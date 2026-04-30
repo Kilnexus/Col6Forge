@@ -54,6 +54,9 @@ const checkExplicitShapeElementSufficiency = sequence_association.checkExplicitS
 const sequenceAssociationAvailableElements = sequence_association.sequenceAssociationAvailableElements;
 const formalRequiredElementCount = sequence_association.formalRequiredElementCount;
 const emitTooFewActualElementsDiagnostic = sequence_association.emitTooFewActualElementsDiagnostic;
+const actualHasVectorSubscript = sequence_association.actualHasVectorSubscript;
+const actualIsPointerArray = sequence_association.actualIsPointerArray;
+const actualIsArraySection = sequence_association.actualIsArraySection;
 
 pub fn sourceFromDirectUseModule(self: *context.Context, source: ast.DeclSource) bool {
     const owner_name = source.owner_name orelse return false;
@@ -445,6 +448,7 @@ pub fn checkDataActualArgCompatibility(
     if (!skip_no_arg_check_compat and formal.pointer and formal.contiguous and exprIsDefinitelyNoncontiguous(self, actual_expr)) {
         return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "must be simply contiguous");
     }
+    try checkVolatileAndAsynchronousActualRestrictions(self, callee_name, formal, actual_expr);
     if (skip_no_arg_check_compat) return;
     if (formal.assumed_rank) {
         try checkAssumedRankDummyActualConstraints(self, callee_name, formal, actual_expr, actual_spec);
@@ -471,6 +475,27 @@ pub fn checkDataActualArgCompatibility(
         }
     }
     return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "Rank mismatch in argument");
+}
+
+fn checkVolatileAndAsynchronousActualRestrictions(
+    self: *context.Context,
+    callee_name: ?[]const u8,
+    formal: context.Context.ProcedureSig.ArgSig,
+    actual_expr: *ast.Expr,
+) CheckError!void {
+    if (formal.asynchronous and actualHasVectorSubscript(self, actual_expr)) {
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "incompatible asynchronous actual argument");
+    }
+    if (!formal.volatile_attr or formal.requires_descriptor) return;
+    if (actualIsPointerArray(self, actual_expr)) {
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "Pointer-array actual argument");
+    }
+    if (actualIsAssumedShapeOrRank(self, actual_expr)) {
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "Assumed-shape actual argument");
+    }
+    if (actualIsArraySection(actual_expr)) {
+        return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "Array-section actual argument");
+    }
 }
 
 fn checkAllocatablePolymorphicActualConstraint(

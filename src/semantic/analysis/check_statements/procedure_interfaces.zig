@@ -708,6 +708,7 @@ fn procedureSigRequiresExplicitInterface(sig: context.Context.ProcedureSig) bool
         if (arg.optional) return true;
         if (arg.requires_descriptor) return true;
         if (arg.pointer or arg.allocatable or arg.contiguous) return true;
+        if (arg.asynchronous or arg.volatile_attr) return true;
         if (arg.type_spec.assumed_type) return true;
         if (arg.type_spec.polymorphic) return true;
     }

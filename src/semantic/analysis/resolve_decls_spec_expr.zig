@@ -18,15 +18,46 @@ pub fn validateDeclaratorDimensionExprs(self: *context.Context, dims: []*ast.Exp
 fn validateNonAutomaticProgramUnitDimension(self: *context.Context, expr: *ast.Expr) !void {
     if (self.unit.kind != .module and self.unit.kind != .program) return;
     if (dimensionAllowsDeferredShape(expr)) return;
-    _ = (try constants.evalConst(self, expr)) orelse {
-        emitNonconstantBoundsDiagnostic(self, expr);
-        return error.InvalidArgumentCount;
+    if (try dimensionHasConstantBounds(self, expr)) return;
+    emitNonconstantBoundsDiagnostic(self, expr);
+    return error.InvalidArgumentCount;
+}
+
+fn dimensionHasConstantBounds(self: *context.Context, expr: *ast.Expr) !bool {
+    return switch (expr.*) {
+        .dim_range => |range| {
+            if (range.assumed_shape) return true;
+            if (range.lower) |lower| {
+                if (!try exprIsConstantBound(self, lower)) return false;
+            }
+            if (!dimensionAllowsAssumedSize(range.upper) and !try exprIsConstantBound(self, range.upper)) return false;
+            if (range.stride) |stride| {
+                if (!try exprIsConstantBound(self, stride)) return false;
+            }
+            return true;
+        },
+        .literal => |lit| lit.kind == .assumed_size or try exprIsConstantBound(self, expr),
+        else => try exprIsConstantBound(self, expr),
     };
 }
 
-fn dimensionAllowsDeferredShape(expr: *ast.Expr) bool {
+fn exprIsConstantBound(self: *context.Context, expr: *ast.Expr) !bool {
+    _ = (try constants.evalConst(self, expr)) orelse {
+        if (expr.* == .identifier and symbolIsParameter(self, expr.identifier)) return true;
+        return false;
+    };
+    return true;
+}
+
+fn symbolIsParameter(self: *context.Context, name: []const u8) bool {
+    if (symbols_mod.findSymbolIndex(self, name)) |idx| {
+        return self.symbols.items[idx].kind == .parameter;
+    }
+    return false;
+}
+
+fn dimensionAllowsAssumedSize(expr: *ast.Expr) bool {
     return switch (expr.*) {
-        .dim_range => |range| range.assumed_shape or (range.upper.* == .literal and range.upper.literal.kind == .assumed_size),
         .literal => |lit| lit.kind == .assumed_size,
         else => false,
     };
@@ -46,6 +77,14 @@ fn emitNonconstantBoundsDiagnostic(self: *context.Context, expr: *ast.Expr) void
         "array with nonconstant bounds",
         source.text,
     );
+}
+
+fn dimensionAllowsDeferredShape(expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .dim_range => |range| range.assumed_shape or dimensionAllowsAssumedSize(range.upper),
+        .literal => |lit| lit.kind == .assumed_size,
+        else => false,
+    };
 }
 
 fn validateDimensionExprType(self: *context.Context, expr: *ast.Expr) !void {

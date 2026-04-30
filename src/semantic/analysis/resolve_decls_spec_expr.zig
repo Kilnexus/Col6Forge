@@ -11,7 +11,41 @@ pub fn validateDeclaratorDimensionExprs(self: *context.Context, dims: []*ast.Exp
     for (dims) |dim_expr| {
         try validateRestrictedSpecExpr(self, dim_expr);
         try validateDimensionExprType(self, dim_expr);
+        try validateNonAutomaticProgramUnitDimension(self, dim_expr);
     }
+}
+
+fn validateNonAutomaticProgramUnitDimension(self: *context.Context, expr: *ast.Expr) !void {
+    if (self.unit.kind != .module and self.unit.kind != .program) return;
+    if (dimensionAllowsDeferredShape(expr)) return;
+    _ = (try constants.evalConst(self, expr)) orelse {
+        emitNonconstantBoundsDiagnostic(self, expr);
+        return error.InvalidArgumentCount;
+    };
+}
+
+fn dimensionAllowsDeferredShape(expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .dim_range => |range| range.assumed_shape or (range.upper.* == .literal and range.upper.literal.kind == .assumed_size),
+        .literal => |lit| lit.kind == .assumed_size,
+        else => false,
+    };
+}
+
+fn emitNonconstantBoundsDiagnostic(self: *context.Context, expr: *ast.Expr) void {
+    const source = self.sourceForExpr(expr) orelse blk: {
+        if (self.current_decl_source) |decl_source| {
+            break :blk ast.SourceRef{ .line = decl_source.line, .column = decl_source.column, .text = decl_source.text };
+        }
+        break :blk ast.SourceRef{};
+    };
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.assignment_type_mismatch.code,
+        "array with nonconstant bounds",
+        source.text,
+    );
 }
 
 fn validateDimensionExprType(self: *context.Context, expr: *ast.Expr) !void {

@@ -8,6 +8,7 @@ const context = @import("../context.zig");
 const decl_scan = @import("../decl_scan.zig");
 const bound_helpers = @import("calls/bound_helpers.zig");
 const constructors = @import("calls/constructors.zig");
+const intrinsic_results = @import("calls/intrinsic_results.zig");
 const lookup_helpers = @import("calls/lookup_helpers.zig");
 const procedure_interfaces = @import("../check_statements/procedure_interfaces.zig");
 const procedure_context = @import("../procedure_context.zig");
@@ -589,19 +590,7 @@ pub fn intrinsicReturnType(
     args: []*ast.Expr,
     comptime deps: anytype,
 ) ResolveError!symbols.TypeSpec {
-    var arg_types_buf: [8]symbols.TypeSpec = undefined;
-    if (args.len <= arg_types_buf.len) {
-        var arg_types = arg_types_buf[0..args.len];
-        for (args, 0..) |arg, idx| {
-            arg_types[idx] = try deps.exprTypeSpecCached(self, arg);
-        }
-        return intrinsic_signature.inferResultType(name, current, arg_types);
-    }
-    var dynamic_args = try self.arena.alloc(symbols.TypeSpec, args.len);
-    for (args, 0..) |arg, idx| {
-        dynamic_args[idx] = try deps.exprTypeSpecCached(self, arg);
-    }
-    return intrinsic_signature.inferResultType(name, current, dynamic_args);
+    return intrinsic_results.intrinsicReturnType(self, name, current, args, deps);
 }
 
 fn isStatementFunctionDefinitionTarget(

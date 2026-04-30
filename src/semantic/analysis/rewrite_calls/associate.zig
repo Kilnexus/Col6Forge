@@ -152,6 +152,11 @@ fn substituteStmtAliases(
                 write.iostat = result.expr;
                 changed = changed or result.changed;
             }
+            for (write.controls) |*ctrl| {
+                const result = try substituteExprAliases(ctx, ctrl.value, aliases);
+                ctrl.value = result.expr;
+                changed = changed or result.changed;
+            }
         },
         .read => |*read| {
             const unit_result = try substituteExprAliases(ctx, read.unit, aliases);
@@ -170,6 +175,11 @@ fn substituteStmtAliases(
             if (read.iostat) |io| {
                 const result = try substituteExprAliases(ctx, io, aliases);
                 read.iostat = result.expr;
+                changed = changed or result.changed;
+            }
+            for (read.controls) |*ctrl| {
+                const result = try substituteExprAliases(ctx, ctrl.value, aliases);
+                ctrl.value = result.expr;
                 changed = changed or result.changed;
             }
         },
@@ -220,6 +230,11 @@ fn substituteStmtAliases(
             if (open_stmt.status) |status| {
                 const result = try substituteExprAliases(ctx, status, aliases);
                 open_stmt.status = result.expr;
+                changed = changed or result.changed;
+            }
+            for (open_stmt.controls) |*ctrl| {
+                const result = try substituteExprAliases(ctx, ctrl.value, aliases);
+                ctrl.value = result.expr;
                 changed = changed or result.changed;
             }
         },

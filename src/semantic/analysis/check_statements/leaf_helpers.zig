@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../../../ast/nodes.zig");
+const catalog = @import("../../../common/error_catalog.zig");
 const case_insensitive = @import("../../../common/case_insensitive.zig");
 const context = @import("../context.zig");
 const intrinsics = @import("../intrinsics.zig");
@@ -10,7 +11,7 @@ pub const CheckError = anyerror;
 pub fn checkOpenControl(self: *context.Context, node: ?*ast.Expr, allowed: []const []const u8) CheckError!void {
     const expr_node = node orelse return;
     self.setCurrentSource(self.sourceForExpr(expr_node));
-    try checkCharControlExpr(self, expr_node);
+    try checkDefaultCharacterControlExpr(self, expr_node);
     if (controlLiteralText(expr_node)) |text| {
         if (!textInSet(text, allowed)) {
             self.setCurrentSource(self.sourceForExpr(expr_node));
@@ -24,6 +25,33 @@ pub fn checkCharControlExpr(self: *context.Context, expr_node: *ast.Expr) CheckE
     if (ty != .character) {
         self.setCurrentSource(self.sourceForExpr(expr_node));
         return error.InvalidIoControlType;
+    }
+}
+
+pub fn checkDefaultCharacterControlExpr(self: *context.Context, expr_node: *ast.Expr) CheckError!void {
+    const spec = try resolve_expr.exprTypeSpec(self, expr_node);
+    if (spec.lowered_kind == .character and (spec.kind_value orelse 1) == 1) return;
+    const source = self.sourceForExpr(expr_node) orelse self.current_source orelse ast.SourceRef{};
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_io_control_type.code,
+        "must be a character string of default kind",
+        source.text,
+    );
+    return error.InvalidIoControlType;
+}
+
+pub fn checkNamedDefaultCharacterControls(
+    self: *context.Context,
+    controls: []const ast.ControlItem,
+    names: []const []const u8,
+) CheckError!void {
+    for (controls) |ctrl| {
+        const name = ctrl.name orelse continue;
+        if (!textInSet(name, names)) continue;
+        self.setCurrentSource(if (ctrl.source.line != 0) ctrl.source else self.sourceForExpr(ctrl.value));
+        try checkDefaultCharacterControlExpr(self, ctrl.value);
     }
 }
 

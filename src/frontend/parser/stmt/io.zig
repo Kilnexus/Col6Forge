@@ -36,6 +36,7 @@ pub fn parseWriteStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtE
     var rec_expr: ?*Expr = null;
     var err_label: ?[]const u8 = null;
     var iostat_expr: ?*Expr = null;
+    var controls = std.array_list.Managed(ast.ControlItem).init(arena);
     var saw_format = false;
     var first = true;
     while (!lp.peekIs(.r_paren)) {
@@ -64,6 +65,7 @@ pub fn parseWriteStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtE
         const name_tok = lp.expectIdentifier() orelse return error.UnexpectedToken;
         _ = lp.expect(.equals) orelse return error.UnexpectedToken;
         const name = lp.tokenText(name_tok);
+        const value_source = currentSource(lp.*);
         if (context.eqNoCase(name, "UNIT")) {
             const unit_tok = lp.peek() orelse return error.UnexpectedToken;
             if (unit_tok.kind == .star) {
@@ -96,13 +98,15 @@ pub fn parseWriteStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtE
         const value = try expr.parseExpr(lp, arena, 0);
         if (context.eqNoCase(name, "REC")) {
             rec_expr = value;
+        } else {
+            try appendControlItem(&controls, name, value, value_source);
         }
     }
     _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
     const unit_final = unit_expr orelse return error.UnexpectedToken;
 
     const args = try parseIoList(arena, lp);
-    return .{ .write = .{ .unit = unit_final, .format = format_spec, .rec = rec_expr, .args = args, .err_label = err_label, .iostat = iostat_expr } };
+    return .{ .write = .{ .unit = unit_final, .format = format_spec, .rec = rec_expr, .args = args, .err_label = err_label, .iostat = iostat_expr, .controls = try controls.toOwnedSlice() } };
 }
 
 pub fn parseReadStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtError!StmtNode {
@@ -114,6 +118,7 @@ pub fn parseReadStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtEr
     var err_label: ?[]const u8 = null;
     var end_label: ?[]const u8 = null;
     var iostat_expr: ?*Expr = null;
+    var controls = std.array_list.Managed(ast.ControlItem).init(arena);
     var saw_format = false;
     var first = true;
     while (!lp.peekIs(.r_paren)) {
@@ -140,6 +145,7 @@ pub fn parseReadStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtEr
         const name_tok = lp.expectIdentifier() orelse return error.UnexpectedToken;
         _ = lp.expect(.equals) orelse return error.UnexpectedToken;
         const name = lp.tokenText(name_tok);
+        const value_source = currentSource(lp.*);
         if (context.eqNoCase(name, "UNIT")) {
             const unit_tok = lp.peek() orelse return error.UnexpectedToken;
             if (unit_tok.kind == .star) {
@@ -182,13 +188,15 @@ pub fn parseReadStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtEr
         const value = try expr.parseExpr(lp, arena, 0);
         if (context.eqNoCase(name, "REC")) {
             rec_expr = value;
+        } else {
+            try appendControlItem(&controls, name, value, value_source);
         }
     }
     _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
     const unit_final = unit_expr orelse return error.UnexpectedToken;
 
     const args = try parseIoList(arena, lp);
-    return .{ .read = .{ .unit = unit_final, .format = format_spec, .rec = rec_expr, .args = args, .err_label = err_label, .end_label = end_label, .iostat = iostat_expr } };
+    return .{ .read = .{ .unit = unit_final, .format = format_spec, .rec = rec_expr, .args = args, .err_label = err_label, .end_label = end_label, .iostat = iostat_expr, .controls = try controls.toOwnedSlice() } };
 }
 
 pub fn parsePrintStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtError!StmtNode {
@@ -222,6 +230,7 @@ pub fn parseOpenStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtEr
     var status_expr: ?*Expr = null;
     var err_label: ?[]const u8 = null;
     var iostat_expr: ?*Expr = null;
+    var controls = std.array_list.Managed(ast.ControlItem).init(arena);
     var first = true;
     while (!lp.peekIs(.r_paren)) {
         if (!first) {
@@ -236,6 +245,7 @@ pub fn parseOpenStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtEr
         const name_tok = lp.expectIdentifier() orelse return error.UnexpectedToken;
         _ = lp.expect(.equals) orelse return error.UnexpectedToken;
         const name = lp.tokenText(name_tok);
+        const value_source = currentSource(lp.*);
         if (context.eqNoCase(name, "UNIT")) {
             unit_expr = try expr.parseExpr(lp, arena, 0);
             continue;
@@ -278,7 +288,7 @@ pub fn parseOpenStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtEr
             recl_expr = try expr.parseExpr(lp, arena, 0);
             continue;
         }
-        _ = try expr.parseExpr(lp, arena, 0);
+        try appendControlItem(&controls, name, try expr.parseExpr(lp, arena, 0), value_source);
     }
     _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
     const unit_final = unit_expr orelse return error.UnexpectedToken;
@@ -292,6 +302,7 @@ pub fn parseOpenStatement(arena: std.mem.Allocator, lp: *LineParser) ParseStmtEr
         .status = status_expr,
         .err_label = err_label,
         .iostat = iostat_expr,
+        .controls = try controls.toOwnedSlice(),
     } };
 }
 
@@ -573,6 +584,19 @@ fn parseControlList(arena: std.mem.Allocator, lp: *LineParser) ParseStmtError![]
     }
     _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
     return controls.toOwnedSlice();
+}
+
+fn appendControlItem(
+    controls: *std.array_list.Managed(ast.ControlItem),
+    name: []const u8,
+    value: *Expr,
+    source: ast.SourceRef,
+) ParseStmtError!void {
+    try controls.append(.{
+        .name = name,
+        .value = value,
+        .source = source,
+    });
 }
 
 fn parseIoList(arena: std.mem.Allocator, lp: *LineParser) ParseStmtError![]*Expr {

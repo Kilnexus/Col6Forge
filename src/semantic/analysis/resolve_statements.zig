@@ -112,6 +112,10 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
             for (write.args) |arg| {
                 try expressions.resolveExpr(self, arg);
             }
+            for (write.controls) |ctrl| {
+                self.setCurrentSource(if (ctrl.source.line != 0) ctrl.source else self.sourceForExpr(ctrl.value));
+                try expressions.resolveExpr(self, ctrl.value);
+            }
         },
         .read => |read| {
             try expressions.resolveExpr(self, read.unit);
@@ -121,6 +125,10 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
             }
             for (read.args) |arg| {
                 try expressions.resolveExpr(self, arg);
+            }
+            for (read.controls) |ctrl| {
+                self.setCurrentSource(if (ctrl.source.line != 0) ctrl.source else self.sourceForExpr(ctrl.value));
+                try expressions.resolveExpr(self, ctrl.value);
             }
         },
         .rewind => |rewind| {
@@ -151,6 +159,10 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
             }
             if (open_stmt.status) |status| {
                 try expressions.resolveExpr(self, status);
+            }
+            for (open_stmt.controls) |ctrl| {
+                self.setCurrentSource(if (ctrl.source.line != 0) ctrl.source else self.sourceForExpr(ctrl.value));
+                try expressions.resolveExpr(self, ctrl.value);
             }
         },
         .inquire => |inq| {

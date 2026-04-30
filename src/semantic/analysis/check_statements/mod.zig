@@ -332,6 +332,8 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 try rejectPolymorphicDataTransferIo(self, arg);
             }
             if (write.iostat) |io| try expr_semantics.checkExpr(self, io, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            for (write.controls) |ctrl| try expr_semantics.checkExpr(self, ctrl.value, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            try leaf_helpers.checkNamedDefaultCharacterControls(self, write.controls, &.{ "BLANK", "DELIM", "PAD", "ROUND", "SIGN" });
         },
         .read => |read| {
             try expr_semantics.checkExpr(self, read.unit, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
@@ -342,6 +344,8 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 try rejectPolymorphicDataTransferIo(self, arg);
             }
             if (read.iostat) |io| try expr_semantics.checkExpr(self, io, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            for (read.controls) |ctrl| try expr_semantics.checkExpr(self, ctrl.value, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            try leaf_helpers.checkNamedDefaultCharacterControls(self, read.controls, &.{ "BLANK", "DELIM", "PAD", "ROUND", "SIGN" });
         },
         .rewind => |rewind| try expr_semantics.checkExpr(self, rewind.unit, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible }),
         .backspace => |backspace| try expr_semantics.checkExpr(self, backspace.unit, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible }),
@@ -358,6 +362,8 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             try leaf_helpers.checkOpenControl(self, open_stmt.form, &.{ "FORMATTED", "UNFORMATTED" });
             try leaf_helpers.checkOpenControl(self, open_stmt.blank, &.{ "NULL", "ZERO" });
             try leaf_helpers.checkOpenControl(self, open_stmt.status, &.{ "UNKNOWN", "OLD", "NEW", "SCRATCH", "REPLACE" });
+            for (open_stmt.controls) |ctrl| try expr_semantics.checkExpr(self, ctrl.value, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });
+            try leaf_helpers.checkNamedDefaultCharacterControls(self, open_stmt.controls, &.{ "DECIMAL", "ENCODING", "ROUND", "SIGN" });
         },
         .inquire => |inq| {
             for (inq.controls) |ctrl| try expr_semantics.checkExpr(self, ctrl.value, .{ .dummyArgTypeCompatible = dummyArgTypeCompatible });

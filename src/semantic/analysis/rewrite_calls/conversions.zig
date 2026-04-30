@@ -120,12 +120,14 @@ fn rewriteStmt(
             if (write.rec) |rec| changed = (try rewriteExpr(ctx, state, rec, stmt.*, prelude, allow_prelude)) or changed;
             for (write.args) |arg| changed = (try rewriteExpr(ctx, state, arg, stmt.*, prelude, allow_prelude)) or changed;
             if (write.iostat) |io| changed = (try rewriteExpr(ctx, state, io, stmt.*, prelude, allow_prelude)) or changed;
+            for (write.controls) |ctrl| changed = (try rewriteExpr(ctx, state, ctrl.value, stmt.*, prelude, allow_prelude)) or changed;
         },
         .read => |*read| {
             changed = (try rewriteExpr(ctx, state, read.unit, stmt.*, prelude, allow_prelude)) or changed;
             if (read.rec) |rec| changed = (try rewriteExpr(ctx, state, rec, stmt.*, prelude, allow_prelude)) or changed;
             for (read.args) |arg| changed = (try rewriteExpr(ctx, state, arg, stmt.*, prelude, allow_prelude)) or changed;
             if (read.iostat) |io| changed = (try rewriteExpr(ctx, state, io, stmt.*, prelude, allow_prelude)) or changed;
+            for (read.controls) |ctrl| changed = (try rewriteExpr(ctx, state, ctrl.value, stmt.*, prelude, allow_prelude)) or changed;
         },
         .rewind => |*rewind| {
             changed = (try rewriteExpr(ctx, state, rewind.unit, stmt.*, prelude, allow_prelude)) or changed;
@@ -144,6 +146,7 @@ fn rewriteStmt(
             if (open_stmt.form) |form| changed = (try rewriteExpr(ctx, state, form, stmt.*, prelude, allow_prelude)) or changed;
             if (open_stmt.blank) |blank| changed = (try rewriteExpr(ctx, state, blank, stmt.*, prelude, allow_prelude)) or changed;
             if (open_stmt.status) |status| changed = (try rewriteExpr(ctx, state, status, stmt.*, prelude, allow_prelude)) or changed;
+            for (open_stmt.controls) |ctrl| changed = (try rewriteExpr(ctx, state, ctrl.value, stmt.*, prelude, allow_prelude)) or changed;
         },
         .inquire => |*inq| {
             for (inq.controls) |*ctrl| {

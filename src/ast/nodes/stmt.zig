@@ -191,6 +191,7 @@ pub const WriteStmt = struct {
     args: []*Expr,
     err_label: ?[]const u8,
     iostat: ?*Expr,
+    controls: []ControlItem = &.{},
 };
 
 pub const ReadStmt = struct {
@@ -201,6 +202,7 @@ pub const ReadStmt = struct {
     err_label: ?[]const u8,
     end_label: ?[]const u8,
     iostat: ?*Expr,
+    controls: []ControlItem = &.{},
 };
 
 pub const OpenStmt = struct {
@@ -213,6 +215,7 @@ pub const OpenStmt = struct {
     status: ?*Expr,
     err_label: ?[]const u8,
     iostat: ?*Expr,
+    controls: []ControlItem = &.{},
 };
 
 pub const InquireStmt = struct {

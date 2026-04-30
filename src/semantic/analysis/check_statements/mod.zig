@@ -186,6 +186,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
                 return emitExprConstraint(self, assign.value, "Bad target");
             }
             try rejectCharacterPointerLengthMismatch(self, assign.target, assign.value);
+            try rejectNullPointerMoldMismatch(self, assign.target, assign.value);
             try procedure_calls.rejectDefinitelyNoncontiguousPointerAssociation(self, assign.target, assign.value);
             try procedure_calls.checkProcedurePointerAssignmentCompatibility(self, assign.target, assign.value, .{
                 .dummyArgTypeCompatible = dummyArgTypeCompatible,
@@ -883,6 +884,31 @@ fn rejectCharacterPointerLengthMismatch(self: *context.Context, target: *ast.Exp
         .{ target_len, value_len },
     ) catch "Unequal character lengths";
     return emitExprConstraint(self, value, message);
+}
+
+fn rejectNullPointerMoldMismatch(self: *context.Context, target: *ast.Expr, value: *ast.Expr) CheckError!void {
+    const mold = nullPointerMold(value) orelse return;
+    const target_spec = resolve_expr.exprTypeSpec(self, target) catch return;
+    const mold_spec = resolve_expr.exprTypeSpec(self, mold) catch return;
+    if (!pointerMoldTypeCompatible(self, target_spec, mold_spec)) {
+        return emitExprConstraint(self, value, "types in pointer assignment");
+    }
+    if (resolve_expr.exprRank(self, target) != resolve_expr.exprRank(self, mold)) {
+        return emitExprConstraint(self, value, "ranks in pointer assignment");
+    }
+}
+
+fn nullPointerMold(value: *ast.Expr) ?*ast.Expr {
+    return switch (value.*) {
+        .call_or_subscript => |call| if (std.ascii.eqlIgnoreCase(call.name, "null") and call.args.len >= 1) call.args[0] else null,
+        else => null,
+    };
+}
+
+fn pointerMoldTypeCompatible(self: *context.Context, target: symbols.TypeSpec, mold: symbols.TypeSpec) bool {
+    if (!dummyArgTypeCompatible(self, target, mold)) return false;
+    if (target.kind_value != null and mold.kind_value != null and target.kind_value.? != mold.kind_value.?) return false;
+    return true;
 }
 
 fn rejectAllocatableComponentIo(self: *context.Context, expr_node: *ast.Expr) CheckError!void {

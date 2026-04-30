@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../../../../ast/nodes.zig");
+const catalog = @import("../../../../common/error_catalog.zig");
 const symbols = @import("../../../symbol/mod.zig");
 const context = @import("../../context.zig");
 const symbols_mod = @import("../../resolve_symbols.zig");
@@ -25,36 +26,66 @@ pub fn validateStructureConstructorActuals(
     comptime deps: anytype,
 ) anyerror!void {
     const type_name = ctor_spec.derived_type_name orelse return error.InvalidArgumentCount;
-    const component_specs = try collectStructureConstructorComponentSpecs(self, type_name);
-    if (args.len != component_specs.len) return error.InvalidArgumentCount;
+    const components = try collectStructureConstructorComponents(self, type_name);
+    if (args.len != components.len) return error.InvalidArgumentCount;
     for (args, 0..) |arg, idx| {
         const actual_spec = try deps.exprTypeSpecCached(self, arg);
-        if (!deps.dummyArgTypeCompatible(self, component_specs[idx], actual_spec)) {
+        const component = components[idx];
+        try rejectCharacterPointerLengthMismatch(self, arg, component, actual_spec);
+        if (!deps.dummyArgTypeCompatible(self, component.type_spec, actual_spec)) {
             _ = name;
             return error.ArgumentTypeMismatch;
         }
     }
 }
 
-fn collectStructureConstructorComponentSpecs(
+fn collectStructureConstructorComponents(
     self: *context.Context,
     type_name: []const u8,
-) anyerror![]const symbols.TypeSpec {
-    var specs = std.array_list.Managed(symbols.TypeSpec).init(self.arena);
-    try appendStructureConstructorComponentSpecs(self, type_name, &specs);
-    return specs.toOwnedSlice();
+) anyerror![]const context.Context.DerivedTypeInfo.ComponentInfo {
+    var components = std.array_list.Managed(context.Context.DerivedTypeInfo.ComponentInfo).init(self.arena);
+    try appendStructureConstructorComponents(self, type_name, &components);
+    return components.toOwnedSlice();
 }
 
-fn appendStructureConstructorComponentSpecs(
+fn appendStructureConstructorComponents(
     self: *context.Context,
     type_name: []const u8,
-    out: *std.array_list.Managed(symbols.TypeSpec),
+    out: *std.array_list.Managed(context.Context.DerivedTypeInfo.ComponentInfo),
 ) anyerror!void {
     const derived = symbols_mod.lookupDerivedType(self, type_name) orelse return error.InvalidArgumentCount;
     if (derived.parent_name) |parent_name| {
-        try appendStructureConstructorComponentSpecs(self, parent_name, out);
+        try appendStructureConstructorComponents(self, parent_name, out);
     }
     for (derived.components) |component| {
-        try out.append(component.type_spec);
+        try out.append(component);
     }
+}
+
+fn rejectCharacterPointerLengthMismatch(
+    self: *context.Context,
+    arg: *ast.Expr,
+    component: context.Context.DerivedTypeInfo.ComponentInfo,
+    actual_spec: symbols.TypeSpec,
+) anyerror!void {
+    const component_spec = component.type_spec;
+    if (!component.pointer or component_spec.lowered_kind != .character or actual_spec.lowered_kind != .character) return;
+    if (component_spec.char_len_kind == .deferred or actual_spec.char_len_kind == .deferred) return;
+    const component_len = component_spec.char_len orelse return;
+    const actual_len = actual_spec.char_len orelse return;
+    if (component_len == actual_len) return;
+    const message = std.fmt.allocPrint(
+        self.arena,
+        "Unequal character lengths ({d}/{d})",
+        .{ component_len, actual_len },
+    ) catch "Unequal character lengths";
+    const source = self.sourceForExpr(arg) orelse ast.SourceRef{};
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.assignment_type_mismatch.code,
+        message,
+        source.text,
+    );
+    return error.ArgumentTypeMismatch;
 }

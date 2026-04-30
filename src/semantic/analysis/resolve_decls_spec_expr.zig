@@ -10,7 +10,51 @@ const symbols_mod = @import("resolve_symbols.zig");
 pub fn validateDeclaratorDimensionExprs(self: *context.Context, dims: []*ast.Expr) !void {
     for (dims) |dim_expr| {
         try validateRestrictedSpecExpr(self, dim_expr);
+        try validateDimensionExprType(self, dim_expr);
     }
+}
+
+fn validateDimensionExprType(self: *context.Context, expr: *ast.Expr) !void {
+    switch (expr.*) {
+        .dim_range => |range| {
+            if (range.lower) |lower| try validateDimensionExprType(self, lower);
+            try validateDimensionExprType(self, range.upper);
+            if (range.stride) |stride| try validateDimensionExprType(self, stride);
+        },
+        .literal => |lit| {
+            if (lit.kind == .assumed_size) return;
+            const spec = try resolve_expr.exprTypeSpec(self, expr);
+            if (spec.lowered_kind == .integer) return;
+            emitDimensionIntegerTypeDiagnostic(self, expr);
+            return error.InvalidArgumentCount;
+        },
+        else => {
+            const spec = try resolve_expr.exprTypeSpec(self, expr);
+            if (spec.lowered_kind == .integer) return;
+            emitDimensionIntegerTypeDiagnostic(self, expr);
+            return error.InvalidArgumentCount;
+        },
+    }
+}
+
+fn emitDimensionIntegerTypeDiagnostic(self: *context.Context, expr: *ast.Expr) void {
+    const source = self.sourceForExpr(expr) orelse blk: {
+        if (self.current_decl_source) |decl_source| {
+            break :blk ast.SourceRef{
+                .line = decl_source.line,
+                .column = decl_source.column,
+                .text = decl_source.text,
+            };
+        }
+        break :blk ast.SourceRef{};
+    };
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.assignment_type_mismatch.code,
+        "must be of INTEGER type",
+        source.text,
+    );
 }
 
 pub fn validateRestrictedSpecExpr(self: *context.Context, expr: *ast.Expr) !void {

@@ -75,6 +75,11 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
             if (first_err == null) first_err = err;
             continue;
         };
+        validateFunctionResultSave(self, decl, effective_item) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
         character_result.validateOptionalDummyLength(self, effective_item) catch |err| {
             if (!self.usesExplicitDiagnosticBag()) return err;
             if (first_err == null) first_err = err;
@@ -184,6 +189,18 @@ fn validateFunctionResultInitializer(self: *context.Context, item: ast.Declarato
         source.text,
     );
     return error.InvalidInitializer;
+}
+
+fn validateFunctionResultSave(self: *context.Context, decl: ast.TypeDecl, item: ast.Declarator) !void {
+    if (!decl.save) return;
+    if (self.unit.kind != .function) return;
+    const result_name = self.unit.result_name orelse self.unit.name;
+    if (!std.ascii.eqlIgnoreCase(item.name, result_name)) return;
+    emitCurrentDeclDiagnostic(
+        self,
+        if (self.unit.result_name != null) "RESULT attribute conflicts with SAVE" else "PROCEDURE attribute conflicts with SAVE attribute",
+    );
+    return error.DuplicateDeclaration;
 }
 
 fn validateElementalFunctionResultDeclaration(

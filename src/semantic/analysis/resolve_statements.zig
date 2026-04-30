@@ -97,6 +97,22 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
             if (decl_scan.implicitNoneExternalActive(self) and !callTargetIsExplicitlyDeclared(self, call.name)) {
                 return emitImplicitNoneExternalCallDiagnostic(self, call);
             }
+            const target_sym = self.symbols.items[idx];
+            if (target_sym.type_explicit and
+                target_sym.kind == .variable and
+                target_sym.storage != .dummy and
+                !target_sym.is_intrinsic)
+            {
+                const source = if (call.source.line != 0) call.source else ast.SourceRef{};
+                self.setDiagnostic(
+                    if (source.line == 0) 1 else source.line,
+                    if (source.column == 0) 1 else source.column,
+                    catalog.semantic.invalid_argument_count.code,
+                    "has a type, which is not consistent with the CALL",
+                    source.text,
+                );
+                return error.InvalidArgumentCount;
+            }
             if (shouldMarkCallTargetAsExternal(self.symbols.items[idx])) {
                 self.symbols.items[idx].is_external = true;
             }

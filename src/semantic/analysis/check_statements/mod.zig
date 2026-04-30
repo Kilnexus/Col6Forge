@@ -20,6 +20,7 @@ const data_stmt_checks = @import("data_stmt.zig");
 const stmt_diagnostics = @import("diagnostics.zig");
 const assumed_size = @import("../assumed_size.zig");
 const procedure_context = @import("../procedure_context.zig");
+const decl_scan = @import("../decl_scan.zig");
 
 pub const CheckError = anyerror;
 const emitCurrentStmtConstraint = stmt_diagnostics.emitCurrentStmtConstraint;
@@ -39,6 +40,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
         .assignment => |assign| {
             try statement_functions.validateAssignment(self, assign);
             try statement_functions.validateCalls(self, assign.value);
+            if (assignmentTargetHasNoImplicitType(self, assign.target)) return error.UnexpectedTypeDecl;
             if (assumed_size.exprNeedsExplicitLastUpperBound(self, assign.target)) {
                 return assumed_size.emitExprDiagnostic(self, assign.target, "upper bound in the last dimension");
             }
@@ -903,6 +905,23 @@ fn nullPointerMold(value: *ast.Expr) ?*ast.Expr {
         .call_or_subscript => |call| if (std.ascii.eqlIgnoreCase(call.name, "null") and call.args.len >= 1) call.args[0] else null,
         else => null,
     };
+}
+
+fn assignmentTargetHasNoImplicitType(self: *context.Context, target: *ast.Expr) bool {
+    if (!decl_scan.implicitNoneActive(self)) return false;
+    if (target.* != .identifier) return false;
+    const idx = resolve_symbols.findSymbolIndex(self, target.identifier) orelse return false;
+    const sym = self.symbols.items[idx];
+    if (sym.type_explicit or sym.storage == .dummy or sym.storage == .common or sym.is_host_associated) return false;
+    const source = self.sourceForExpr(target) orelse ast.SourceRef{};
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.unexpected_type_decl.code,
+        std.fmt.allocPrint(self.arena, "Symbol '{s}' at (1) has no IMPLICIT type", .{target.identifier}) catch "has no IMPLICIT type",
+        source.text,
+    );
+    return true;
 }
 
 fn pointerMoldTypeCompatible(self: *context.Context, target: symbols.TypeSpec, mold: symbols.TypeSpec) bool {

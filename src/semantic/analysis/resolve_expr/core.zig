@@ -1,7 +1,9 @@
 const std = @import("std");
 const ast = @import("../../../ast/nodes.zig");
+const catalog = @import("../../../common/error_catalog.zig");
 const symbols = @import("../../symbol/mod.zig");
 const context = @import("../context.zig");
+const decl_scan = @import("../decl_scan.zig");
 const symbols_mod = @import("../resolve_symbols.zig");
 const type_helpers = @import("type_helpers.zig");
 const cache = @import("cache.zig");
@@ -33,6 +35,17 @@ pub fn resolveExpr(self: *context.Context, expr: *ast.Expr) ResolveError!void {
     invalidateExprTypeCache(self, expr);
     switch (expr.*) {
         .identifier => |name| {
+            if (symbols_mod.findSymbolIndex(self, name) == null and decl_scan.implicitNoneActive(self)) {
+                const source = self.sourceForExpr(expr) orelse ast.SourceRef{};
+                self.setDiagnostic(
+                    if (source.line == 0) 1 else source.line,
+                    if (source.column == 0) 1 else source.column,
+                    catalog.semantic.unexpected_type_decl.code,
+                    "has no IMPLICIT type",
+                    source.text,
+                );
+                return error.UnexpectedTypeDecl;
+            }
             const idx = try symbols_mod.ensureSymbol(self, name);
             try self.ref_symbol_index.put(@intFromPtr(expr), idx);
             try cacheExprType(self, expr, self.symbols.items[idx].type_spec);

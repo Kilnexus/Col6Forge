@@ -50,6 +50,7 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
                 effective_item.char_len = null;
             }
         }
+        try validateDeclaratorDoesNotRedeclareLocalDerivedType(self, item.name);
         try applyDeclarator(self, effective_type, effective_item, .local, true, decl.allocatable, decl.pointer, decl.target, decl.contiguous, decl.parameter);
         const idx = symbols_mod.findSymbolIndex(self, item.name) orelse return error.UnknownSymbol;
         validateElementalDummyDeclaration(self, decl, effective_item, self.symbols.items[idx]) catch |err| {
@@ -110,6 +111,34 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
         };
     }
     if (first_err) |err| return err;
+}
+
+fn validateDeclaratorDoesNotRedeclareLocalDerivedType(self: *context.Context, name: []const u8) !void {
+    if (!symbols_mod.hasLocalDerivedType(self, name)) return;
+    const derived = symbols_mod.lookupDerivedType(self, name) orelse return;
+    const message = std.fmt.allocPrint(
+        self.arena,
+        "Symbol '{s}' is also declared as a type",
+        .{name},
+    ) catch "Symbol is also declared as a type";
+    const decl_source = self.current_decl_source orelse ast.DeclSource{};
+    if (derived.source.line != 0) {
+        self.setDiagnostic(
+            derived.source.line,
+            if (derived.source.column == 0) 1 else derived.source.column,
+            catalog.semantic.duplicate_declaration.code,
+            message,
+            derived.source.text,
+        );
+    }
+    self.setDiagnostic(
+        if (decl_source.line == 0) 1 else decl_source.line,
+        if (decl_source.column == 0) 1 else decl_source.column,
+        catalog.semantic.duplicate_declaration.code,
+        message,
+        decl_source.text,
+    );
+    return error.DuplicateDeclaration;
 }
 
 fn validateValueIntentDeclaration(self: *context.Context, decl: ast.TypeDecl) !void {

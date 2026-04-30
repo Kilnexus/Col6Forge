@@ -6,6 +6,7 @@ const catalog = @import("../../common/error_catalog.zig");
 const symbols = @import("../symbol/mod.zig");
 const context = @import("context.zig");
 const constants = @import("resolve_const.zig");
+const decl_scan = @import("decl_scan.zig");
 const decls = @import("resolve_decls.zig");
 const common_entity_queries = @import("common_entity_queries.zig");
 const select_type_char_clause = @import("select_type_char_clause.zig");
@@ -93,6 +94,9 @@ pub fn resolveStmtNode(self: *context.Context, node: ast.StmtNode) ResolveError!
                 return error.DuplicateDeclaration;
             }
             const idx = try symbols_mod.ensureSymbol(self, call.name);
+            if (decl_scan.implicitNoneExternalActive(self) and !callTargetIsExplicitlyDeclared(self, call.name)) {
+                return emitImplicitNoneExternalCallDiagnostic(self, call);
+            }
             if (shouldMarkCallTargetAsExternal(self.symbols.items[idx])) {
                 self.symbols.items[idx].is_external = true;
             }
@@ -685,6 +689,48 @@ fn shouldMarkCallTargetAsExternal(sym: symbols.Symbol) bool {
     if (sym.storage == .common) return false;
     if (sym.kind == .function or sym.kind == .subroutine) return false;
     return true;
+}
+
+fn callTargetIsExplicitlyDeclared(self: *context.Context, name: []const u8) bool {
+    if (symbols_mod.lookupKnownProcedureSig(self, name) != null) return true;
+    if (procedure_interfaces.findVisibleProcedureSource(self, name) != null) return true;
+    for (self.unit.decls) |decl| {
+        switch (decl) {
+            .external => |external_decl| {
+                for (external_decl.names) |decl_name| {
+                    if (std.ascii.eqlIgnoreCase(decl_name, name)) return true;
+                }
+            },
+            .type_decl => |type_decl| {
+                if (!type_decl.external) continue;
+                for (type_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            .procedure => |procedure_decl| {
+                for (procedure_decl.items) |item| {
+                    if (std.ascii.eqlIgnoreCase(item.name, name)) return true;
+                }
+            },
+            else => {},
+        }
+    }
+    return false;
+}
+
+fn emitImplicitNoneExternalCallDiagnostic(
+    self: *context.Context,
+    call: ast.CallStmt,
+) ResolveError {
+    const source = if (call.source.line != 0) call.source else ast.SourceRef{};
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.unexpected_type_decl.code,
+        "not explicitly declared",
+        source.text,
+    );
+    return error.UnexpectedTypeDecl;
 }
 
 fn unitAlreadyHasImportedUseDecl(self: *context.Context, module_name: []const u8, local_name: []const u8) bool {

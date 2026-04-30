@@ -39,6 +39,17 @@ const subNoOverflow = equivalence.subNoOverflow;
 pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
     switch (decl) {
         .implicit => |imp| {
+            if (decl_scan.currentImplicitNoneExternalIsDuplicate(self)) {
+                const source = self.current_decl_source orelse ast.DeclSource{};
+                self.setDiagnostic(
+                    if (source.line == 0) 1 else source.line,
+                    if (source.column == 0) 1 else source.column,
+                    catalog.semantic.duplicate_declaration.code,
+                    "Duplicate IMPLICIT NONE statement",
+                    source.text,
+                );
+                return error.DuplicateDeclaration;
+            }
             for (imp.rules) |rule| {
                 const resolved_rule_type = try resolvedDeclTypeSpec(
                     self,

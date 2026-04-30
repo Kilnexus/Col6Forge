@@ -36,3 +36,31 @@ pub fn implicitNoneActive(self: *const context.Context) bool {
     }
     return active;
 }
+
+pub fn implicitNoneExternalActive(self: *const context.Context) bool {
+    for (self.unit.decls, 0..) |decl, idx| {
+        if (decl != .implicit) continue;
+        const source = if (idx < self.unit.decl_sources.len) self.unit.decl_sources[idx] else continue;
+        if (implicitNoneSourceMentionsExternal(source.text)) return true;
+    }
+    return false;
+}
+
+pub fn currentImplicitNoneExternalIsDuplicate(self: *const context.Context) bool {
+    const current_idx = self.current_decl_index orelse return false;
+    const current_source = self.current_decl_source orelse return false;
+    if (!implicitNoneSourceMentionsExternal(current_source.text)) return false;
+    var idx: usize = 0;
+    while (idx < current_idx and idx < self.unit.decls.len) : (idx += 1) {
+        if (self.unit.decls[idx] != .implicit) continue;
+        const source = if (idx < self.unit.decl_sources.len) self.unit.decl_sources[idx] else continue;
+        if (implicitNoneSourceMentionsExternal(source.text)) return true;
+    }
+    return false;
+}
+
+fn implicitNoneSourceMentionsExternal(text: []const u8) bool {
+    return std.ascii.indexOfIgnoreCase(text, "implicit") != null and
+        std.ascii.indexOfIgnoreCase(text, "none") != null and
+        std.ascii.indexOfIgnoreCase(text, "external") != null;
+}

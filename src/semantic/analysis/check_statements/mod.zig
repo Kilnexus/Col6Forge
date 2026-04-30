@@ -638,6 +638,12 @@ fn rejectStaticShapeMismatch(
     target: *ast.Expr,
     value: *ast.Expr,
 ) CheckError!void {
+    const target_rank = resolve_expr.exprRank(self, target);
+    const value_rank = resolve_expr.exprRank(self, value);
+    if (value_rank != 0 and target_rank != value_rank) {
+        return emitExprConstraint(self, value, "Incompatible ranks");
+    }
+
     const target_shape = static_shapes.staticShapeForExpr(self, target) orelse return;
     const value_shape = static_shapes.staticShapeForExpr(self, value) orelse return;
     if (target_shape.len != value_shape.len) {

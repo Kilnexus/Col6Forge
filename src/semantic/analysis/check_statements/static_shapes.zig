@@ -72,6 +72,11 @@ fn staticShapeForCallOrSubscript(
     expr_node: *ast.Expr,
     call: ast.CallOrSubscript,
 ) ?[]const i64 {
+    if (std.ascii.eqlIgnoreCase(call.name, "reshape")) {
+        if (call.args.len < 2) return null;
+        return staticShapeVector(self, call.args[1]);
+    }
+
     if (std.ascii.eqlIgnoreCase(call.name, "sum") or std.ascii.eqlIgnoreCase(call.name, "product")) {
         if (call.args.len < 2) return null;
         const base_shape = staticShapeForExpr(self, call.args[0]) orelse return null;
@@ -123,7 +128,54 @@ fn staticShapeForCallOrSubscript(
         return self.arena.alloc(i64, 0) catch null;
     }
 
+    if (resolve_symbols.lookupKnownProcedureSig(self, call.name)) |sig| {
+        if (sig.elemental and sig.result_rank == 0) {
+            // Elemental scalar results inherit the conforming non-scalar actual shape.
+            return staticElementalScalarResultShape(self, call.args, sig);
+        }
+    }
+
     return staticShapeForSubscript(self, expr_node, call);
+}
+
+fn staticElementalScalarResultShape(
+    self: *context.Context,
+    args: []*ast.Expr,
+    sig: context.Context.ProcedureSig,
+) ?[]const i64 {
+    var expected_shape: ?[]const i64 = null;
+    for (args, 0..) |arg, idx| {
+        if (idx >= sig.args.len or sig.args[idx].rank != 0) continue;
+        if (resolve_expr.exprRank(self, arg) == 0) continue;
+        const actual_shape = staticShapeForExpr(self, arg) orelse return null;
+        if (expected_shape == null) {
+            expected_shape = actual_shape;
+            continue;
+        }
+        if (!sameShape(expected_shape.?, actual_shape)) return null;
+    }
+    return expected_shape;
+}
+
+fn staticShapeVector(self: *context.Context, expr_node: *ast.Expr) ?[]const i64 {
+    return switch (expr_node.*) {
+        .array_constructor => |ctor| blk: {
+            const out = self.arena.alloc(i64, ctor.items.len) catch return null;
+            for (ctor.items, 0..) |item, idx| {
+                out[idx] = staticIntValue(self, item) orelse break :blk null;
+            }
+            break :blk out;
+        },
+        else => null,
+    };
+}
+
+fn sameShape(lhs: []const i64, rhs: []const i64) bool {
+    if (lhs.len != rhs.len) return false;
+    for (lhs, rhs) |left, right| {
+        if (left != right) return false;
+    }
+    return true;
 }
 
 fn staticShapeForSubscript(

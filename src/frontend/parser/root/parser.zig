@@ -259,8 +259,10 @@ pub const Parser = struct {
         const owner_decls = self.pending_owner_decls orelse return;
         for (owner_decls) |owner_decl| {
             if (owner_decl != .interface_block) continue;
-            const generic_name = owner_decl.interface_block.name orelse continue;
+            const interface_block = owner_decl.interface_block;
+            const generic_name = interface_block.name orelse continue;
             if (!std.ascii.eqlIgnoreCase(generic_name, unit.name)) continue;
+            if (interfaceBlockReferencesProcedure(interface_block, unit.name)) continue;
             self.diag_bag.set(
                 if (unit.source.line == 0) 1 else unit.source.line,
                 if (unit.source.column == 0) 1 else unit.source.column,
@@ -280,6 +282,22 @@ pub const Parser = struct {
             }
             return error.UnexpectedToken;
         }
+    }
+
+    fn interfaceBlockReferencesProcedure(interface_block: ast.InterfaceBlock, name: []const u8) bool {
+        for (interface_block.procedures) |procedure_name| {
+            if (std.ascii.eqlIgnoreCase(procedure_name, name)) return true;
+        }
+        for (interface_block.specific_procedures) |procedure_name| {
+            if (std.ascii.eqlIgnoreCase(procedure_name, name)) return true;
+        }
+        for (interface_block.module_procedures) |procedure_name| {
+            if (std.ascii.eqlIgnoreCase(procedure_name, name)) return true;
+        }
+        for (interface_block.procedure_headers) |proc_header| {
+            if (std.ascii.eqlIgnoreCase(proc_header.name, name)) return true;
+        }
+        return false;
     }
 
     fn validateContainedProcedureNameAgainstHostDummies(self: *Parser, unit: ProgramUnit) !void {

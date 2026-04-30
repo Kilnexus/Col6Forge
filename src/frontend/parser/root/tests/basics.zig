@@ -713,6 +713,27 @@ test "parseProgram rejects contained procedure name matching host generic" {
     try testing.expect(std.mem.indexOf(u8, diag.message, "already defined as a generic") != null);
 }
 
+test "parseProgram accepts contained generic specific with same name" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "program host\n" ++
+        "interface gen\n" ++
+        "  procedure gen\n" ++
+        "end interface\n" ++
+        "contains\n" ++
+        "  subroutine gen\n" ++
+        "  end subroutine\n" ++
+        "end program\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    _ = try parseProgram(arena.allocator(), lines);
+}
+
 test "parseProgram does not treat END BLOCK as unit terminator" {
     const testing = std.testing;
     const allocator = testing.allocator;

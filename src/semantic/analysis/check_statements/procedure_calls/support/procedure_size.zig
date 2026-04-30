@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../../../../../ast/nodes.zig");
 const context = @import("../../../context.zig");
+const assumed_size = @import("../../../assumed_size.zig");
 const resolve_expr = @import("../../../resolve_expr.zig");
 const resolve_symbols = @import("../../../resolve_symbols.zig");
 const procedure_interfaces = @import("../../procedure_interfaces.zig");
@@ -11,12 +12,43 @@ pub fn checkActual(
     expr_node: *ast.Expr,
     emitDiagnostic: fn (*context.Context, *ast.Expr, []const u8) anyerror,
 ) anyerror!void {
+    if (std.ascii.eqlIgnoreCase(intrinsic_name, "c_sizeof")) {
+        try checkCSizeofDataInteroperability(self, expr_node, emitDiagnostic);
+        if (exprIsProcedureDesignator(self, expr_node)) {
+            return emitDiagnostic(self, expr_node, "Procedure unexpected as argument");
+        }
+        return;
+    }
     if (!exprIsProcedureDesignator(self, expr_node)) return;
-    const message = if (std.ascii.eqlIgnoreCase(intrinsic_name, "c_sizeof"))
-        "Procedure unexpected as argument"
-    else
-        "shall not be a procedure";
-    return emitDiagnostic(self, expr_node, message);
+    return emitDiagnostic(self, expr_node, "shall not be a procedure");
+}
+
+fn checkCSizeofDataInteroperability(
+    self: *context.Context,
+    expr_node: *ast.Expr,
+    emitDiagnostic: fn (*context.Context, *ast.Expr, []const u8) anyerror,
+) anyerror!void {
+    if (assumed_size.exprNeedsExplicitLastUpperBound(self, expr_node)) {
+        return emitDiagnostic(self, expr_node, "Assumed-size arrays are not interoperable");
+    }
+    const spec = resolve_expr.exprTypeSpec(self, expr_node) catch return;
+    if (spec.lowered_kind != .derived) return;
+    const derived_name = spec.derived_type_name orelse return;
+    if (derivedTypeIsCInteroperable(self, derived_name)) return;
+    return emitDiagnostic(self, expr_node, "Expression is a noninteroperable derived type");
+}
+
+fn derivedTypeIsCInteroperable(self: *context.Context, derived_name: []const u8) bool {
+    const info = resolve_symbols.lookupDerivedType(self, derived_name) orelse return false;
+    if (!info.bind_c) return false;
+    for (info.components) |component| {
+        if (component.allocatable or component.pointer) return false;
+        if (component.type_spec.lowered_kind == .derived) {
+            const nested = component.type_spec.derived_type_name orelse return false;
+            if (!derivedTypeIsCInteroperable(self, nested)) return false;
+        }
+    }
+    return true;
 }
 
 fn exprIsProcedureDesignator(self: *context.Context, expr_node: *ast.Expr) bool {

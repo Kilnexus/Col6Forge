@@ -14,6 +14,7 @@ const decl_diag = @import("resolve_decls_diag_helpers.zig");
 const decl_initializers = @import("resolve_decls_initializers.zig");
 const spec_expr = @import("resolve_decls_spec_expr.zig");
 const polymorphic_decls = @import("resolve_decls_polymorphic.zig");
+const character_result = @import("resolve_decls_character_result.zig");
 const assumed_size = @import("assumed_size.zig");
 const deferred_shape = @import("deferred_shape.zig");
 const decl_scan = @import("decl_scan.zig");
@@ -69,6 +70,11 @@ pub fn applyTypeDecl(self: *context.Context, decl: ast.TypeDecl) !void {
             continue;
         };
         validateFunctionResultInitializer(self, effective_item) catch |err| {
+            if (!self.usesExplicitDiagnosticBag()) return err;
+            if (first_err == null) first_err = err;
+            continue;
+        };
+        character_result.validateOptionalDummyLength(self, effective_item) catch |err| {
             if (!self.usesExplicitDiagnosticBag()) return err;
             if (first_err == null) first_err = err;
             continue;

@@ -3,7 +3,6 @@ const ast = @import("../../../ast/nodes.zig");
 const catalog = @import("../../../common/error_catalog.zig");
 const symbols = @import("../../symbol/mod.zig");
 const context = @import("../context.zig");
-const resolve_const = @import("../resolve_const.zig");
 const constants = @import("../resolve_const.zig");
 const resolve_expr = @import("../resolve_expr.zig");
 const type_helpers = @import("../resolve_expr/type_helpers.zig");
@@ -24,7 +23,7 @@ const max_min_conformance = @import("max_min_conformance.zig");
 const boz_intrinsic_constraints = @import("boz_intrinsic_constraints.zig");
 const constant_expr = @import("constant_expr.zig");
 const dim_intrinsics = @import("dim_intrinsics.zig");
-
+const source_shape = @import("source_shape.zig");
 const ResolvedRefKind = symbols.ResolvedRefKind;
 pub const CheckError = anyerror;
 
@@ -859,6 +858,7 @@ pub fn isPointerTarget(self: *context.Context, expr: *ast.Expr) bool {
 }
 
 pub fn isPointerValuedExpr(self: *context.Context, expr: *ast.Expr) bool {
+    if (source_shape.wrapsIdentifierInParens(self, expr)) return false;
     return switch (expr.*) {
         .identifier, .component => isPointerTarget(self, expr),
         .call_or_subscript => |call| blk: {
@@ -883,6 +883,7 @@ pub fn isPointerValuedExpr(self: *context.Context, expr: *ast.Expr) bool {
 }
 
 pub fn isAddressableDataTargetExpr(self: *context.Context, expr: *ast.Expr) bool {
+    if (source_shape.wrapsIdentifierInParens(self, expr)) return false;
     return switch (expr.*) {
         .identifier => |name| blk: {
             const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;

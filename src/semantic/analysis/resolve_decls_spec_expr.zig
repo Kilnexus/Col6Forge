@@ -125,7 +125,7 @@ fn emitDimensionIntegerTypeDiagnostic(self: *context.Context, expr: *ast.Expr) v
         if (source.line == 0) 1 else source.line,
         if (source.column == 0) 1 else source.column,
         catalog.semantic.assignment_type_mismatch.code,
-        "must be of INTEGER type",
+        "Scalar INTEGER expression expected; must be of INTEGER type",
         source.text,
     );
 }

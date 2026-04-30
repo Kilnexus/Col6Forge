@@ -19,6 +19,7 @@ const procedure_interfaces = @import("../check_statements/procedure_interfaces.z
 const assumed_size = @import("../assumed_size.zig");
 const decl_scan = @import("../decl_scan.zig");
 const init_state = @import("../declaration_initialization_state.zig");
+const spec_expr = @import("../resolve_decls_spec_expr.zig");
 const validation_helpers = @import("validation_helpers.zig");
 
 const resolvedDeclTypeSpec = helpers.resolvedDeclTypeSpec;
@@ -171,6 +172,7 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                     return error.DuplicateDeclaration;
                 }
                 try assumed_size.validateDeclaratorDims(self, item, self.symbols.items[idx].storage, false);
+                try spec_expr.validateDeclaratorDimensionExprs(self, item.dims);
                 self.symbols.items[idx].dims = item.dims;
                 if (dim.allocatable) {
                     self.symbols.items[idx].is_allocatable = true;

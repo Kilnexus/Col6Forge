@@ -50,6 +50,7 @@ pub fn checkStmtNode(self: *context.Context, node: ast.StmtNode) CheckError!void
             try do_iterators.rejectActiveControlDefinition(self, assign.target);
             try statement_functions.validateAssignment(self, assign);
             try statement_functions.validateCalls(self, assign.value);
+            try rejectNonPointerFunctionResultAssignment(self, assign.target);
             if (assignmentTargetHasNoImplicitType(self, assign.target)) return error.UnexpectedTypeDecl;
             if (assumed_size.exprNeedsExplicitLastUpperBound(self, assign.target)) {
                 return assumed_size.emitExprDiagnostic(self, assign.target, "upper bound in the last dimension");
@@ -582,6 +583,18 @@ fn rejectElementalCallRankMismatch(
         if (resolve_expr.exprRank(self, arg.expr.value) == array_rank) continue;
         return emitExprConstraint(self, arg.expr.value, "is a scalar");
     }
+}
+
+fn rejectNonPointerFunctionResultAssignment(self: *context.Context, target: *ast.Expr) CheckError!void {
+    if (target.* != .call_or_subscript) return;
+    const call = target.call_or_subscript;
+    for (call.args) |arg| {
+        if (arg.* != .identifier) break;
+    } else return;
+    const idx = resolve_symbols.findSymbolIndex(self, call.name) orelse return;
+    const sym = self.symbols.items[idx];
+    if (sym.dims.len != 0 or sym.is_pointer) return;
+    return emitExprConstraint(self, target, "must have the pointer attribute");
 }
 
 fn shouldRejectNonRecursiveCurrentProcedureCall(self: *context.Context, name: []const u8) bool {

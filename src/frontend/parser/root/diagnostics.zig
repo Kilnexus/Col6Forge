@@ -129,6 +129,16 @@ pub fn setParseDiagnosticForLine(
         );
         return;
     }
+    if (err == error.MissingEquivalenceComma) {
+        diag_bag.set(
+            line_no,
+            column,
+            catalog.parser.invalid_equivalence_group.code,
+            "Expecting a comma in EQUIVALENCE",
+            line.text,
+        );
+        return;
+    }
     const info = catalog.parserInfoFor(err);
     const advice = parserAdviceFor(err);
     diag_bag.setDetailed(line_no, column, info.code, info.message, line.text, advice.notes, advice.helps);

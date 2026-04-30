@@ -169,7 +169,10 @@ pub fn parseDecl(lp: *LineParser, arena: std.mem.Allocator) !Decl {
             _ = lp.expect(.r_paren) orelse return error.UnexpectedToken;
             if (items.items.len < 2) return error.InvalidEquivalenceGroup;
             try groups.append(.{ .items = try items.toOwnedSlice() });
-            if (!lp.consume(.comma)) break;
+            if (!lp.consume(.comma)) {
+                if (lp.peek() != null) return error.MissingEquivalenceComma;
+                break;
+            }
         }
         return .{ .equivalence = .{ .groups = try groups.toOwnedSlice() } };
     }

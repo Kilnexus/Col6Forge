@@ -156,6 +156,10 @@ pub fn applySpec(self: *context.Context, decl: ast.Decl) !void {
                     );
                     return error.DuplicateDeclaration;
                 }
+                if (implicitNoneActive(self) and symbols_mod.findSymbolIndex(self, item.name) == null and !decl_scan.declaresNameLaterInCurrentUnit(self, item.name)) {
+                    setAttributeConflictDiagnostic(self, "has no IMPLICIT type");
+                    return error.DuplicateDeclaration;
+                }
                 const idx = try symbols_mod.ensureDeclaredSymbol(self, item.name);
                 if (item.dims.len > 0 and self.symbols.items[idx].dims.len > 0) {
                     emitDuplicateDimensionDiagnostic(self, item.name);

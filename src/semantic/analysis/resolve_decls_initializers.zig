@@ -353,9 +353,16 @@ fn invalidInitializationExpressionMessage(self: *context.Context, expr: *ast.Exp
             }
             break :blk null;
         },
-        .dim_range => |range| invalidInitializationExpressionMessage(self, range.upper) orelse
-            if (range.lower) |lower| invalidInitializationExpressionMessage(self, lower) else null orelse
-            if (range.stride) |stride| invalidInitializationExpressionMessage(self, stride) else null,
+        .dim_range => |range| blk: {
+            if (invalidInitializationExpressionMessage(self, range.upper)) |message| break :blk message;
+            if (range.lower) |lower| if (invalidInitializationExpressionMessage(self, lower)) |message| break :blk message;
+            if (range.stride) |stride| {
+                if (invalidInitializationExpressionMessage(self, stride)) |message| break :blk message;
+                const value = (constants.evalConst(self, stride) catch null) orelse break :blk null;
+                if (value == .integer and value.integer == 0) break :blk "Illegal stride of zero";
+            }
+            break :blk null;
+        },
         .array_constructor => |ctor| blk: {
             for (ctor.items) |item| {
                 if (invalidInitializationExpressionMessage(self, item)) |message| break :blk message;

@@ -32,6 +32,24 @@ pub fn rejectDivisionByZero(
     return error.DivisionByZero;
 }
 
+pub fn rejectZeroStride(self: *context.Context, stride: *ast.Expr) CheckError!void {
+    const value = (try resolve_const.evalConst(self, stride)) orelse return;
+    const zero = switch (value) {
+        .integer => |int| int == 0,
+        else => false,
+    };
+    if (!zero) return;
+    const source = self.sourceForExpr(stride) orelse ast.SourceRef{};
+    self.setDiagnostic(
+        if (source.line == 0) 1 else source.line,
+        if (source.column == 0) 1 else source.column,
+        catalog.semantic.invalid_subscript_section.code,
+        "Illegal stride of zero",
+        source.text,
+    );
+    return error.InvalidSubscript;
+}
+
 fn shouldDeferArrayConstructorDivisionByZero(bin: ast.BinaryExpr, comptime deps: anytype) bool {
     const defer_array_ctor = comptime if (@hasField(@TypeOf(deps), "defer_array_constructor_division_by_zero"))
         deps.defer_array_constructor_division_by_zero

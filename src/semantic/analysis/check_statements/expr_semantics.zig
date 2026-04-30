@@ -441,6 +441,7 @@ pub fn checkExprType(self: *context.Context, expr: *ast.Expr, comptime deps: any
                     self.setCurrentSource(self.sourceForExpr(stride));
                     return error.InvalidSubscript;
                 }
+                try constant_expr.rejectZeroStride(self, stride);
             }
             return .integer;
         },

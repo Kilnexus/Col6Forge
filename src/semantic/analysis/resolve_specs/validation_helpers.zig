@@ -151,6 +151,10 @@ fn validateDerivedDescriptorComponentShapes(self: *context.Context, derived: ast
         else
             self.current_decl_source orelse ast.DeclSource{};
         for (type_decl.items) |item| {
+            if (type_decl.allocatable and item.init != null) {
+                setSourceDiagnostic(self, source, "Initialization of allocatable component is not allowed");
+                if (first_error == null) first_error = error.DuplicateDeclaration;
+            }
             if (item.dims.len != 0 and !componentDimsAreDeferredShape(item.dims)) {
                 const attr = if (type_decl.allocatable) "ALLOCATABLE" else "POINTER";
                 const message = std.fmt.allocPrint(self.arena, "{s} array must have a deferred shape", .{attr}) catch "array must have a deferred shape";

@@ -20,6 +20,28 @@ pub fn checkAllocateDim(self: *context.Context, expr: *ast.Expr, comptime deps: 
     }
 }
 
+pub fn checkAllocateItemDimTargetReferences(
+    self: *context.Context,
+    items: []const ast.AllocateItem,
+    comptime deps: anytype,
+) CheckError!void {
+    for (items) |item| {
+        for (item.dims) |dim| {
+            for (items) |target_item| {
+                if (!allocationOptionReferencesTarget(self, dim, target_item.target, deps)) continue;
+                self.setDiagnostic(
+                    if (item.source.line == 0) 1 else item.source.line,
+                    if (item.source.column == 0) 1 else item.source.column,
+                    catalog.semantic.duplicate_declaration.code,
+                    "same ALLOCATE statement",
+                    item.source.text,
+                );
+                return error.DuplicateDeclaration;
+            }
+        }
+    }
+}
+
 pub fn allocateSourceOrMoldRank(
     self: *context.Context,
     options: []const ast.AllocationOption,

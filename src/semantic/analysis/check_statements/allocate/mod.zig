@@ -11,6 +11,7 @@ pub fn checkAllocateStmt(self: *context.Context, allocate: ast.AllocateStmt, com
         try type_spec.checkAllocateTypeSpecCompatibility(self, allocate, spec, deps);
     }
     try type_spec.checkAllocateRequiresTypeSpecOrSource(self, allocate);
+    try options.checkAllocateItemDimTargetReferences(self, allocate.items, deps);
     for (allocate.items) |item| {
         const target_info = try targets.resolveAllocateTargetInfo(self, item.target);
         if (target_info.procedure) {

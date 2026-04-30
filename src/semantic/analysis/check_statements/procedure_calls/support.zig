@@ -857,6 +857,7 @@ pub fn checkExplicitInterfaceRequirementForExprArgs(
     args: []*ast.Expr,
     symbol_idx: ?usize,
 ) CheckError!void {
+    if (std.ascii.eqlIgnoreCase(name, "null")) return;
     if (leaf_helpers.lookupIntrinsicArity(self, name) != null) return;
     if (procedure_interfaces.calleeHasVisibleExplicitInterface(self, name)) return;
     if (procedure_interfaces.calleeRequiresExplicitInterface(self, name)) {

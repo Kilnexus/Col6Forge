@@ -848,6 +848,7 @@ fn requiresExplicitInterfaceForActuals(
     sym: symbols.Symbol,
     comptime deps: anytype,
 ) bool {
+    if (std.ascii.eqlIgnoreCase(name, "null")) return false;
     if (sym.is_intrinsic) return false;
     if (symbols_mod.lookupKnownProcedureSig(self, name) != null) return false;
     for (args) |arg| {

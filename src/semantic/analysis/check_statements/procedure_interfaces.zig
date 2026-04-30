@@ -376,6 +376,7 @@ pub fn requiresExplicitInterfaceForActual(self: *context.Context, expr: *ast.Exp
 
 pub fn explicitInterfaceRestrictionMessageForActual(self: *context.Context, expr: *ast.Expr) ?[]const u8 {
     if (actualExprIsAssumedRank(self, expr)) return "Assumed-rank argument";
+    if (actualExprIsNullWithMold(expr)) return "NULL(MOLD) actual requires an explicit interface";
     const spec = resolve_expr.exprTypeSpec(self, expr) catch return null;
     if (spec.assumed_type) return "Assumed-type argument";
     return null;
@@ -409,6 +410,13 @@ fn actualExprIsAssumedRank(self: *context.Context, expr: *ast.Expr) bool {
             const idx = resolve_symbols.findSymbolIndex(self, name) orelse break :blk false;
             break :blk dimsRepresentAssumedRank(self.symbols.items[idx].dims);
         },
+        else => false,
+    };
+}
+
+fn actualExprIsNullWithMold(expr: *ast.Expr) bool {
+    return switch (expr.*) {
+        .call_or_subscript => |call| std.ascii.eqlIgnoreCase(call.name, "null") and call.args.len > 0,
         else => false,
     };
 }

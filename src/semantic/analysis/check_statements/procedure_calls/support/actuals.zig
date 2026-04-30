@@ -120,10 +120,7 @@ pub fn checkProcedureActualArg(
     switch (actual_expr.*) {
         .component => |comp| {
             if (comp.has_parens) {
-                if (formal.procedure_kind) |expected_kind| {
-                    return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, procedureKindMismatchMessage(expected_kind));
-                }
-                return;
+                return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "Expected a procedure for argument");
             }
             const actual_sig = procedurePointerExprSig(self, actual_expr) orelse {
                 if (formal.procedure_kind == .function) {
@@ -203,6 +200,7 @@ pub fn checkProcedureActualArg(
                 return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "actual argument is not a function");
             }
         },
+        .call_or_subscript => return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, "Expected a procedure for argument"),
         else => {
             if (formal.procedure_kind) |expected_kind| {
                 return emitProcedureActualCallDiagnostic(self, callee_name, formal.name, actual_expr, error.InvalidArgumentCount, procedureKindMismatchMessage(expected_kind));

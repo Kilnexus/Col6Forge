@@ -55,6 +55,7 @@ pub fn parseProgramWithDiagnostics(
         .pending_owner_kind = null,
         .pending_owner_decls = null,
         .pending_owner_decl_sources = null,
+        .pending_owner_args = null,
         .in_submodule_spec_part = false,
         .module_preludes = ModulePreludeMap.initContext(arena_allocator, .{}),
         .expr_capture = &expr_capture,
@@ -76,6 +77,7 @@ pub const Parser = struct {
     pending_owner_kind: ?LexicalOwnerKind,
     pending_owner_decls: ?[]const Decl,
     pending_owner_decl_sources: ?[]const DeclSource,
+    pending_owner_args: ?[]const []const u8,
     in_submodule_spec_part: bool,
     module_preludes: ModulePreludeMap,
     expr_capture: *expr.SourceCapture,
@@ -158,6 +160,7 @@ pub const Parser = struct {
                     self.pending_owner_kind = null;
                     self.pending_owner_decls = null;
                     self.pending_owner_decl_sources = null;
+                    self.pending_owner_args = null;
                 }
                 self.index += 1;
                 continue;
@@ -167,6 +170,7 @@ pub const Parser = struct {
                 self.pending_owner_kind = null;
                 self.pending_owner_decls = null;
                 self.pending_owner_decl_sources = null;
+                self.pending_owner_args = null;
                 self.index += 1;
                 continue;
             }
@@ -204,6 +208,7 @@ pub const Parser = struct {
             }
             const unit_start_index = self.index;
             const unit = try self.parseProgramUnit();
+            try self.validateContainedProcedureNameAgainstHostDummies(unit);
             if (unit.is_module_procedure and self.pending_owner_name == null) {
                 const header_line = self.lines[unit_start_index];
                 self.diag_bag.set(
@@ -242,9 +247,26 @@ pub const Parser = struct {
                 self.pending_owner_kind = .procedure;
                 self.pending_owner_decls = unit.decls;
                 self.pending_owner_decl_sources = unit.decl_sources;
+                self.pending_owner_args = unit.args;
             }
         }
         return .{ .units = try units.toOwnedSlice() };
+    }
+
+    fn validateContainedProcedureNameAgainstHostDummies(self: *Parser, unit: ProgramUnit) !void {
+        if (unit.owner_name == null) return;
+        const owner_args = self.pending_owner_args orelse return;
+        for (owner_args) |arg_name| {
+            if (!std.ascii.eqlIgnoreCase(arg_name, unit.name)) continue;
+            self.diag_bag.set(
+                if (unit.source.line == 0) 1 else unit.source.line,
+                if (unit.source.column == 0) 1 else unit.source.column,
+                catalog.semantic.duplicate_declaration.code,
+                "contained procedure name conflicts with DUMMY argument",
+                unit.source.text,
+            );
+            return error.UnexpectedToken;
+        }
     }
 
     pub fn parseModuleContainer(self: *Parser, units: *std.array_list.Managed(ProgramUnit)) !void {

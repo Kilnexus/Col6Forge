@@ -389,11 +389,11 @@ pub fn parseSubmoduleContainer(self: anytype, units: *std.array_list.Managed(Pro
                 self.pending_owner_kind = null;
                 self.pending_owner_decls = null;
                 self.pending_owner_decl_sources = null;
+                self.pending_owner_args = null;
                 self.index += 1;
                 continue;
             }
         }
-
         const unit_header_line = self.lines[self.index];
         const parsing_internal = self.pending_owner_name != null;
         var unit = if (try parseInheritedModuleProcedureUnit(self, stored_decls)) |parsed| parsed else try self.parseProgramUnit();
@@ -414,6 +414,7 @@ pub fn parseSubmoduleContainer(self: anytype, units: *std.array_list.Managed(Pro
             self.pending_owner_kind = .procedure;
             self.pending_owner_decls = unit.decls;
             self.pending_owner_decl_sources = unit.decl_sources;
+            self.pending_owner_args = unit.args;
         }
     }
 }
@@ -636,9 +637,9 @@ pub fn parseProgramUnitBody(
             const explicit_program_unit_end = root_predicates.isProgramUnitEndTokens(line, tokens);
             if (explicit_program_unit_end or
                 (stmt_lp.isKeywordSplit("END") and
-                !root_control.isEndDoLine(stmt_lp) and
-                !root_control.isEndIfLine(stmt_lp) and
-                !root_control.isEndBlockLine(stmt_lp)))
+                    !root_control.isEndDoLine(stmt_lp) and
+                    !root_control.isEndIfLine(stmt_lp) and
+                    !root_control.isEndBlockLine(stmt_lp)))
             {
                 saw_program_unit_end = true;
                 if (implicit_program_recovery and recovered_stmt_error) {

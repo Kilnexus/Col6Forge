@@ -661,6 +661,30 @@ test "parseProgram assigns typed function header declaration to RESULT variable"
     try testing.expectEqualStrings("r", unit.decls[0].type_decl.items[0].name);
 }
 
+test "parseProgram rejects contained procedure name matching host dummy" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "subroutine host(s)\n" ++
+        "contains\n" ++
+        "  subroutine s\n" ++
+        "  end subroutine\n" ++
+        "end subroutine\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var diag_bag = parse_diag.Bag.init(arena.allocator());
+    defer diag_bag.deinit();
+
+    try testing.expectError(error.UnexpectedToken, parseProgramWithDiagnostics(arena.allocator(), lines, &diag_bag));
+    const diag = diag_bag.take() orelse return error.TestExpectedEqual;
+    defer diag_bag.release(diag);
+    try testing.expect(std.mem.indexOf(u8, diag.message, "conflicts with DUMMY argument") != null);
+}
+
 test "parseProgram does not treat END BLOCK as unit terminator" {
     const testing = std.testing;
     const allocator = testing.allocator;

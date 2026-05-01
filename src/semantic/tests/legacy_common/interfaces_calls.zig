@@ -696,6 +696,27 @@ test "semantic allows implicit external character actuals with different lengths
     try analyzeProgram(arena.allocator(), program);
 }
 
+test "semantic allows implicit external array and array element sequence actuals" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "subroutine s(n, j)\n" ++
+        "  integer :: n, j, ix\n" ++
+        "  real :: a(10, 10), work(10)\n" ++
+        "  ix = isamax(n, work, 1)\n" ++
+        "  ix = isamax(n, a(1, j), 1)\n" ++
+        "end subroutine\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    try analyzeProgram(arena.allocator(), program);
+}
+
 test "semantic reports implicit external argument-count mismatch with related previous call" {
     const testing = std.testing;
     const allocator = testing.allocator;

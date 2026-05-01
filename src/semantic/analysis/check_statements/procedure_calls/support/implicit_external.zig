@@ -38,6 +38,7 @@ const hasExplicitInterfaceSensitiveCallArg = procedure_call_actual_traits.hasExp
 const hasExplicitInterfaceSensitiveExprArg = procedure_call_actual_traits.hasExplicitInterfaceSensitiveExprArg;
 const hasKeywordActualCallArg = procedure_call_actual_traits.hasKeywordActualCallArg;
 const resolvedProcedureSig = resolution.resolvedProcedureSig;
+const sequenceAssociationAvailableElements = sequence_association.sequenceAssociationAvailableElements;
 const getLowercaseMapPtr = sequence_association.getLowercaseMapPtr;
 
 fn countCallExprArgs(args: []const ast.CallArg) usize {
@@ -139,7 +140,7 @@ fn checkImplicitExternalCallConsistency(
     while (idx < count) : (idx += 1) {
         const previous = &existing.args[idx];
         const current = actuals[idx];
-        if (previous.actual_class != current.actual_class) {
+        if (!implicitActualClassesCompatible(previous.*, current)) {
             if (self.allow_argument_mismatch) return;
             emitImplicitObservedArgumentMismatch(self, current.source, previous.source, "Rank mismatch in argument");
             previous.mismatch_reported = true;
@@ -158,11 +159,30 @@ fn implicitActualArgSig(
     self: *context.Context,
     expr: *ast.Expr,
 ) CheckError!context.Context.ImplicitCallArgSig {
+    const type_spec = try resolve_expr.exprTypeSpec(self, expr);
     return .{
-        .type_spec = try resolve_expr.exprTypeSpec(self, expr),
+        .type_spec = type_spec,
         .actual_class = if (resolve_expr.exprRank(self, expr) == 0) .scalar else .sequence,
+        .can_sequence_associate = try implicitActualCanSequenceAssociate(self, expr, type_spec),
         .source = self.sourceForExpr(expr) orelse ast.SourceRef{},
     };
+}
+
+fn implicitActualCanSequenceAssociate(
+    self: *context.Context,
+    expr: *ast.Expr,
+    type_spec: symbols.TypeSpec,
+) CheckError!bool {
+    if (type_spec.lowered_kind == .character) return false;
+    return (try sequenceAssociationAvailableElements(self, expr)) != null;
+}
+
+fn implicitActualClassesCompatible(
+    previous: context.Context.ImplicitCallArgSig,
+    current: context.Context.ImplicitCallArgSig,
+) bool {
+    if (previous.actual_class == current.actual_class) return true;
+    return previous.can_sequence_associate and current.can_sequence_associate;
 }
 
 fn findImplicitCallSigPtr(self: *context.Context, name: []const u8) ?*context.Context.ImplicitCallSig {

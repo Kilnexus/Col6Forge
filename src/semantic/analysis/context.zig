@@ -149,6 +149,7 @@ pub const Context = struct {
     pub const ImplicitCallArgSig = struct {
         type_spec: symbols.TypeSpec,
         actual_class: ImplicitActualClass,
+        can_sequence_associate: bool = false,
         source: ast.SourceRef = .{},
         mismatch_reported: bool = false,
     };

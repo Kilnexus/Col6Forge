@@ -1508,7 +1508,11 @@ L130:
   br label %bb226
 bb226:
   store i32 0, ptr %t9
+  br label %L132
+L132:
   store i32 4, ptr %t9
+  br label %bb228
+bb228:
   store i32 4, ptr %t10
   br label %L40130
 L40130:

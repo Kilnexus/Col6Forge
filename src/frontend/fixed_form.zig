@@ -66,12 +66,10 @@ pub fn normalizeFixedFormWithMapMode(
                     current_label = null;
                     string_state = .{};
                 }
-                try list.append(.{
-                    .label = label_only,
-                    .text = try allocator.dupe(u8, ""),
-                    .span = .{ .start_line = line_no, .end_line = line_no },
-                    .segments = try allocator.alloc(Segment, 0),
-                });
+                current_label = label_only;
+                current_start = line_no;
+                current_end = line_no;
+                in_stmt = true;
                 continue;
             }
             if (in_stmt) {
@@ -450,6 +448,23 @@ test "normalizeFixedForm joins continuations and preserves labels" {
     try testing.expectEqualStrings("CONTINUE", lines[1].text);
     try testing.expectEqual(@as(usize, 5), lines[1].span.start_line);
     try testing.expectEqual(@as(usize, 5), lines[1].span.end_line);
+}
+
+test "normalizeFixedForm joins continuation after label-only initial line" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const src_text =
+        " 0132\n" ++
+        "     1IVCOMP = 4\n";
+    const lines = try normalizeFixedForm(allocator, src_text);
+    defer freeLogicalLines(allocator, lines);
+
+    try testing.expectEqual(@as(usize, 1), lines.len);
+    try testing.expectEqualStrings("132", lines[0].label.?);
+    try testing.expectEqualStrings("IVCOMP = 4", lines[0].text);
+    try testing.expectEqual(@as(usize, 1), lines[0].span.start_line);
+    try testing.expectEqual(@as(usize, 2), lines[0].span.end_line);
 }
 
 test "normalizeFixedForm supports continuation marker in column 7" {

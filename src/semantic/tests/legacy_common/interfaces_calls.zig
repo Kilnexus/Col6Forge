@@ -676,6 +676,26 @@ test "semantic reports implicit external type mismatch with related previous cal
     try testing.expect(std.mem.eql(u8, diag.secondary_spans[0].label, "previous implicit external actual here"));
 }
 
+test "semantic allows implicit external character actuals with different lengths" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    const source =
+        "subroutine s()\n" ++
+        "  real :: x\n" ++
+        "  x = foo('A')\n" ++
+        "  x = foo('Safe minimum')\n" ++
+        "end subroutine\n";
+    const lines = try free_form.normalizeFreeForm(allocator, source);
+    defer free_form.freeLogicalLines(allocator, lines);
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const program = try parser.parseProgram(arena.allocator(), lines);
+
+    try analyzeProgram(arena.allocator(), program);
+}
+
 test "semantic reports implicit external argument-count mismatch with related previous call" {
     const testing = std.testing;
     const allocator = testing.allocator;

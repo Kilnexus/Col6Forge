@@ -277,7 +277,7 @@ fn emitImplicitObservedCallMismatch(
 fn implicitActualTypesCompatible(previous: symbols.TypeSpec, current: symbols.TypeSpec) bool {
     if (previous.lowered_kind != current.lowered_kind) return false;
     if (previous.lowered_kind == .character) {
-        return previous.char_len_kind == current.char_len_kind and previous.char_len == current.char_len;
+        return true;
     }
     if (previous.lowered_kind != .derived) return true;
     if (previous.derived_type_name == null or current.derived_type_name == null) return false;

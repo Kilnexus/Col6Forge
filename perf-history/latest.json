@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_unix_ms": 1780302506986,
+  "generated_unix_ms": 1780903722102,
   "iterations": 3,
   "warmup": 1,
   "cases": [
@@ -10,10 +10,10 @@
       "filter": "xblat3d",
       "samples_ms": [
         520,
-        518,
-        520
+        519,
+        519
       ],
-      "median_ms": 520,
+      "median_ms": 519,
       "mean_ms": 519.3333333333334
     },
     {
@@ -21,12 +21,12 @@
       "step": "lapack-verify",
       "filter": "xlintstds",
       "samples_ms": [
-        3496,
-        3441,
-        3496
+        3492,
+        3444,
+        3443
       ],
-      "median_ms": 3496,
-      "mean_ms": 3477.6666666666665
+      "median_ms": 3444,
+      "mean_ms": 3459.6666666666665
     }
   ]
 }

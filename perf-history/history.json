@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_unix_ms": 1787543382862,
+  "updated_unix_ms": 1788167212470,
   "entries": [
     {
       "label": "2026-03-13",
@@ -193,21 +193,21 @@
       ]
     },
     {
-      "label": "2026-08-24",
+      "label": "2026-08-31",
       "commit_sha": "ef3d51bbd7a1e1da5df45a95e43c85a420bc9e58",
-      "generated_unix_ms": 1787543380113,
+      "generated_unix_ms": 1788167209513,
       "iterations": 3,
       "warmup": 1,
       "cases": [
         {
           "name": "blas:xblat3d",
-          "median_ms": 494,
-          "mean_ms": 494.6666666666667
+          "median_ms": 510,
+          "mean_ms": 510
         },
         {
           "name": "lapack:xlintstds",
-          "median_ms": 3808,
-          "mean_ms": 3824.6666666666665
+          "median_ms": 3481,
+          "mean_ms": 3515
         }
       ]
     }
